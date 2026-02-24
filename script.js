@@ -22,6 +22,95 @@ function formatMonthTitle(date) {
 function safeJSONParse(txt) {
     try { return JSON.parse(txt); } catch { return null; }
 }
+function toNonNegativeInt(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return 0;
+    return Math.max(0, Math.floor(n));
+}
+function parseChampionships(value) {
+    if (Array.isArray(value)) {
+        return value.map(v => String(v ?? "").trim()).filter(Boolean);
+    }
+    if (typeof value === "string") {
+        return value.split(",").map(v => v.trim()).filter(Boolean);
+    }
+    return [];
+}
+function enrichChampionship(championship) {
+    const name = typeof championship === "string"
+        ? championship.trim()
+        : String(championship?.name ?? "").trim();
+    if (!name) return null;
+    return {
+        id: championship?.id || uid("title"),
+        name,
+    };
+}
+function enrichSuperstar(ss) {
+    const showIds = Array.isArray(ss?.showIds)
+        ? ss.showIds.map(x => String(x ?? "").trim()).filter(Boolean)
+        : (ss?.showId ? [ss.showId] : []);
+    const uniqueShowIds = Array.from(new Set(showIds));
+    const championships = parseChampionships(ss?.championships);
+    return {
+        id: ss?.id || uid("ss"),
+        name: String(ss?.name ?? "").trim(),
+        showId: uniqueShowIds[0] ?? null, // legacy compatibility
+        showIds: uniqueShowIds,
+        division: String(ss?.division ?? "World").trim() || "World",
+        isChampion: championships.length > 0,
+        championships,
+        faction: String(ss?.faction ?? "").trim(),
+        manager: String(ss?.manager ?? "").trim(),
+        wins: toNonNegativeInt(ss?.wins),
+        losses: toNonNegativeInt(ss?.losses),
+    };
+}
+function normalizeStateData(sourceState) {
+    const normalized = sourceState || defaultState();
+    normalized.championships = Array.isArray(normalized.championships)
+        ? normalized.championships.map(enrichChampionship).filter(Boolean)
+        : [];
+
+    const byId = new Map(normalized.championships.map(c => [c.id, c]));
+    const byName = new Map(normalized.championships.map(c => [c.name.toLowerCase(), c]));
+
+    const resolveChampionshipId = (ref) => {
+        if (!ref) return null;
+        const idMatch = byId.get(ref);
+        if (idMatch) return idMatch.id;
+
+        const nameRef = String(ref).trim();
+        if (!nameRef) return null;
+        const nameMatch = byName.get(nameRef.toLowerCase());
+        if (nameMatch) return nameMatch.id;
+
+        const created = enrichChampionship({ name: nameRef });
+        if (!created) return null;
+        normalized.championships.push(created);
+        byId.set(created.id, created);
+        byName.set(created.name.toLowerCase(), created);
+        return created.id;
+    };
+
+    normalized.superstars = Array.isArray(normalized.superstars)
+        ? normalized.superstars.map(enrichSuperstar).map(ss => {
+            const validShowIds = ss.showIds.filter(showId => normalized.shows.some(s => s.id === showId));
+            const championshipIds = parseChampionships(ss.championships)
+                .map(resolveChampionshipId)
+                .filter(Boolean);
+            return {
+                ...ss,
+                showIds: validShowIds,
+                showId: validShowIds[0] ?? null,
+                championships: Array.from(new Set(championshipIds)),
+                isChampion: championshipIds.length > 0,
+            };
+        })
+        : [];
+
+    return normalized;
+}
 function escapeHTML(str) {
     return String(str ?? "")
         .replaceAll("&", "&amp;")
@@ -37,7 +126,8 @@ function defaultState() {
     return {
         version: 2,
         shows: [],        // {id, name, color}
-        superstars: [],   // {id, name, showId, division}
+        championships: [], // {id, name}
+        superstars: [],   // {id, name, showIds:[], showId(legacy), division}
         events: [],       // {id, date, type:"weekly"|"ppv", showId|null, name, matches:[...], defaultRows?}
         createdAt: Date.now(),
         updatedAt: Date.now(),
@@ -61,6 +151,7 @@ const store = {
 };
 
 let state = store.load();
+state = normalizeStateData(state);
 
 // Debounced saving (smooth typing)
 let saveTimer = null;
@@ -77,13 +168,46 @@ function saveSoon() {
 
 // -------------------- HELPERS --------------------
 function getShow(showId) { return state.shows.find(s => s.id === showId) || null; }
+function superstarOnShow(superstar, showId) {
+    const ids = Array.isArray(superstar?.showIds) ? superstar.showIds : (superstar?.showId ? [superstar.showId] : []);
+    return ids.includes(showId);
+}
+function superstarShowNames(superstar) {
+    const ids = Array.isArray(superstar?.showIds) ? superstar.showIds : (superstar?.showId ? [superstar.showId] : []);
+    return ids.map(showName).filter(n => n && n !== "Unknown show" && n !== "No show");
+}
+function getChampionship(championshipId) {
+    return state.championships.find(c => c.id === championshipId) || null;
+}
+function championshipName(championshipId) {
+    return getChampionship(championshipId)?.name || "";
+}
+function superstarChampionshipNames(superstar) {
+    return parseChampionships(superstar?.championships)
+        .map(championshipName)
+        .filter(Boolean);
+}
 function showName(showId) {
     if (!showId) return "No show";
     const s = getShow(showId);
     return s ? s.name : "Unknown show";
 }
 function showColor(showId) { return getShow(showId)?.color || "#888"; }
-function rosterForShow(showId) { return state.superstars.filter(ss => ss.showId === showId); }
+function managerNameSet() {
+    return new Set(
+        state.superstars
+            .map(ss => String(ss?.manager ?? "").trim().toLowerCase())
+            .filter(Boolean)
+    );
+}
+function rosterForShow(showId, { excludeManagers = false } = {}) {
+    const managers = excludeManagers ? managerNameSet() : null;
+    return state.superstars.filter(ss => {
+        if (!superstarOnShow(ss, showId)) return false;
+        if (managers && managers.has(ss.name.toLowerCase())) return false;
+        return true;
+    });
+}
 function getEvent(eventId) { return state.events.find(e => e.id === eventId) || null; }
 function upsertEvent(event) {
     const idx = state.events.findIndex(e => e.id === event.id);
@@ -117,7 +241,7 @@ function setView(view) {
         planner: ["Planner", "Book your cards like your spreadsheet"],
         shows: ["Shows", "Create/remove shows & colors"],
         roster: ["Roster", "Add superstars, assign shows + divisions"],
-        settings: ["Settings", "Import shows, roster, and PLEs from JSON"],
+        settings: ["Settings", "Import data and manage championships"],
     };
     $("#viewTitle").textContent = titles[view][0];
     $("#viewSubtitle").textContent = titles[view][1];
@@ -223,7 +347,10 @@ function renderShows() {
             });
             if (!ok.ok) return;
 
-            state.superstars = state.superstars.map(ss => ss.showId === id ? { ...ss, showId: null } : ss);
+            state.superstars = state.superstars.map(ss => {
+                const nextShowIds = (ss.showIds || []).filter(showId => showId !== id);
+                return { ...ss, showIds: nextShowIds, showId: nextShowIds[0] ?? null };
+            });
             state.shows = state.shows.filter(x => x.id !== id);
             saveSoon();
             renderAll();
@@ -239,7 +366,7 @@ function renderRoster() {
     const showFilter = $("#rosterFilter").value || "all";
 
     const rows = state.superstars
-        .filter(ss => showFilter === "all" ? true : (ss.showId === showFilter))
+        .filter(ss => showFilter === "all" ? true : superstarOnShow(ss, showFilter))
         .filter(ss => !search ? true : ss.name.toLowerCase().includes(search))
         .sort((a, b) => a.name.localeCompare(b.name));
 
@@ -252,13 +379,20 @@ function renderRoster() {
     list.innerHTML = `
     <div class="list">
       ${rows.map(ss => {
-        const dot = `<span class="dot" style="background:${showColor(ss.showId)}"></span>`;
+        const ssShows = superstarShowNames(ss);
+        const champs = superstarChampionshipNames(ss);
+        const record = `${toNonNegativeInt(ss.wins)}-${toNonNegativeInt(ss.losses)}`;
         return `
           <div class="item">
             <div class="item-title">${escapeHTML(ss.name)}</div>
             <div class="row gap wrap">
-              <span class="badge">${dot}${escapeHTML(showName(ss.showId))}</span>
+              <span class="badge">${escapeHTML(ssShows.join(", ") || "Unassigned")}</span>
               <span class="badge">Division: <b>${escapeHTML(ss.division)}</b></span>
+              <span class="badge">Record: <b>${record}</b></span>
+              <span class="badge">${champs.length ? "Champion" : "Not Champion"}</span>
+              ${champs.length ? `<span class="badge">Titles: <b>${escapeHTML(champs.join(", "))}</b></span>` : ""}
+              ${ss.faction ? `<span class="badge">Faction: <b>${escapeHTML(ss.faction)}</b></span>` : ""}
+              ${ss.manager ? `<span class="badge">Manager: <b>${escapeHTML(ss.manager)}</b></span>` : ""}
             </div>
             <div class="item-actions">
               <button class="btn secondary" data-edit-ss="${ss.id}">Edit</button>
@@ -294,19 +428,42 @@ function renderRoster() {
             const ss = state.superstars.find(x => x.id === id);
             if (!ss) return;
 
-            const showOptions = [
-                `<option value="">Unassigned</option>`,
-                ...state.shows.map(s => `<option value="${s.id}" ${s.id === ss.showId ? "selected" : ""}>${escapeHTML(s.name)}</option>`)
-            ].join("");
+            const selectedShows = new Set(ss.showIds || []);
+            const showOptions = state.shows.length
+                ? state.shows.map(s => `
+                <label class="row gap wrap">
+                  <input class="editSSShowItem" type="checkbox" value="${s.id}" ${selectedShows.has(s.id) ? "checked" : ""} />
+                  <span>${escapeHTML(s.name)}</span>
+                </label>
+              `).join("")
+                : `<div class="muted tiny">No shows created yet.</div>`;
+            const selectedChampionships = new Set(parseChampionships(ss.championships));
+            const championshipOptions = state.championships.length
+                ? state.championships.map(c => `
+                <label class="row gap wrap">
+                  <input class="editSSChampItem" type="checkbox" value="${c.id}" ${selectedChampionships.has(c.id) ? "checked" : ""} />
+                  <span>${escapeHTML(c.name)}</span>
+                </label>
+              `).join("")
+                : `<div class="muted tiny">No championships created yet. Add them in Settings first.</div>`;
 
             const bodyHTML = `
         <div class="stack">
           <input id="editSSName" class="input" value="${escapeAttr(ss.name)}" />
-          <select id="editSSShow" class="input">${showOptions}</select>
+          <div class="muted tiny">Shows</div>
+          <div class="stack">${showOptions}</div>
           <select id="editSSDiv" class="input">
             ${["World", "Midcard", "Tag", "Women", "Other"].map(d => `<option value="${d}" ${d === ss.division ? "selected" : ""}>${d}</option>`).join("")}
           </select>
-          <div class="muted tiny">Tip: Keep divisions consistent per show for future belts/rankings.</div>
+          <div class="muted tiny">Championships</div>
+          <div class="stack">${championshipOptions}</div>
+          <input id="editSSFaction" class="input" value="${escapeAttr(ss.faction || "")}" placeholder="Faction / Group affiliation" />
+          <input id="editSSManager" class="input" value="${escapeAttr(ss.manager || "")}" placeholder="Manager" />
+          <div class="row gap wrap">
+            <input id="editSSWins" class="input" type="number" min="0" value="${toNonNegativeInt(ss.wins)}" placeholder="Wins" />
+            <input id="editSSLosses" class="input" type="number" min="0" value="${toNonNegativeInt(ss.losses)}" placeholder="Losses" />
+          </div>
+          <div class="muted tiny">Tip: Champion status is automatic when at least one championship is selected.</div>
         </div>
       `;
 
@@ -314,12 +471,29 @@ function renderRoster() {
             if (!ok.ok) return;
 
             const newName = $("#editSSName").value.trim();
-            const newShow = $("#editSSShow").value || null;
+            const newShowIds = $$(".editSSShowItem:checked").map(el => el.value);
             const newDiv = $("#editSSDiv").value;
+            const newChamps = $$(".editSSChampItem:checked").map(el => el.value);
+            const newFaction = $("#editSSFaction").value.trim();
+            const newManager = $("#editSSManager").value.trim();
+            const newWins = toNonNegativeInt($("#editSSWins").value);
+            const newLosses = toNonNegativeInt($("#editSSLosses").value);
 
             if (!newName) return;
 
-            state.superstars = state.superstars.map(x => x.id === id ? { ...x, name: newName, showId: newShow, division: newDiv } : x);
+            state.superstars = state.superstars.map(x => x.id === id ? {
+                ...x,
+                name: newName,
+                showIds: Array.from(new Set(newShowIds)),
+                showId: newShowIds[0] ?? null,
+                division: newDiv,
+                isChampion: newChamps.length > 0,
+                championships: Array.from(new Set(newChamps)),
+                faction: newFaction,
+                manager: newManager,
+                wins: newWins,
+                losses: newLosses,
+            } : x);
             saveSoon();
             renderRoster();
             renderPlanner();
@@ -500,7 +674,9 @@ function renderPlannerEventSelect() {
 }
 
 function plannerRosterOptions(ev) {
-    const roster = ev.showId ? rosterForShow(ev.showId) : state.superstars;
+    const roster = ev.showId
+        ? rosterForShow(ev.showId, { excludeManagers: true })
+        : state.superstars.filter(ss => !managerNameSet().has(ss.name.toLowerCase()));
     return roster
         .slice()
         .sort((a, b) => a.name.localeCompare(b.name))
@@ -590,8 +766,8 @@ function renderPlanner() {
         tr.querySelector('[data-field="p4"]').value = p[3] || "";
     });
 
-    // One event listener for all inputs (event delegation)
-    body.oninput = (e) => {
+    // One event listener for all row edits (event delegation)
+    const handlePlannerRowEdit = (e) => {
         const target = e.target;
         if (!target || !target.matches("[data-field]")) return;
 
@@ -609,7 +785,18 @@ function renderPlanner() {
             const p2 = tr.querySelector('[data-field="p2"]').value;
             const p3 = tr.querySelector('[data-field="p3"]').value;
             const p4 = tr.querySelector('[data-field="p4"]').value;
-            ev2.matches[row].participants = [p1, p2, p3, p4].filter(Boolean);
+            const selected = [p1, p2, p3, p4];
+            const seen = new Set();
+            const deduped = selected.map(v => {
+                if (!v || seen.has(v)) return "";
+                seen.add(v);
+                return v;
+            });
+            tr.querySelector('[data-field="p1"]').value = deduped[0] || "";
+            tr.querySelector('[data-field="p2"]').value = deduped[1] || "";
+            tr.querySelector('[data-field="p3"]').value = deduped[2] || "";
+            tr.querySelector('[data-field="p4"]').value = deduped[3] || "";
+            ev2.matches[row].participants = deduped.filter(Boolean);
         } else if (field === "num") {
             ev2.matches[row].num = Number(target.value) || (row + 1);
         } else {
@@ -618,6 +805,8 @@ function renderPlanner() {
 
         upsertEvent(ev2); // debounced via saveSoon
     };
+    body.oninput = handlePlannerRowEdit;
+    body.onchange = handlePlannerRowEdit;
 
     // Delete row buttons
     $$("[data-del-row]").forEach(btn => {
@@ -672,7 +861,86 @@ function openPlanner(eventId) {
 
 // -------------------- SETTINGS: POPULATE / GENERATE --------------------
 function renderSettingsTools() {
-    // Settings view is static; nothing to hydrate on each render for now.
+    const list = $("#championshipsList");
+    if (!list) return;
+
+    if (!state.championships.length) {
+        list.innerHTML = `<div class="muted tiny">No championships yet. Add one above.</div>`;
+        return;
+    }
+
+    list.innerHTML = `
+      <div class="list">
+        ${state.championships.map(c => `
+          <div class="item">
+            <div class="item-title">${escapeHTML(c.name)}</div>
+            <div class="item-actions">
+              <button class="btn secondary" data-edit-title="${c.id}">Edit</button>
+              <button class="btn danger" data-del-title="${c.id}">Delete</button>
+            </div>
+          </div>
+        `).join("")}
+      </div>
+    `;
+
+    $$("[data-edit-title]").forEach(btn => {
+        btn.addEventListener("click", async () => {
+            const id = btn.dataset.editTitle;
+            const championship = getChampionship(id);
+            if (!championship) return;
+
+            const ok = await openModal({
+                title: "Edit championship",
+                bodyHTML: `<input id="editChampionshipName" class="input" value="${escapeAttr(championship.name)}" />`,
+                okText: "Save"
+            });
+            if (!ok.ok) return;
+
+            const nextName = $("#editChampionshipName").value.trim();
+            if (!nextName) return;
+
+            const duplicate = state.championships.find(c => c.id !== id && c.name.toLowerCase() === nextName.toLowerCase());
+            if (duplicate) {
+                await openModal({
+                    title: "Duplicate championship",
+                    bodyHTML: `<div class="muted">A championship with that name already exists.</div>`,
+                    okText: "OK",
+                    cancelText: "Close"
+                });
+                return;
+            }
+
+            state.championships = state.championships.map(c => c.id === id ? { ...c, name: nextName } : c);
+            saveSoon();
+            renderSettingsTools();
+            renderRoster();
+        });
+    });
+
+    $$("[data-del-title]").forEach(btn => {
+        btn.addEventListener("click", async () => {
+            const id = btn.dataset.delTitle;
+            const championship = getChampionship(id);
+            if (!championship) return;
+
+            const ok = await openModal({
+                title: "Delete championship?",
+                bodyHTML: `<div>Delete <b>${escapeHTML(championship.name)}</b>?</div>
+                <div class="muted tiny">This removes it from every superstar.</div>`,
+                okText: "Delete"
+            });
+            if (!ok.ok) return;
+
+            state.championships = state.championships.filter(c => c.id !== id);
+            state.superstars = state.superstars.map(ss => {
+                const nextChamps = parseChampionships(ss.championships).filter(chId => chId !== id);
+                return { ...ss, championships: nextChamps, isChampion: nextChamps.length > 0 };
+            });
+            saveSoon();
+            renderSettingsTools();
+            renderRoster();
+        });
+    });
 }
 
 function createShowsFromBulk(text) {
@@ -719,7 +987,7 @@ function createRosterFromBulk(text, defaultShowId = null, defaultDiv = "World") 
             division = parts[2];
         }
 
-        state.superstars.push({ id: uid("ss"), name, showId, division });
+        state.superstars.push(enrichSuperstar({ id: uid("ss"), name, showId, division }));
     }
     saveSoon();
 }
@@ -757,6 +1025,15 @@ function normalizeHexColor(color) {
     return /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(c) ? c : null;
 }
 
+function addChampionshipByName(rawName) {
+    const name = String(rawName ?? "").trim();
+    if (!name) return false;
+    const exists = state.championships.some(c => c.name.toLowerCase() === name.toLowerCase());
+    if (exists) return false;
+    state.championships.push({ id: uid("title"), name });
+    return true;
+}
+
 function importPopulateJSON(payload, { replace = true } = {}) {
     if (!payload || typeof payload !== "object") {
         throw new Error("Invalid JSON root. Expected an object.");
@@ -768,6 +1045,7 @@ function importPopulateJSON(payload, { replace = true } = {}) {
     }
 
     const showsInput = Array.isArray(payload.shows) ? payload.shows : [];
+    const championshipsInput = Array.isArray(payload.championships) ? payload.championships : [];
     const rosterInput = Array.isArray(payload.roster)
         ? payload.roster
         : (Array.isArray(payload.superstars) ? payload.superstars : []);
@@ -776,9 +1054,19 @@ function importPopulateJSON(payload, { replace = true } = {}) {
         : (Array.isArray(payload.ppvs) ? payload.ppvs : []);
 
     const showNameToId = new Map(state.shows.map(s => [s.name.toLowerCase(), s.id]));
+    const championshipByName = new Map(state.championships.map(c => [c.name.toLowerCase(), c.id]));
     const showIdSet = new Set(state.shows.map(s => s.id));
 
-    const result = { shows: 0, roster: 0, ples: 0 };
+    const result = { championships: 0, shows: 0, roster: 0, ples: 0 };
+
+    for (const row of championshipsInput) {
+        const normalized = enrichChampionship(row);
+        if (!normalized) continue;
+        if (championshipByName.has(normalized.name.toLowerCase())) continue;
+        state.championships.push(normalized);
+        championshipByName.set(normalized.name.toLowerCase(), normalized.id);
+        result.championships += 1;
+    }
 
     for (const row of showsInput) {
         const name = typeof row === "string" ? row.trim() : String(row?.name ?? "").trim();
@@ -800,12 +1088,47 @@ function importPopulateJSON(payload, { replace = true } = {}) {
         if (!name) continue;
 
         const showFromName = String(row?.show ?? row?.showName ?? "").trim().toLowerCase();
+        let showIds = [];
+        if (Array.isArray(row?.showIds)) {
+            showIds = row.showIds.map(x => String(x ?? "").trim()).filter(x => showIdSet.has(x));
+        } else if (Array.isArray(row?.shows)) {
+            showIds = row.shows
+                .map(x => showNameToId.get(String(x ?? "").trim().toLowerCase()) || null)
+                .filter(Boolean);
+        }
         let showId = row?.showId ?? null;
         if (showFromName) showId = showNameToId.get(showFromName) ?? showId;
-        if (showId && !showIdSet.has(showId)) showId = null;
+        if (showId && showIdSet.has(showId)) showIds.unshift(showId);
+        showIds = Array.from(new Set(showIds));
 
         const division = String(row?.division ?? "World").trim() || "World";
-        state.superstars.push({ id: uid("ss"), name, showId, division });
+        const championships = parseChampionships(row?.championships ?? row?.championship ?? [])
+            .map(ref => {
+                if (state.championships.some(c => c.id === ref)) return ref;
+                const nameRef = String(ref).trim();
+                if (!nameRef) return null;
+                const existingId = championshipByName.get(nameRef.toLowerCase());
+                if (existingId) return existingId;
+                const created = enrichChampionship({ name: nameRef });
+                if (!created) return null;
+                state.championships.push(created);
+                championshipByName.set(created.name.toLowerCase(), created.id);
+                result.championships += 1;
+                return created.id;
+            })
+            .filter(Boolean);
+        state.superstars.push(enrichSuperstar({
+            id: uid("ss"),
+            name,
+            showId: showIds[0] ?? null,
+            showIds,
+            division,
+            championships,
+            faction: row?.faction,
+            manager: row?.manager,
+            wins: row?.wins,
+            losses: row?.losses,
+        }));
         result.roster += 1;
     }
 
@@ -905,7 +1228,7 @@ function seedStarterUniverse() {
         ["LA Knight", sd.id, "Midcard"],
     ];
     roster.forEach(([name, showId, division]) => {
-        state.superstars.push({ id: uid("ss"), name, showId, division });
+        state.superstars.push(enrichSuperstar({ id: uid("ss"), name, showId, division }));
     });
 
     // Add one weekly today for RAW with 6 rows
@@ -927,12 +1250,9 @@ function seedStarterUniverse() {
 // -------------------- SELECT POPULATION --------------------
 function populateShowSelects() {
     // roster form show select
-    const ssShow = $("#ssShow");
-    if (ssShow) {
-        ssShow.innerHTML = [
-            `<option value="">Unassigned</option>`,
-            ...state.shows.map(s => `<option value="${s.id}">${escapeHTML(s.name)}</option>`)
-        ].join("");
+    const ssShows = $("#ssShows");
+    if (ssShows) {
+        ssShows.innerHTML = state.shows.map(s => `<option value="${s.id}">${escapeHTML(s.name)}</option>`).join("");
     }
 
     // roster filter
@@ -990,13 +1310,14 @@ $("#addShow").addEventListener("click", () => {
 
 $("#addSS").addEventListener("click", () => {
     const name = $("#ssName").value.trim();
-    const showId = $("#ssShow").value || null;
+    const showIds = Array.from($("#ssShows").selectedOptions).map(o => o.value);
     const division = $("#ssDivision").value;
     if (!name) return;
 
-    state.superstars.push({ id: uid("ss"), name, showId, division });
+    state.superstars.push(enrichSuperstar({ id: uid("ss"), name, showIds, showId: showIds[0] ?? null, division }));
     saveSoon();
     $("#ssName").value = "";
+    $("#ssShows").selectedIndex = -1;
     renderRoster();
 });
 
@@ -1044,7 +1365,7 @@ $("#importInput").addEventListener("change", async (e) => {
         });
         return;
     }
-    state = imported;
+    state = normalizeStateData(imported);
     store.save(state);
     renderAll();
     e.target.value = "";
@@ -1058,12 +1379,33 @@ $("#resetBtn").addEventListener("click", async () => {
     });
     if (!ok.ok) return;
     store.wipe();
-    state = store.load();
+    state = normalizeStateData(store.load());
     plannerEventId = null;
     renderAll();
 });
 
 // Settings: Populate / Generate
+$("#addChampionshipBtn").addEventListener("click", async () => {
+    const input = $("#championshipNameInput");
+    const name = input.value.trim();
+    if (!name) return;
+
+    const added = addChampionshipByName(name);
+    if (!added) {
+        await openModal({
+            title: "Duplicate championship",
+            bodyHTML: `<div class="muted">A championship with that name already exists.</div>`,
+            okText: "OK",
+            cancelText: "Close"
+        });
+        return;
+    }
+
+    input.value = "";
+    saveSoon();
+    renderSettingsTools();
+});
+
 $("#wipeBtn").addEventListener("click", async () => {
     const ok = await openModal({
         title: "Wipe everything?",
@@ -1072,7 +1414,7 @@ $("#wipeBtn").addEventListener("click", async () => {
     });
     if (!ok.ok) return;
     store.wipe();
-    state = store.load();
+    state = normalizeStateData(store.load());
     plannerEventId = null;
     renderAll();
 });
@@ -1121,7 +1463,7 @@ $("#settingsImportBtn").addEventListener("click", async () => {
         input.value = "";
         await openModal({
             title: "Import complete",
-            bodyHTML: `<div class="muted">Added ${result.shows} shows, ${result.roster} roster entries, and ${result.ples} PLEs.</div>`,
+            bodyHTML: `<div class="muted">Added ${result.championships} championships, ${result.shows} shows, ${result.roster} roster entries, and ${result.ples} PLEs.</div>`,
             okText: "Done",
             cancelText: "Close"
         });

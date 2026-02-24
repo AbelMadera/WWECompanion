@@ -167,7 +167,7 @@
                     <div class="card-title">Add Superstar</div>
                     <div class="card-body row gap wrap">
                         <input id="ssName" class="input grow" placeholder="Superstar name" />
-                        <select id="ssShow" class="input"></select>
+                        <select id="ssShows" class="input" multiple size="4" title="Assign one or more shows"></select>
                         <select id="ssDivision" class="input">
                             <option value="World">World</option>
                             <option value="Midcard">Midcard</option>
@@ -197,19 +197,23 @@
                     <div class="card-title">Populate From JSON</div>
                     <div class="card-body">
                         <div class="muted">
-                            Import one JSON file to populate shows, roster, and PLEs.
+                            Import one JSON file to populate championships, shows, roster, and PLEs.
                         </div>
 
                         <div class="hr"></div>
 
                         <div class="h3">Expected JSON</div>
                         <pre class="json-example">{
+  "championships": [
+    { "name": "World Heavyweight Championship" },
+    { "name": "Intercontinental Championship" }
+  ],
   "shows": [
     { "name": "RAW", "color": "#d00000" },
     { "name": "SmackDown", "color": "#1b5cff" }
   ],
   "roster": [
-    { "name": "Gunther", "show": "RAW", "division": "World" },
+    { "name": "Gunther", "show": "RAW", "division": "World", "championships": ["World Heavyweight Championship"] },
     { "name": "Becky Lynch", "show": "RAW", "division": "Women" }
   ],
   "ples": [
@@ -232,6 +236,16 @@
                                 <span class="muted tiny">Replace existing data before import</span>
                             </label>
                         </div>
+
+                        <div class="hr"></div>
+
+                        <div class="h3">Championships</div>
+                        <div class="row gap wrap">
+                            <input id="championshipNameInput" class="input grow"
+                                placeholder="Championship name (e.g., Intercontinental Championship)" />
+                            <button class="btn" id="addChampionshipBtn">Add Championship</button>
+                        </div>
+                        <div id="championshipsList" class="stack" style="margin-top:10px;"></div>
 
                         <div class="hr"></div>
 
