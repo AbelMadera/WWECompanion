@@ -1,0 +1,613 @@
+:root {
+    --bg: #0b0b0f;
+    --panel: #12121a;
+    --panel2: #161622;
+    --text: #f1f1f6;
+    --muted: #a7a7b6;
+    --line: #242436;
+    --danger: #ff4d4d;
+    --shadow: 0 10px 30px rgba(0, 0, 0, .35);
+    --radius: 16px;
+}
+
+* {
+    box-sizing: border-box
+}
+
+html,
+body {
+    height: 100%
+}
+
+body {
+    margin: 0;
+    font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+    background: radial-gradient(1200px 800px at 20% 0%, #171725 0%, var(--bg) 45%);
+    color: var(--text);
+}
+
+/* Mobile-first layout */
+.app {
+    display: block;
+    min-height: 100vh;
+}
+
+.sidebar {
+    display: none;
+}
+
+/* hidden on mobile by default */
+
+.main {
+    padding: 14px 14px 86px;
+    /* space for bottom nav */
+    max-width: 1100px;
+    margin: 0 auto;
+}
+
+.topbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+
+h1 {
+    margin: 0;
+    font-size: 22px;
+    line-height: 1.1
+}
+
+.h2 {
+    font-size: 18px;
+    font-weight: 900;
+    margin: 10px 0
+}
+
+.h3 {
+    font-size: 14px;
+    font-weight: 900;
+    margin: 12px 0 8px
+}
+
+.muted {
+    color: var(--muted)
+}
+
+.tiny {
+    font-size: 12px
+}
+
+.footer {
+    margin-top: 18px;
+    font-size: 12px
+}
+
+.topbar-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: flex-end
+}
+
+/* Buttons + inputs */
+.btn {
+    border: 1px solid #2f2f46;
+    background: rgba(255, 255, 255, .08);
+    color: var(--text);
+    padding: 10px 12px;
+    border-radius: 14px;
+    cursor: pointer;
+    font-weight: 700;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.btn:hover {
+    background: rgba(255, 255, 255, .12)
+}
+
+.btn.secondary {
+    background: rgba(255, 255, 255, .04)
+}
+
+.btn.secondary:hover {
+    background: rgba(255, 255, 255, .08)
+}
+
+.btn.danger {
+    background: rgba(255, 77, 77, .12);
+    border-color: rgba(255, 77, 77, .35);
+}
+
+.btn.danger:hover {
+    background: rgba(255, 77, 77, .18)
+}
+
+.file-btn input {
+    display: none
+}
+
+.input {
+    background: rgba(255, 255, 255, .05);
+    border: 1px solid var(--line);
+    color: var(--text);
+    padding: 10px 12px;
+    border-radius: 14px;
+    outline: none;
+    width: 100%;
+    max-width: 100%;
+}
+
+.input:focus {
+    border-color: #3a3a55
+}
+
+.textarea {
+    min-height: 120px;
+    resize: vertical
+}
+
+.json-example {
+    margin: 0;
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: rgba(0, 0, 0, .2);
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.45;
+    overflow: auto;
+}
+
+.grow {
+    flex: 1
+}
+
+/* Cards */
+.card {
+    background: rgba(255, 255, 255, .04);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    margin: 10px 0;
+}
+
+.card-title {
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--line);
+    font-weight: 900;
+}
+
+.card-body {
+    padding: 14px;
+}
+
+.card.inner {
+    margin: 0;
+    box-shadow: none;
+    background: rgba(255, 255, 255, .03);
+}
+
+.hr {
+    height: 1px;
+    background: var(--line);
+    margin: 14px 0;
+}
+
+/* Layout helpers */
+.view {
+    display: block
+}
+
+.hidden {
+    display: none
+}
+
+.row {
+    display: flex;
+    align-items: center
+}
+
+.space {
+    justify-content: space-between
+}
+
+.gap {
+    gap: 10px
+}
+
+.wrap {
+    flex-wrap: wrap
+}
+
+.stack {
+    display: flex;
+    flex-direction: column;
+    gap: 10px
+}
+
+.grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 10px;
+}
+
+.grid2 {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 10px;
+}
+
+/* Badges */
+.badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: rgba(255, 255, 255, .04);
+    font-size: 12px;
+    margin: 4px 6px 4px 0;
+}
+
+.dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 999px;
+    display: inline-block;
+    background: #999;
+}
+
+.pill {
+    border: 1px solid var(--line);
+    background: rgba(255, 255, 255, .04);
+    padding: 6px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+}
+
+/* Lists */
+.list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px
+}
+
+.item {
+    padding: 12px;
+    border: 1px solid var(--line);
+    background: rgba(0, 0, 0, .18);
+    border-radius: 14px;
+}
+
+.item-title {
+    font-weight: 900;
+    margin-bottom: 6px;
+}
+
+.item-sub {
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.item-actions {
+    margin-top: 10px;
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+/* Calendar */
+.calendar {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 8px;
+}
+
+.cal-cell {
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    background: rgba(255, 255, 255, .03);
+    min-height: 76px;
+    padding: 10px;
+    cursor: pointer;
+}
+
+.cal-cell:hover {
+    background: rgba(255, 255, 255, .06)
+}
+
+.cal-date {
+    font-weight: 900;
+    font-size: 12px;
+    color: var(--muted)
+}
+
+.cal-badges {
+    margin-top: 6px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.cal-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 26px;
+    padding: 2px 6px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: rgba(255, 255, 255, .08);
+    font-size: 10px;
+    font-weight: 800;
+    line-height: 1.1;
+}
+
+.cal-more {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 6px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: rgba(255, 255, 255, .04);
+    color: var(--muted);
+    font-size: 10px;
+    font-weight: 800;
+    line-height: 1.1;
+}
+
+/* Planner table */
+.table-wrap {
+    margin-top: 12px;
+    overflow: auto;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+}
+
+.table {
+    width: 100%;
+    border-collapse: collapse;
+    min-width: 980px;
+    background: rgba(0, 0, 0, .15);
+}
+
+.table thead th {
+    position: sticky;
+    top: 0;
+    background: rgba(18, 18, 26, .95);
+    border-bottom: 1px solid var(--line);
+    padding: 10px;
+    text-align: left;
+    font-size: 12px;
+    color: var(--muted);
+}
+
+.table td {
+    border-top: 1px solid rgba(255, 255, 255, .06);
+    padding: 8px 10px;
+    vertical-align: top;
+}
+
+.cell-input {
+    width: 100%;
+    min-height: 36px;
+    background: rgba(255, 255, 255, .04);
+    border: 1px solid rgba(255, 255, 255, .10);
+    color: var(--text);
+    border-radius: 12px;
+    padding: 8px 10px;
+    outline: none;
+}
+
+.cell-input:focus {
+    border-color: #3a3a55
+}
+
+.small {
+    min-height: 36px
+}
+
+textarea.cell-input {
+    resize: vertical
+}
+
+/* Modal */
+.modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, .55);
+    display: grid;
+    place-items: center;
+    padding: 18px;
+}
+
+.modal.hidden {
+    display: none;
+}
+
+.modal-card {
+    width: min(720px, 100%);
+    background: rgba(18, 18, 26, .98);
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    box-shadow: var(--shadow);
+}
+
+.modal-title {
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--line);
+    font-weight: 900;
+}
+
+.modal-body {
+    padding: 16px;
+}
+
+.modal-actions {
+    padding: 14px 16px;
+    border-top: 1px solid var(--line);
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+}
+
+/* Bottom nav (mobile) */
+.bottom-nav {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    padding: 10px 10px calc(10px + env(safe-area-inset-bottom));
+    background: rgba(18, 18, 26, .92);
+    border-top: 1px solid var(--line);
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 8px;
+    backdrop-filter: blur(10px);
+}
+
+.bnav-btn {
+    border: 1px solid var(--line);
+    background: rgba(255, 255, 255, .04);
+    color: var(--text);
+    padding: 10px 8px;
+    border-radius: 14px;
+    font-weight: 800;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.bnav-btn.active {
+    background: rgba(255, 255, 255, .10);
+    border-color: #3a3a55
+}
+
+/* Desktop/tablet enhancements */
+@media (min-width: 960px) {
+    .app {
+        display: grid;
+        grid-template-columns: 280px 1fr;
+        min-height: 100vh;
+    }
+
+    .sidebar {
+        display: flex;
+        border-right: 1px solid var(--line);
+        background: linear-gradient(180deg, rgba(18, 18, 26, .9), rgba(12, 12, 16, .9));
+        padding: 18px;
+        position: sticky;
+        top: 0;
+        height: 100vh;
+        flex-direction: column;
+        gap: 14px;
+    }
+
+    .bottom-nav {
+        display: none
+    }
+
+    .main {
+        padding: 18px 22px 40px
+    }
+
+    h1 {
+        font-size: 26px
+    }
+
+    .grid {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .grid2 {
+        grid-template-columns: 1fr 1fr;
+    }
+}
+
+@media (max-width: 720px) {
+    .calendar {
+        gap: 5px;
+    }
+
+    .cal-cell {
+        min-height: 62px;
+        padding: 6px;
+        border-radius: 12px;
+    }
+
+    .cal-date {
+        font-size: 11px;
+    }
+
+    .cal-badges {
+        margin-top: 4px;
+        gap: 3px;
+    }
+
+    .cal-pill,
+    .cal-more {
+        min-width: 22px;
+        padding: 2px 4px;
+        font-size: 9px;
+    }
+}
+
+/* Sidebar internals (desktop only) */
+.brand {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+}
+
+.logo {
+    width: 42px;
+    height: 42px;
+    border-radius: 12px;
+    display: grid;
+    place-items: center;
+    background: linear-gradient(135deg, #ff2d2d, #b000ff);
+    box-shadow: var(--shadow);
+    font-weight: 900;
+}
+
+.title {
+    font-weight: 900;
+    letter-spacing: .3px;
+}
+
+.sub {
+    font-size: 12px;
+    color: var(--muted);
+}
+
+.nav {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 6px;
+}
+
+.nav-btn {
+    border: 1px solid var(--line);
+    background: rgba(255, 255, 255, .03);
+    color: var(--text);
+    padding: 12px 12px;
+    border-radius: 14px;
+    text-align: left;
+    cursor: pointer;
+}
+
+.nav-btn:hover {
+    background: rgba(255, 255, 255, .06)
+}
+
+.nav-btn.active {
+    background: rgba(255, 255, 255, .10);
+    border-color: #3a3a55;
+}
+
+.sidebar-footer {
+    margin-top: auto;
+}

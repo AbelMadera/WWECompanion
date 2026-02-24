@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+    <title>Universe Booker</title>
+    <link rel="stylesheet" href="styles.css" />
+</head>
+
+<body>
+    <div class="app">
+        <!-- Side nav (desktop/tablet) -->
+        <aside class="sidebar" aria-label="Navigation">
+            <div class="brand">
+                <div class="logo">UB</div>
+                <div>
+                    <div class="title">Universe Booker</div>
+                    <div class="sub">LocalStorage • Mobile-first</div>
+                </div>
+            </div>
+
+            <nav class="nav" role="tablist" aria-label="Views">
+                <button class="nav-btn active" data-view="dashboard">Dashboard</button>
+                <button class="nav-btn" data-view="calendar">Calendar</button>
+                <button class="nav-btn" data-view="planner">Planner</button>
+                <button class="nav-btn" data-view="shows">Shows</button>
+                <button class="nav-btn" data-view="roster">Roster</button>
+                <button class="nav-btn" data-view="settings">Settings</button>
+            </nav>
+
+            <div class="sidebar-footer">
+                <div class="tiny muted">Tip: Export often.</div>
+            </div>
+        </aside>
+
+        <!-- Main content -->
+        <main class="main">
+            <header class="topbar">
+                <div>
+                    <h1 id="viewTitle">Dashboard</h1>
+                    <div id="viewSubtitle" class="muted"></div>
+                </div>
+
+                <div class="topbar-actions">
+                    <button id="exportBtn" class="btn">Export</button>
+                    <label class="btn secondary file-btn">
+                        Import
+                        <input id="importInput" type="file" accept="application/json" />
+                    </label>
+                    <button id="resetBtn" class="btn danger">Reset</button>
+                </div>
+            </header>
+
+            <!-- DASHBOARD -->
+            <section id="view-dashboard" class="view">
+                <div class="grid">
+                    <div class="card">
+                        <div class="card-title">Next Event</div>
+                        <div id="nextEvent" class="card-body"></div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-title">Quick Add</div>
+                        <div class="card-body row gap wrap">
+                            <button class="btn" id="quickAddEvent">Add Event</button>
+                            <button class="btn secondary" id="quickOpenToday">Open Today</button>
+                        </div>
+                        <div class="card-body muted tiny" style="padding-top:0;">
+                            Add a weekly show or PLE on a date, then plan the card in Planner.
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-title">Your Data</div>
+                        <div id="stats" class="card-body"></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- CALENDAR -->
+            <section id="view-calendar" class="view hidden">
+                <div class="card">
+                    <div class="card-body row space gap wrap">
+                        <div class="row gap">
+                            <button class="btn secondary" id="calPrev" aria-label="Previous month">←</button>
+                            <button class="btn secondary" id="calToday">Today</button>
+                            <button class="btn secondary" id="calNext" aria-label="Next month">→</button>
+                        </div>
+
+                        <div class="row gap wrap">
+                            <select id="calShowFilter" class="input">
+                                <option value="all">All shows</option>
+                            </select>
+                            <button class="btn" id="addEventBtn">Add Event</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="h2" id="calendarTitle"></div>
+                <div id="calendarGrid" class="calendar" aria-label="Calendar grid"></div>
+
+                <div class="card">
+                    <div class="card-title">Events on selected date</div>
+                    <div id="eventsList" class="card-body"></div>
+                </div>
+            </section>
+
+            <!-- PLANNER -->
+            <section id="view-planner" class="view hidden">
+                <div class="card">
+                    <div class="card-body row space gap wrap">
+                        <div class="row gap wrap">
+                            <select id="plannerEventSelect" class="input"></select>
+                            <button id="plannerNewEvent" class="btn secondary">New Event</button>
+                        </div>
+                        <div class="row gap wrap">
+                            <button id="addMatchRow" class="btn">Add Row</button>
+                            <span id="saveState" class="pill muted">Saved</span>
+                        </div>
+                    </div>
+                    <div class="card-body muted tiny" style="padding-top:0;">
+                        Tip: This edits like a spreadsheet but saves smoothly in the background.
+                    </div>
+                </div>
+
+                <div id="plannerMeta" class="muted"></div>
+
+                <div class="table-wrap" role="region" aria-label="Planner table">
+                    <table class="table" id="matchesTable">
+                        <thead>
+                            <tr>
+                                <th style="width:60px;">#</th>
+                                <th>Participants</th>
+                                <th style="width:160px;">Match Type</th>
+                                <th>Storyline</th>
+                                <th style="width:160px;">Result</th>
+                                <th>Rivalry Notes</th>
+                                <th style="width:70px;"></th>
+                            </tr>
+                        </thead>
+                        <tbody id="matchesBody"></tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- SHOWS -->
+            <section id="view-shows" class="view hidden">
+                <div class="card">
+                    <div class="card-title">Add Show</div>
+                    <div class="card-body row gap wrap">
+                        <input id="showName" class="input grow" placeholder="Show name (RAW, SmackDown, NXT…)" />
+                        <input id="showColor" class="input" type="color" value="#d00000" title="Color" />
+                        <button id="addShow" class="btn">Add</button>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-title">Shows</div>
+                    <div id="showsList" class="card-body"></div>
+                </div>
+            </section>
+
+            <!-- ROSTER -->
+            <section id="view-roster" class="view hidden">
+                <div class="card">
+                    <div class="card-title">Add Superstar</div>
+                    <div class="card-body row gap wrap">
+                        <input id="ssName" class="input grow" placeholder="Superstar name" />
+                        <select id="ssShow" class="input"></select>
+                        <select id="ssDivision" class="input">
+                            <option value="World">World</option>
+                            <option value="Midcard">Midcard</option>
+                            <option value="Tag">Tag</option>
+                            <option value="Women">Women</option>
+                            <option value="Other">Other</option>
+                        </select>
+                        <button id="addSS" class="btn">Add</button>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-title row space gap wrap">
+                        <span>Roster</span>
+                        <div class="row gap wrap">
+                            <select id="rosterFilter" class="input"></select>
+                            <input id="rosterSearch" class="input" placeholder="Search…" />
+                        </div>
+                    </div>
+                    <div id="rosterList" class="card-body"></div>
+                </div>
+            </section>
+
+            <!-- SETTINGS -->
+            <section id="view-settings" class="view hidden">
+                <div class="card">
+                    <div class="card-title">Populate From JSON</div>
+                    <div class="card-body">
+                        <div class="muted">
+                            Import one JSON file to populate shows, roster, and PLEs.
+                        </div>
+
+                        <div class="hr"></div>
+
+                        <div class="h3">Expected JSON</div>
+                        <pre class="json-example">{
+  "shows": [
+    { "name": "RAW", "color": "#d00000" },
+    { "name": "SmackDown", "color": "#1b5cff" }
+  ],
+  "roster": [
+    { "name": "Gunther", "show": "RAW", "division": "World" },
+    { "name": "Becky Lynch", "show": "RAW", "division": "Women" }
+  ],
+  "ples": [
+    { "name": "Backlash", "date": "2026-05-10", "show": "RAW" },
+    { "name": "SummerSlam", "date": "2026-08-09" }
+  ]
+}</pre>
+
+                        <div class="row gap wrap">
+                            <label class="btn secondary file-btn">
+                                Choose JSON
+                                <input id="settingsImportInput" type="file" accept="application/json" />
+                            </label>
+                            <button class="btn" id="settingsImportBtn">Import Data</button>
+                        </div>
+
+                        <div class="row gap wrap" style="margin-top:10px;">
+                            <label class="row gap">
+                                <input id="settingsReplaceData" type="checkbox" checked />
+                                <span class="muted tiny">Replace existing data before import</span>
+                            </label>
+                        </div>
+
+                        <div class="hr"></div>
+
+                        <div class="h3">Danger Zone</div>
+                        <div class="row gap wrap">
+                            <button class="btn secondary" id="settingsClearFileBtn">Clear Selected File</button>
+                            <button class="btn secondary" id="wipeBtn">Wipe Everything</button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Modal -->
+            <div id="modal" class="modal hidden" aria-hidden="true">
+                <div class="modal-card">
+                    <div class="modal-title" id="modalTitle">Modal</div>
+                    <div class="modal-body" id="modalBody"></div>
+                    <div class="modal-actions">
+                        <button class="btn secondary" id="modalCancel">Cancel</button>
+                        <button class="btn" id="modalOk">OK</button>
+                    </div>
+                </div>
+            </div>
+
+            <footer class="footer muted">HTML/CSS/JS • LocalStorage • v0.2</footer>
+
+            <!-- Bottom nav (mobile) -->
+            <nav class="bottom-nav" aria-label="Bottom navigation">
+                <button class="bnav-btn active" data-view="dashboard">Home</button>
+                <button class="bnav-btn" data-view="calendar">Cal</button>
+                <button class="bnav-btn" data-view="planner">Plan</button>
+                <button class="bnav-btn" data-view="roster">Roster</button>
+                <button class="bnav-btn" data-view="settings">Settings</button>
+            </nav>
+        </main>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+
+</html>
