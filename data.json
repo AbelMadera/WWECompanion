@@ -1,0 +1,346 @@
+{
+    "championships": [
+        {
+            "name": "World Heavyweight Championship"
+        },
+        {
+            "name": "Intercontinental Championship"
+        },
+        {
+            "name": "United States Championship"
+        },
+        {
+            "name": "RAW Tag Team Championship"
+        },
+        {
+            "name": "WWE Women's World Championship"
+        },
+        {
+            "name": "WWE Women's Tag Team Championship"
+        },
+        {
+            "name": "Undisputed WWE Championship"
+        },
+        {
+            "name": "SmackDown Tag Team Championship"
+        },
+        {
+            "name": "WWE Women's Championship"
+        },
+        {
+            "name": "NXT Championship"
+        },
+        {
+            "name": "NXT North American Championship"
+        },
+        {
+            "name": "NXT Tag Team Championship"
+        },
+        {
+            "name": "NXT Women's Championship"
+        }
+    ],
+    "shows": [
+        {
+            "name": "RAW",
+            "color": "#d00000"
+        },
+        {
+            "name": "SmackDown",
+            "color": "#1b5cff"
+        },
+        {
+            "name": "NXT",
+            "color": "#f5c400"
+        }
+    ],
+    "roster": [
+        {
+            "name": "Gunther",
+            "show": "RAW",
+            "division": "World",
+            "championships": [
+                "World Heavyweight Championship"
+            ]
+        },
+        {
+            "name": "Seth Rollins",
+            "show": "RAW",
+            "division": "World"
+        },
+        {
+            "name": "CM Punk",
+            "show": "RAW",
+            "division": "World"
+        },
+        {
+            "name": "Drew McIntyre",
+            "show": "RAW",
+            "division": "World"
+        },
+        {
+            "name": "Sami Zayn",
+            "show": "RAW",
+            "division": "World"
+        },
+        {
+            "name": "Jey Uso",
+            "show": "RAW",
+            "division": "World"
+        },
+        {
+            "name": "Chad Gable",
+            "show": "RAW",
+            "division": "Midcard"
+        },
+        {
+            "name": "Dominik Mysterio",
+            "show": "RAW",
+            "division": "Midcard"
+        },
+        {
+            "name": "Finn Balor",
+            "show": "RAW",
+            "division": "Midcard"
+        },
+        {
+            "name": "JD McDonagh",
+            "show": "RAW",
+            "division": "Midcard"
+        },
+        {
+            "name": "Bronson Reed",
+            "show": "RAW",
+            "division": "Midcard"
+        },
+        {
+            "name": "Kofi Kingston",
+            "show": "RAW",
+            "division": "Tag"
+        },
+        {
+            "name": "Xavier Woods",
+            "show": "RAW",
+            "division": "Tag"
+        },
+        {
+            "name": "Otis",
+            "show": "RAW",
+            "division": "Tag"
+        },
+        {
+            "name": "Akira Tozawa",
+            "show": "RAW",
+            "division": "Tag"
+        },
+        {
+            "name": "Rhea Ripley",
+            "show": "RAW",
+            "division": "Women",
+            "championships": [
+                "WWE Women's World Championship"
+            ]
+        },
+        {
+            "name": "Becky Lynch",
+            "show": "RAW",
+            "division": "Women"
+        },
+        {
+            "name": "Liv Morgan",
+            "show": "RAW",
+            "division": "Women"
+        },
+        {
+            "name": "Raquel Rodriguez",
+            "show": "RAW",
+            "division": "Women"
+        },
+        {
+            "name": "Shayna Baszler",
+            "show": "RAW",
+            "division": "Women"
+        },
+        {
+            "name": "Alexa Bliss",
+            "show": "RAW",
+            "division": "Women"
+        },
+        {
+            "name": "Roman Reigns",
+            "show": "SmackDown",
+            "division": "World",
+            "championships": [
+                "Undisputed WWE Championship"
+            ]
+        },
+        {
+            "name": "AJ Styles",
+            "show": "SmackDown",
+            "division": "World"
+        },
+        {
+            "name": "Kevin Owens",
+            "show": "SmackDown",
+            "division": "World"
+        },
+        {
+            "name": "Randy Orton",
+            "show": "SmackDown",
+            "division": "World"
+        },
+        {
+            "name": "Solo Sikoa",
+            "show": "SmackDown",
+            "division": "World"
+        },
+        {
+            "name": "LA Knight",
+            "show": "SmackDown",
+            "division": "Midcard",
+            "championships": [
+                "United States Championship"
+            ]
+        },
+        {
+            "name": "Santos Escobar",
+            "show": "SmackDown",
+            "division": "Midcard"
+        },
+        {
+            "name": "Grayson Waller",
+            "show": "SmackDown",
+            "division": "Midcard"
+        },
+        {
+            "name": "Jimmy Uso",
+            "show": "SmackDown",
+            "division": "Tag"
+        },
+        {
+            "name": "Butch",
+            "show": "SmackDown",
+            "division": "Tag"
+        },
+        {
+            "name": "Sheamus",
+            "show": "SmackDown",
+            "division": "Tag"
+        },
+        {
+            "name": "Bianca Belair",
+            "show": "SmackDown",
+            "division": "Women",
+            "championships": [
+                "WWE Women's Championship"
+            ]
+        },
+        {
+            "name": "Bayley",
+            "show": "SmackDown",
+            "division": "Women"
+        },
+        {
+            "name": "Iyo Sky",
+            "show": "SmackDown",
+            "division": "Women"
+        },
+        {
+            "name": "Naomi",
+            "show": "SmackDown",
+            "division": "Women"
+        },
+        {
+            "name": "Chelsea Green",
+            "show": "SmackDown",
+            "division": "Women"
+        },
+        {
+            "name": "Carmelo Hayes",
+            "show": "NXT",
+            "division": "World",
+            "championships": [
+                "NXT Championship"
+            ]
+        },
+        {
+            "name": "Trick Williams",
+            "show": "NXT",
+            "division": "World"
+        },
+        {
+            "name": "Ilja Dragunov",
+            "show": "NXT",
+            "division": "World"
+        },
+        {
+            "name": "Oba Femi",
+            "show": "NXT",
+            "division": "Midcard",
+            "championships": [
+                "NXT North American Championship"
+            ]
+        },
+        {
+            "name": "Wes Lee",
+            "show": "NXT",
+            "division": "Midcard"
+        },
+        {
+            "name": "Roxanne Perez",
+            "show": "NXT",
+            "division": "Women",
+            "championships": [
+                "NXT Women's Championship"
+            ]
+        },
+        {
+            "name": "Lyra Valkyria",
+            "show": "NXT",
+            "division": "Women"
+        },
+        {
+            "name": "Tiffany Stratton",
+            "show": "NXT",
+            "division": "Women"
+        }
+    ],
+    "ples": [
+        {
+            "name": "Royal Rumble",
+            "date": "2026-01-25"
+        },
+        {
+            "name": "Elimination Chamber",
+            "date": "2026-02-22"
+        },
+        {
+            "name": "WrestleMania Night 1",
+            "date": "2026-04-04"
+        },
+        {
+            "name": "WrestleMania Night 2",
+            "date": "2026-04-05"
+        },
+        {
+            "name": "Backlash",
+            "date": "2026-05-10"
+        },
+        {
+            "name": "Money in the Bank",
+            "date": "2026-06-14"
+        },
+        {
+            "name": "SummerSlam Night 1",
+            "date": "2026-08-01"
+        },
+        {
+            "name": "SummerSlam Night 2",
+            "date": "2026-08-02"
+        },
+        {
+            "name": "Survivor Series",
+            "date": "2026-11-22"
+        }
+    ]
+}
