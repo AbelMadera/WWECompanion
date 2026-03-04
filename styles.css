@@ -13,6 +13,8 @@
     --dur-fast: .18s;
     --dur-med: .28s;
     --dur-slow: .4s;
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 * {
@@ -50,7 +52,7 @@ body {
 /* hidden on mobile by default */
 
 .main {
-    padding: 12px 12px 92px;
+    padding: calc(12px + var(--safe-top)) 12px calc(96px + var(--safe-bottom));
     /* space for bottom nav */
     max-width: 1100px;
     margin: 0 auto;
@@ -62,11 +64,12 @@ body {
     align-items: flex-start;
     gap: 10px;
     margin-bottom: 12px;
+    min-height: 44px;
 }
 
 h1 {
     margin: 0;
-    font-size: 20px;
+    font-size: clamp(20px, 4.8vw, 28px);
     line-height: 1.1
 }
 
@@ -898,7 +901,7 @@ textarea.cell-input {
     left: 0;
     right: 0;
     bottom: 0;
-    padding: 10px 10px calc(10px + env(safe-area-inset-bottom));
+    padding: 10px 10px calc(10px + var(--safe-bottom));
     background: rgba(18, 18, 26, .92);
     border-top: 1px solid var(--line);
     display: grid;
@@ -913,9 +916,11 @@ textarea.cell-input {
     border: 1px solid var(--line);
     background: rgba(255, 255, 255, .04);
     color: var(--text);
-    padding: 10px 8px;
+    padding: 10px 6px;
     border-radius: 14px;
     font-weight: 800;
+    font-size: clamp(11px, 2.9vw, 13px);
+    line-height: 1.15;
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
     transition:
@@ -976,7 +981,7 @@ textarea.cell-input {
 
 @media (max-width: 720px) {
     .main {
-        padding: 10px 10px 96px;
+        padding: calc(8px + var(--safe-top)) 10px calc(100px + var(--safe-bottom));
     }
 
     .topbar {
@@ -990,7 +995,7 @@ textarea.cell-input {
     }
 
     h1 {
-        font-size: 19px;
+        font-size: clamp(18px, 6.2vw, 21px);
     }
 
     .card {
@@ -1069,6 +1074,16 @@ textarea.cell-input {
         padding: 8px;
     }
 
+    .rank-name {
+        max-width: 100%;
+        font-size: clamp(16px, 6vw, 22px);
+    }
+
+    .rank-pos {
+        font-size: clamp(11px, 4vw, 14px);
+        margin-left: 4px;
+    }
+
     .calendar {
         gap: 5px;
     }
@@ -1093,6 +1108,41 @@ textarea.cell-input {
         min-width: 22px;
         padding: 2px 4px;
         font-size: 9px;
+    }
+}
+
+@media (max-width: 420px) {
+    .main {
+        padding-left: 8px;
+        padding-right: 8px;
+    }
+
+    .card-title {
+        padding: 10px;
+    }
+
+    .card-body {
+        padding: 10px;
+    }
+
+    .rank-row {
+        gap: 8px;
+    }
+
+    .rank-left {
+        gap: 8px;
+    }
+
+    .rank-photo,
+    .rank-photo-fallback {
+        width: 38px;
+        height: 38px;
+    }
+
+    .bottom-nav {
+        gap: 6px;
+        padding-left: 8px;
+        padding-right: 8px;
     }
 }
 
