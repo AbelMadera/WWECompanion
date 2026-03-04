@@ -202,20 +202,20 @@
                             Pick a weekday for each show, then generate weekly events on the calendar.
                         </div>
                         <div id="settingsWeeklyScheduleList" class="stack" style="margin-top:10px;"></div>
-                        <div class="row gap wrap" style="margin-top:10px;">
-                            <label class="stack" style="min-width:170px;">
+                        <div class="weekly-controls">
+                            <label class="stack weekly-control weekly-control-date">
                                 <span class="muted tiny">Start date</span>
                                 <input id="settingsWeeklyStartDate" class="input" type="date" />
                             </label>
-                            <label class="stack" style="min-width:120px;">
+                            <label class="stack weekly-control">
                                 <span class="muted tiny">Months</span>
                                 <input id="settingsWeeklyMonths" class="input" type="number" min="1" max="24" value="3" />
                             </label>
-                            <label class="stack" style="min-width:120px;">
+                            <label class="stack weekly-control">
                                 <span class="muted tiny">Rows per show</span>
                                 <input id="settingsWeeklyRows" class="input" type="number" min="0" max="20" value="6" />
                             </label>
-                            <button class="btn" id="settingsGenerateWeeklyBtn">Populate Calendar</button>
+                            <button class="btn weekly-generate-btn" id="settingsGenerateWeeklyBtn">Populate Calendar</button>
                         </div>
 
                         <div class="hr"></div>
