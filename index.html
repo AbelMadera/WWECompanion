@@ -52,22 +52,6 @@
                     </div>
 
                     <div class="card">
-                        <div class="card-title">Quick Add</div>
-                        <div class="card-body row gap wrap">
-                            <button class="btn" id="quickAddEvent">Add Event</button>
-                            <button class="btn secondary" id="quickOpenToday">Open Today</button>
-                        </div>
-                        <div class="card-body muted tiny" style="padding-top:0;">
-                            Add a weekly show or PLE on a date, then plan the card in Planner.
-                        </div>
-                    </div>
-
-                    <div class="card">
-                        <div class="card-title">Your Data</div>
-                        <div id="stats" class="card-body"></div>
-                    </div>
-
-                    <div class="card">
                         <div class="card-title">Weekly Rankings</div>
                         <div id="weeklyRankings" class="card-body"></div>
                     </div>
@@ -161,10 +145,10 @@
             <section id="view-roster" class="view hidden">
                 <div class="card">
                     <div class="card-title">Add Superstar</div>
-                    <div class="card-body row gap wrap">
+                    <div class="card-body roster-add-form">
                         <input id="ssName" class="input grow" placeholder="Superstar name" />
                         <input id="ssPhoto" class="input grow" placeholder="Photo URL (optional)" />
-                        <select id="ssShows" class="input" multiple size="4" title="Assign one or more shows"></select>
+                        <div id="ssShows" class="show-tag-picker grow" aria-label="Assign one or more shows"></div>
                         <select id="ssDivision" class="input">
                             <option value="World">World</option>
                             <option value="Midcard">Midcard</option>
@@ -179,7 +163,7 @@
                 <div class="card">
                     <div class="card-title row space gap wrap">
                         <span>Roster</span>
-                        <div class="row gap wrap">
+                        <div class="row gap wrap roster-filters">
                             <select id="rosterFilter" class="input"></select>
                             <input id="rosterSearch" class="input" placeholder="Search…" />
                         </div>

@@ -169,6 +169,7 @@ const store = {
 
 let state = store.load();
 state = normalizeStateData(state);
+let addSuperstarShowIds = new Set();
 
 // Debounced saving (smooth typing)
 let saveTimer = null;
@@ -221,6 +222,45 @@ function superstarInitials(name) {
     if (!parts.length) return "?";
     return parts.slice(0, 2).map(p => p[0].toUpperCase()).join("");
 }
+function superstarNameById(id) {
+    return state.superstars.find(ss => ss.id === id)?.name || "";
+}
+function isTeamOrHandicapMatch(matchType, participantCount) {
+    const t = String(matchType || "").toLowerCase();
+    if (participantCount < 3) return false;
+    return /tag|handicap/.test(t);
+}
+function normalizedParticipantTeams(match) {
+    const raw = match?.participantTeams;
+    if (!raw || typeof raw !== "object") return {};
+    const out = {};
+    Object.entries(raw).forEach(([participantId, team]) => {
+        const pid = String(participantId || "").trim();
+        const t = String(team || "").trim().toUpperCase();
+        if (!pid) return;
+        if (t !== "A" && t !== "B") return;
+        out[pid] = t;
+    });
+    return out;
+}
+function inferMatchTeams(matchType, participantIds, participantTeams = {}) {
+    const ids = Array.isArray(participantIds) ? participantIds.filter(Boolean) : [];
+    if (ids.length < 3) return null;
+    const teamAExplicit = ids.filter(id => participantTeams[id] === "A");
+    const teamBExplicit = ids.filter(id => participantTeams[id] === "B");
+    if (teamAExplicit.length && teamBExplicit.length) {
+        return [teamAExplicit, teamBExplicit];
+    }
+    const t = String(matchType || "").toLowerCase();
+    if (t.includes("handicap")) {
+        return [ids.slice(0, 1), ids.slice(1)];
+    }
+    if (t.includes("tag")) {
+        const split = Math.ceil(ids.length / 2);
+        return [ids.slice(0, split), ids.slice(split)];
+    }
+    return null;
+}
 function normalizeNameForCompare(value) {
     return String(value ?? "")
         .toLowerCase()
@@ -260,8 +300,11 @@ function resolveMatchParticipantIds(match, superstarNameToId) {
     return Array.from(new Set(ids));
 }
 function resolveMatchWinnerId(match, participantIds, superstarNameById) {
-    const result = normalizeNameForCompare(match?.result ?? "");
-    if (!result || participantIds.length === 0) return null;
+    const rawResult = String(match?.result ?? "").trim();
+    if (!rawResult || participantIds.length === 0) return null;
+    if (rawResult === "TEAM:A" || rawResult === "TEAM:B") return rawResult;
+    if (participantIds.includes(rawResult)) return rawResult;
+    const result = normalizeNameForCompare(rawResult);
     for (const pid of participantIds) {
         const participantName = normalizeNameForCompare(superstarNameById.get(pid) || "");
         if (!participantName) continue;
@@ -280,7 +323,7 @@ function matchImportanceMultiplier(event, matchIndex, matchesLength, match) {
     if (isMainEvent) return 1.15;
     return 1.0;
 }
-function computeWeeklyRankings() {
+function computeWeeklyRankings(topN = 3) {
     const baseRating = 1500;
     const kBase = 24;
     const weekStartISO = toISODateDaysAgo(6);
@@ -315,11 +358,72 @@ function computeWeeklyRankings() {
             if (participantIds.length < 2) return;
 
             const winnerId = resolveMatchWinnerId(match, participantIds, superstarNameById);
+            const pinById = String(match?.pinBy ?? "").trim();
             const m = matchImportanceMultiplier(ev, idx, matches.length, match);
             const kEff = kBase * m;
 
             const deltas = new Map();
             participantIds.forEach(id => deltas.set(id, 0));
+
+            const participantTeams = normalizedParticipantTeams(match);
+            const teams = inferMatchTeams(match?.matchType, participantIds, participantTeams);
+            if (teams && teams[0].length && teams[1].length) {
+                const winningTeam = winnerId === "TEAM:A"
+                    ? teams[0]
+                    : winnerId === "TEAM:B"
+                        ? teams[1]
+                        : winnerId
+                            ? (teams[0].includes(winnerId) ? teams[0] : (teams[1].includes(winnerId) ? teams[1] : []))
+                            : [];
+                const teamA = teams[0];
+                const teamB = teams[1];
+
+                for (const a of teamA) {
+                    for (const b of teamB) {
+                        const ra = ratings.get(a) ?? baseRating;
+                        const rb = ratings.get(b) ?? baseRating;
+                        const ea = 1 / (1 + Math.pow(10, (rb - ra) / 400));
+                        const eb = 1 - ea;
+                        let sa = 0.5;
+                        let sb = 0.5;
+                        if (winningTeam.length) {
+                            if (winningTeam.includes(a)) {
+                                sa = 1;
+                                sb = 0;
+                            } else if (winningTeam.includes(b)) {
+                                sa = 0;
+                                sb = 1;
+                            }
+                        }
+                        deltas.set(a, (deltas.get(a) || 0) + (kEff * (sa - ea)));
+                        deltas.set(b, (deltas.get(b) || 0) + (kEff * (sb - eb)));
+                    }
+                }
+
+                // Slight extra reward for the pinfall scorer in tag/handicap matches
+                if (pinById && winningTeam.includes(pinById)) {
+                    deltas.set(pinById, (deltas.get(pinById) || 0) + (4 * m));
+                }
+
+                participantIds.forEach(id => {
+                    ratings.set(id, (ratings.get(id) ?? baseRating) + (deltas.get(id) || 0));
+                });
+
+                if (ev.date >= weekStartISO) {
+                    participantIds.forEach(id => {
+                        let formDelta = 1.5 * m;
+                        if (winningTeam.length) {
+                            if (winningTeam.includes(id)) formDelta += 8 * m;
+                            else formDelta -= 4 * m;
+                        }
+                        if (pinById && id === pinById && winningTeam.includes(id)) {
+                            formDelta += 2 * m;
+                        }
+                        recentForm.set(id, (recentForm.get(id) || 0) + formDelta);
+                    });
+                }
+                return;
+            }
 
             for (let i = 0; i < participantIds.length; i++) {
                 for (let j = i + 1; j < participantIds.length; j++) {
@@ -373,10 +477,51 @@ function computeWeeklyRankings() {
                 }
                 return a.superstar.name.localeCompare(b.superstar.name);
             })
-            .slice(0, 3);
+            .slice(0, Math.max(1, Number(topN) || 3));
         byShow.set(show.id, rows);
     }
     return byShow;
+}
+function rankingRowsHTML(rows, startRank = 1) {
+    return rows.map((entry, idx) => {
+        const ss = entry.superstar;
+        const photo = superstarPhotoURL(ss);
+        const rank = startRank + idx;
+        return `
+          <div class="rank-row">
+            <div class="rank-left">
+              ${photo
+                ? `<img class="rank-photo" src="${escapeAttr(photo)}" alt="${escapeAttr(ss.name)}" />`
+                : `<div class="rank-photo-fallback">${escapeHTML(superstarInitials(ss.name))}</div>`
+            }
+              <div class="rank-name-wrap">
+                <div class="rank-name">${escapeHTML(ss.name)}</div>
+                ${ss.isChampion ? `<span class="rank-champ">C</span>` : ``}
+              </div>
+            </div>
+            <div class="rank-pos">${ordinal(rank)}</div>
+          </div>
+        `;
+    }).join("");
+}
+async function openShowTopTenModal(showId) {
+    const show = getShow(showId);
+    if (!show) return;
+    const rows = computeWeeklyRankings(10).get(showId) || [];
+    const bodyHTML = rows.length
+        ? `<div class="rankings-list">${rankingRowsHTML(rows, 1)}</div>`
+        : `<div class="muted">No ranked superstars on this show yet.</div>`;
+    const modalPromise = openModal({
+        title: `${show.name} Top 10`,
+        bodyHTML,
+        okText: "Close",
+        cancelText: "Close"
+    });
+
+    const modalCancelBtn = $("#modalCancel");
+    modalCancelBtn.classList.add("hidden");
+    await modalPromise;
+    modalCancelBtn.classList.remove("hidden");
 }
 function showName(showId) {
     if (!showId) return "No show";
@@ -492,30 +637,24 @@ function renderDashboard() {
     if (!upcoming) {
         el.innerHTML = `<div class="muted">No upcoming events. Add one from Calendar or Settings.</div>`;
     } else {
-        const dot = `<span class="dot" style="background:${showColor(upcoming.showId)}"></span>`;
+        const typeTag = upcoming.type === "ppv" ? "PLE" : "WEEKLY";
+        const showTagText = upcoming.type === "ppv" ? "PLE" : showName(upcoming.showId);
+        const showTagStyle = upcoming.type === "ppv"
+            ? "background:rgba(255,255,255,.14);border-color:rgba(255,255,255,.28);"
+            : `background:rgba(255,255,255,.08);border-color:${showColor(upcoming.showId)};`;
         el.innerHTML = `
-      <div class="row gap wrap">
-        <span class="badge">${dot}${escapeHTML(upcoming.type.toUpperCase())}</span>
-        <span class="badge"><span class="dot" style="background:${showColor(upcoming.showId)}"></span>${escapeHTML(showName(upcoming.showId))}</span>
-        <span class="badge">${upcoming.date}</span>
-      </div>
-      <div class="hr"></div>
       <div><b>${escapeHTML(upcoming.name || "(Unnamed Event)")}</b></div>
-      <div class="muted">Rows: ${(upcoming.matches?.length || 0)}</div>
+      <div class="muted tiny" style="margin-top:6px;">${upcoming.date}</div>
+      <div class="row gap wrap" style="margin-top:10px;">
+        <span class="badge">${typeTag}</span>
+        <span class="badge" style="${showTagStyle}">${escapeHTML(showTagText)}</span>
+      </div>
       <div class="item-actions">
         <button class="btn" data-open-planner="${upcoming.id}">Open Planner</button>
       </div>
     `;
         el.querySelector('[data-open-planner]')?.addEventListener("click", () => openPlanner(upcoming.id));
     }
-
-    $("#stats").innerHTML = `
-    <div class="row gap wrap">
-      <span class="badge"><span class="dot"></span>Shows: <b>${state.shows.length}</b></span>
-      <span class="badge"><span class="dot"></span>Superstars: <b>${state.superstars.length}</b></span>
-      <span class="badge"><span class="dot"></span>Events: <b>${state.events.length}</b></span>
-    </div>
-  `;
 
     if (!rankingsEl) return;
     if (!state.shows.length) {
@@ -527,7 +666,7 @@ function renderDashboard() {
         return;
     }
 
-    const rankingsByShow = computeWeeklyRankings();
+    const rankingsByShow = computeWeeklyRankings(3);
     rankingsEl.innerHTML = `
       <div class="rankings-shows">
         ${state.shows.map(show => {
@@ -535,38 +674,24 @@ function renderDashboard() {
             return `
               <div class="rankings-show-card">
                 <div class="item-title">
-                  <span class="badge"><span class="dot" style="background:${show.color}"></span>${escapeHTML(show.name)} Top 3</span>
+                  <span class="badge"><span class="dot" style="background:${show.color}"></span>${escapeHTML(show.name)}</span>
                 </div>
                 ${rows.length
-                    ? `<div class="rankings-list">
-                        ${rows.map((entry, idx) => {
-                            const ss = entry.superstar;
-                            const photo = superstarPhotoURL(ss);
-                            const rank = idx + 1;
-                            return `
-                              <div class="rank-row">
-                                <div class="rank-left">
-                                  ${photo
-                                    ? `<img class="rank-photo" src="${escapeAttr(photo)}" alt="${escapeAttr(ss.name)}" />`
-                                    : `<div class="rank-photo-fallback">${escapeHTML(superstarInitials(ss.name))}</div>`
-                                }
-                                  <div class="rank-name-wrap">
-                                    <div class="rank-name">${escapeHTML(ss.name)}</div>
-                                    ${ss.isChampion ? `<span class="rank-champ">C</span>` : ``}
-                                  </div>
-                                </div>
-                                <div class="rank-pos">${ordinal(rank)}</div>
-                              </div>
-                            `;
-                        }).join("")}
-                      </div>`
+                    ? `<div class="rankings-list">${rankingRowsHTML(rows, 1)}</div>`
                     : `<div class="muted tiny">No ranked superstars on this show yet.</div>`
                 }
+                <div class="item-actions">
+                  <button class="btn secondary" data-show-more="${show.id}">Show More</button>
+                </div>
               </div>
             `;
         }).join("")}
       </div>
     `;
+
+    $$("[data-show-more]", rankingsEl).forEach(btn => {
+        btn.addEventListener("click", () => openShowTopTenModal(btn.dataset.showMore));
+    });
 }
 
 // -------------------- SHOWS --------------------
@@ -1002,7 +1127,7 @@ function participantInfo(participantRef) {
             photo: superstarPhotoURL(byName),
         };
     }
-    return { name: ref, photo: "" };
+    return { name: ref || "TBD", photo: "" };
 }
 
 async function openCalendarEventDetails(eventId) {
@@ -1019,10 +1144,16 @@ async function openCalendarEventDetails(eventId) {
             const participants = Array.isArray(m.participants) ? m.participants : [];
             const left = participantInfo(participants[0]);
             const right = participantInfo(participants[1]);
-            const extraCount = Math.max(0, participants.length - 2);
-            const extraText = extraCount > 0 ? ` +${extraCount} more` : "";
             const title = m.matchType?.trim() || `Match ${m.num ?? (m._idx + 1)}`;
-            const resultText = String(m.result ?? "").trim();
+            const winnerRef = String(m.result ?? "").trim();
+            const winnerName = winnerRef === "TEAM:A"
+                ? "Team A"
+                : winnerRef === "TEAM:B"
+                    ? "Team B"
+                    : superstarNameById(winnerRef);
+            const pinByName = superstarNameById(String(m.pinBy ?? "").trim());
+            const resultText = winnerName || winnerRef;
+            const pinText = pinByName ? ` • Pin by: ${pinByName}` : "";
 
             return `
               <div class="event-match-card ${isMainEvent ? "main-event-card" : ""}">
@@ -1032,7 +1163,7 @@ async function openCalendarEventDetails(eventId) {
                   <div class="event-fighter">
                     ${left.photo
                     ? `<img class="event-fighter-photo ${isMainEvent ? "event-fighter-photo-main" : ""}" src="${escapeAttr(left.photo)}" alt="${escapeAttr(left.name)}" />`
-                    : `<div class="event-fighter-fallback ${isMainEvent ? "event-fighter-photo-main" : ""}">${escapeHTML(superstarInitials(left.name))}</div>`
+                    : `<div class="event-fighter-fallback ${isMainEvent ? "event-fighter-photo-main" : ""}">${left.name === "TBD" ? "?" : escapeHTML(superstarInitials(left.name))}</div>`
                 }
                     <div class="tiny">${escapeHTML(left.name)}</div>
                   </div>
@@ -1040,14 +1171,12 @@ async function openCalendarEventDetails(eventId) {
                   <div class="event-fighter">
                     ${right.photo
                     ? `<img class="event-fighter-photo ${isMainEvent ? "event-fighter-photo-main" : ""}" src="${escapeAttr(right.photo)}" alt="${escapeAttr(right.name)}" />`
-                    : `<div class="event-fighter-fallback ${isMainEvent ? "event-fighter-photo-main" : ""}">${escapeHTML(superstarInitials(right.name))}</div>`
+                    : `<div class="event-fighter-fallback ${isMainEvent ? "event-fighter-photo-main" : ""}">${right.name === "TBD" ? "?" : escapeHTML(superstarInitials(right.name))}</div>`
                 }
                     <div class="tiny">${escapeHTML(right.name)}</div>
                   </div>
                 </div>
-                <div class="muted tiny">
-                  ${resultText ? `Result: ${escapeHTML(resultText)} • ` : ""}${participants.length ? `${participants.length} participants${extraText}` : "No participants set yet"}
-                </div>
+                ${resultText ? `<div class="muted tiny">Result: ${escapeHTML(resultText)}${escapeHTML(pinText)}</div>` : ``}
               </div>
             `;
         }).join("")
@@ -1209,11 +1338,42 @@ function renderPlanner() {
 
     body.innerHTML = ev.matches.map((m, idx) => {
         const slotCount = participantSlotCount(m);
+        const participants = Array.isArray(m.participants) ? m.participants.filter(Boolean) : [];
+        const participantTeams = normalizedParticipantTeams(m);
+        const teams = inferMatchTeams(m.matchType, participants, participantTeams);
+        const teamA = teams?.[0] || [];
+        const teamB = teams?.[1] || [];
+        const isTeamBased = isTeamOrHandicapMatch(m.matchType, participants.length);
+        const winningTeam = m.result === "TEAM:A" ? teamA : m.result === "TEAM:B" ? teamB : [];
+        const winnerOptions = isTeamBased
+            ? [
+                teamA.length ? `<option value="TEAM:A">Team A</option>` : "",
+                teamB.length ? `<option value="TEAM:B">Team B</option>` : "",
+            ].join("")
+            : participants.map(pid => {
+                const name = superstarNameById(pid) || pid;
+                return `<option value="${escapeAttr(pid)}">${escapeHTML(name)}</option>`;
+            }).join("");
+        const showPinBy = isTeamOrHandicapMatch(m.matchType, participants.length);
+        const pinPool = showPinBy ? (winningTeam.length ? winningTeam : participants) : participants;
+        const pinByOptions = pinPool.map(pid => {
+            const name = superstarNameById(pid) || pid;
+            return `<option value="${escapeAttr(pid)}">${escapeHTML(name)}</option>`;
+        }).join("");
         const participantFields = Array.from({ length: slotCount }).map((_, slotIdx) => `
-          <select class="cell-input small" data-field="participant" data-slot="${slotIdx}">
-            <option value="">${slotIdx < 2 ? "(select)" : "(optional)"}</option>
-            ${optionsHTML}
-          </select>
+          <div class="row gap wrap">
+            <select class="cell-input small" data-field="participant" data-slot="${slotIdx}">
+              <option value="">${slotIdx < 2 ? "(select)" : "(optional)"}</option>
+              ${optionsHTML}
+            </select>
+            ${isTeamBased ? `
+              <select class="cell-input small" data-field="participantTeam" data-slot="${slotIdx}" style="max-width:110px;">
+                <option value="">(team)</option>
+                <option value="A">Team A</option>
+                <option value="B">Team B</option>
+              </select>
+            ` : ``}
+          </div>
         `).join("");
         const removeParticipantBtn = slotCount > MIN_PARTICIPANT_SLOTS
             ? `<button type="button" class="btn secondary participant-add-btn" data-remove-participant="${idx}">- Participant</button>`
@@ -1240,7 +1400,18 @@ function renderPlanner() {
           <textarea class="cell-input" data-field="storyline" placeholder="Storyline notes…">${escapeHTML(m.storyline || "")}</textarea>
         </td>
         <td>
-          <input class="cell-input small" data-field="result" value="${escapeAttr(m.result || "")}" placeholder="Winner / finish…" />
+          <div class="stack" style="gap:6px;">
+            <select class="cell-input small" data-field="result">
+              <option value="">${isTeamBased ? "(winning team)" : "(winner)"}</option>
+              ${winnerOptions}
+            </select>
+            ${showPinBy ? `
+              <select class="cell-input small" data-field="pinBy">
+                <option value="">(who got the pin)</option>
+                ${pinByOptions}
+              </select>
+            ` : ``}
+          </div>
         </td>
         <td>
           <textarea class="cell-input" data-field="rivalryNotes" placeholder="Rivalry notes…">${escapeHTML(m.rivalryNotes || "")}</textarea>
@@ -1257,9 +1428,41 @@ function renderPlanner() {
         const row = Number(tr.dataset.row);
         const match = ev.matches[row];
         const p = match.participants || [];
+        const participantTeams = normalizedParticipantTeams(match);
         $$('[data-field="participant"]', tr).forEach((el, slotIdx) => {
             el.value = p[slotIdx] || "";
         });
+        $$('[data-field="participantTeam"]', tr).forEach((el, slotIdx) => {
+            const participantId = p[slotIdx] || "";
+            el.value = participantId ? (participantTeams[participantId] || "") : "";
+        });
+        const resultSelect = tr.querySelector('[data-field="result"]');
+        if (resultSelect) {
+            const resultValue = String(match.result || "");
+            if (resultValue && Array.from(resultSelect.options).some(opt => opt.value === resultValue)) {
+                resultSelect.value = resultValue;
+            } else {
+                const normalizedResult = normalizeNameForCompare(resultValue);
+                const matchedOption = Array.from(resultSelect.options).find(opt => {
+                    if (!opt.value) return false;
+                    return normalizeNameForCompare(superstarNameById(opt.value)) === normalizedResult;
+                });
+                if (matchedOption) {
+                    resultSelect.value = matchedOption.value;
+                } else {
+                    resultSelect.value = "";
+                }
+            }
+        }
+        const pinBySelect = tr.querySelector('[data-field="pinBy"]');
+        if (pinBySelect) {
+            const pinByValue = String(match.pinBy || "");
+            if (pinByValue && Array.from(pinBySelect.options).some(opt => opt.value === pinByValue)) {
+                pinBySelect.value = pinByValue;
+            } else {
+                pinBySelect.value = "";
+            }
+        }
     });
 
     // One event listener for all row edits (event delegation)
@@ -1278,6 +1481,7 @@ function renderPlanner() {
 
         if (field === "participant") {
             const participantInputs = $$('[data-field="participant"]', tr);
+            const teamInputs = $$('[data-field="participantTeam"]', tr);
             const selected = participantInputs.map(input => input.value);
             const seen = new Set();
             const deduped = selected.map(v => {
@@ -1289,11 +1493,107 @@ function renderPlanner() {
                 input.value = deduped[slotIdx] || "";
             });
             ev2.matches[row].participants = deduped.filter(Boolean);
+            const prevTeams = normalizedParticipantTeams(ev2.matches[row]);
+            const nextTeams = {};
+            deduped.forEach((participantId, slotIdx) => {
+                if (!participantId) return;
+                const teamFromUi = teamInputs[slotIdx]?.value || "";
+                const team = (teamFromUi === "A" || teamFromUi === "B")
+                    ? teamFromUi
+                    : (prevTeams[participantId] || "");
+                if (team === "A" || team === "B") nextTeams[participantId] = team;
+            });
+            ev2.matches[row].participantTeams = nextTeams;
             ev2.matches[row].participantSlots = participantSlotCount(ev2.matches[row]);
+            const isTeamBased = isTeamOrHandicapMatch(ev2.matches[row].matchType, ev2.matches[row].participants.length);
+            if (isTeamBased) {
+                const teams = inferMatchTeams(ev2.matches[row].matchType, ev2.matches[row].participants, ev2.matches[row].participantTeams);
+                const teamA = teams?.[0] || [];
+                const teamB = teams?.[1] || [];
+                if (ev2.matches[row].result !== "TEAM:A" && ev2.matches[row].result !== "TEAM:B") {
+                    ev2.matches[row].result = "";
+                }
+                if (ev2.matches[row].result === "TEAM:A" && !teamA.length) ev2.matches[row].result = "";
+                if (ev2.matches[row].result === "TEAM:B" && !teamB.length) ev2.matches[row].result = "";
+                const winningPool = ev2.matches[row].result === "TEAM:A" ? teamA : ev2.matches[row].result === "TEAM:B" ? teamB : [];
+                if (ev2.matches[row].pinBy && (!winningPool.length || !winningPool.includes(ev2.matches[row].pinBy))) {
+                    ev2.matches[row].pinBy = "";
+                }
+            } else {
+                if (!ev2.matches[row].participants.includes(ev2.matches[row].result)) {
+                    ev2.matches[row].result = "";
+                }
+                if (!ev2.matches[row].participants.includes(ev2.matches[row].pinBy)) {
+                    ev2.matches[row].pinBy = "";
+                }
+                ev2.matches[row].participantTeams = {};
+            }
+            upsertEvent(ev2); // debounced via saveSoon
+            renderPlanner();
+            return;
+        } else if (field === "participantTeam") {
+            const slot = Number(target.dataset.slot);
+            const participantInputs = $$('[data-field="participant"]', tr);
+            const participantId = participantInputs[slot]?.value || "";
+            const teams = normalizedParticipantTeams(ev2.matches[row]);
+            if (participantId && (target.value === "A" || target.value === "B")) {
+                teams[participantId] = target.value;
+            } else if (participantId) {
+                delete teams[participantId];
+            }
+            ev2.matches[row].participantTeams = teams;
+            const teamGroups = inferMatchTeams(ev2.matches[row].matchType, ev2.matches[row].participants || [], teams);
+            const teamA = teamGroups?.[0] || [];
+            const teamB = teamGroups?.[1] || [];
+            if (ev2.matches[row].result === "TEAM:A" && !teamA.length) ev2.matches[row].result = "";
+            if (ev2.matches[row].result === "TEAM:B" && !teamB.length) ev2.matches[row].result = "";
+            const winningPool = ev2.matches[row].result === "TEAM:A" ? teamA : ev2.matches[row].result === "TEAM:B" ? teamB : [];
+            if (ev2.matches[row].pinBy && (!winningPool.length || !winningPool.includes(ev2.matches[row].pinBy))) {
+                ev2.matches[row].pinBy = "";
+            }
+            upsertEvent(ev2); // debounced via saveSoon
+            renderPlanner();
+            return;
         } else if (field === "num") {
             ev2.matches[row].num = Number(target.value) || (row + 1);
+        } else if (field === "result") {
+            ev2.matches[row].result = target.value;
+            const isTeamBased = isTeamOrHandicapMatch(ev2.matches[row].matchType, (ev2.matches[row].participants || []).length);
+            if (isTeamBased) {
+                const teams = inferMatchTeams(ev2.matches[row].matchType, ev2.matches[row].participants || [], normalizedParticipantTeams(ev2.matches[row]));
+                const teamA = teams?.[0] || [];
+                const teamB = teams?.[1] || [];
+                const winningPool = ev2.matches[row].result === "TEAM:A" ? teamA : ev2.matches[row].result === "TEAM:B" ? teamB : [];
+                if (ev2.matches[row].pinBy && (!winningPool.length || !winningPool.includes(ev2.matches[row].pinBy))) {
+                    ev2.matches[row].pinBy = "";
+                }
+            } else if (!ev2.matches[row].participants.includes(ev2.matches[row].pinBy)) {
+                ev2.matches[row].pinBy = "";
+            }
+            upsertEvent(ev2); // debounced via saveSoon
+            renderPlanner();
+            return;
+        } else if (field === "pinBy") {
+            ev2.matches[row].pinBy = target.value;
         } else {
             ev2.matches[row][field] = target.value;
+            if (field === "matchType") {
+                const isTeamBased = isTeamOrHandicapMatch(ev2.matches[row].matchType, (ev2.matches[row].participants || []).length);
+                if (!isTeamBased) {
+                    ev2.matches[row].participantTeams = {};
+                    if (ev2.matches[row].result && String(ev2.matches[row].result).startsWith("TEAM:")) {
+                        ev2.matches[row].result = "";
+                    }
+                    if (ev2.matches[row].pinBy && !ev2.matches[row].participants.includes(ev2.matches[row].pinBy)) {
+                        ev2.matches[row].pinBy = "";
+                    }
+                } else if (ev2.matches[row].result && !String(ev2.matches[row].result).startsWith("TEAM:")) {
+                    ev2.matches[row].result = "";
+                }
+                upsertEvent(ev2); // debounced via saveSoon
+                renderPlanner();
+                return;
+            }
         }
 
         upsertEvent(ev2); // debounced via saveSoon
@@ -1352,10 +1652,12 @@ function addMatchRow() {
     ev.matches.push({
         num: ev.matches.length + 1,
         participants: [],
+        participantTeams: {},
         participantSlots: MIN_PARTICIPANT_SLOTS,
         matchType: "",
         storyline: "",
         result: "",
+        pinBy: "",
         rivalryNotes: "",
     });
 
@@ -1869,10 +2171,12 @@ function generateWeeklyEvents({ startISO, months, rules, defaultRows = 6 }) {
                 const matches = Array.from({ length: Number(defaultRows) || 0 }).map((_, i) => ({
                     num: i + 1,
                     participants: [],
+                    participantTeams: {},
                     participantSlots: MIN_PARTICIPANT_SLOTS,
                     matchType: "",
                     storyline: "",
                     result: "",
+                    pinBy: "",
                     rivalryNotes: "",
                 }));
 
@@ -1927,7 +2231,7 @@ function seedStarterUniverse() {
         showId: raw.id,
         name: `RAW • ${iso}`,
         matches: Array.from({ length: 6 }).map((_, i) => ({
-            num: i + 1, participants: [], participantSlots: MIN_PARTICIPANT_SLOTS, matchType: "", storyline: "", result: "", rivalryNotes: ""
+            num: i + 1, participants: [], participantTeams: {}, participantSlots: MIN_PARTICIPANT_SLOTS, matchType: "", storyline: "", result: "", pinBy: "", rivalryNotes: ""
         }))
     });
 
@@ -1939,7 +2243,33 @@ function populateShowSelects() {
     // roster form show select
     const ssShows = $("#ssShows");
     if (ssShows) {
-        ssShows.innerHTML = state.shows.map(s => `<option value="${s.id}">${escapeHTML(s.name)}</option>`).join("");
+        const validIds = new Set(state.shows.map(s => s.id));
+        addSuperstarShowIds = new Set(Array.from(addSuperstarShowIds).filter(id => validIds.has(id)));
+        if (!state.shows.length) {
+            ssShows.innerHTML = `<div class="muted tiny">No shows yet. Add shows in Settings first.</div>`;
+        } else {
+            ssShows.innerHTML = state.shows.map(s => {
+                const active = addSuperstarShowIds.has(s.id);
+                const bg = active ? `${s.color}33` : "rgba(255,255,255,.03)";
+                const border = active ? s.color : "var(--line)";
+                return `
+                  <button type="button" class="show-tag-btn ${active ? "active" : ""}" data-ss-show="${s.id}"
+                    style="border-color:${border};background:${bg};">
+                    <span class="dot" style="background:${s.color}"></span>
+                    <span>${escapeHTML(s.name)}</span>
+                  </button>
+                `;
+            }).join("");
+            $$("[data-ss-show]", ssShows).forEach(btn => {
+                btn.addEventListener("click", () => {
+                    const showId = btn.dataset.ssShow;
+                    if (!showId) return;
+                    if (addSuperstarShowIds.has(showId)) addSuperstarShowIds.delete(showId);
+                    else addSuperstarShowIds.add(showId);
+                    populateShowSelects();
+                });
+            });
+        }
     }
 
     // roster filter
@@ -1998,7 +2328,7 @@ $("#addShow").addEventListener("click", () => {
 $("#addSS").addEventListener("click", () => {
     const name = $("#ssName").value.trim();
     const photo = $("#ssPhoto").value.trim();
-    const showIds = Array.from($("#ssShows").selectedOptions).map(o => o.value);
+    const showIds = Array.from(addSuperstarShowIds);
     const division = $("#ssDivision").value;
     if (!name) return;
 
@@ -2006,7 +2336,8 @@ $("#addSS").addEventListener("click", () => {
     saveSoon();
     $("#ssName").value = "";
     $("#ssPhoto").value = "";
-    $("#ssShows").selectedIndex = -1;
+    addSuperstarShowIds = new Set();
+    populateShowSelects();
     renderRoster();
 });
 
@@ -2021,8 +2352,8 @@ $("#addEventBtn").addEventListener("click", () => addEventFlow(calSelectedISO));
 $("#addMatchRow").addEventListener("click", addMatchRow);
 $("#plannerNewEvent").addEventListener("click", newEventFromPlanner);
 
-$("#quickAddEvent").addEventListener("click", () => addEventFlow(todayISO()));
-$("#quickOpenToday").addEventListener("click", () => {
+$("#quickAddEvent")?.addEventListener("click", () => addEventFlow(todayISO()));
+$("#quickOpenToday")?.addEventListener("click", () => {
     const iso = todayISO();
     const todayEvents = state.events.filter(e => e.date === iso).sort((a, b) => a.type.localeCompare(b.type));
     if (todayEvents[0]) openPlanner(todayEvents[0].id);
