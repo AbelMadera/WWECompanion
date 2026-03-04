@@ -930,6 +930,106 @@ async function openSuperstarDetails(id) {
     const ss = state.superstars.find(x => x.id === id);
     if (!ss) return;
 
+    const isDisqualificationResult = (resultValue) => {
+        const normalized = normalizeNameForCompare(resultValue);
+        return normalized === "dq" || normalized.includes("disqualification");
+    };
+    const isDrawResult = (resultValue) => {
+        const normalized = normalizeNameForCompare(resultValue);
+        return normalized === "draw"
+            || normalized === "tie"
+            || normalized === "no contest"
+            || normalized === "nc";
+    };
+    const isSpecialOutcomeResult = (resultValue) => {
+        const normalized = normalizeNameForCompare(resultValue);
+        return isDisqualificationResult(resultValue)
+            || isDrawResult(resultValue)
+            || normalized === "no result";
+    };
+    const participantIdFromRef = (participantRef) => {
+        const raw = String(participantRef ?? "").trim();
+        if (!raw) return "";
+        const byId = state.superstars.find(star => star.id === raw);
+        if (byId) return byId.id;
+        const byName = state.superstars.find(star => normalizeNameForCompare(star.name) === normalizeNameForCompare(raw));
+        return byName?.id || "";
+    };
+    const participantRefMatchesSuperstar = (participantRef) => {
+        const raw = String(participantRef ?? "").trim();
+        if (!raw) return false;
+        if (raw === ss.id) return true;
+        const info = participantInfo(raw);
+        return normalizeNameForCompare(info.name) === normalizeNameForCompare(ss.name);
+    };
+    const resultParticipantId = (resultValue) => {
+        const raw = String(resultValue ?? "").trim();
+        if (!raw || raw === "TEAM:A" || raw === "TEAM:B") return "";
+        const byId = state.superstars.find(star => star.id === raw);
+        if (byId) return byId.id;
+        const normalizedRaw = normalizeNameForCompare(raw);
+        const byName = state.superstars.find(star => normalizeNameForCompare(star.name) === normalizedRaw);
+        return byName?.id || "";
+    };
+    const matchOutcomeForSuperstar = (match, participantRefs) => {
+        const resultValue = String(match?.result ?? "").trim();
+        if (isDisqualificationResult(resultValue)) return "DQ";
+        if (isDrawResult(resultValue)) return "Draw";
+
+        const participantIds = participantRefs
+            .map(participantIdFromRef)
+            .filter(Boolean);
+        const selectedIds = participantRefs
+            .filter(participantRefMatchesSuperstar)
+            .map(participantIdFromRef)
+            .filter(Boolean);
+        const selectedIdSet = new Set(selectedIds);
+        const selectedInMatch = selectedIdSet.size > 0 || participantRefs.some(participantRefMatchesSuperstar);
+        if (!selectedInMatch) return "";
+
+        if (!resultValue || normalizeNameForCompare(resultValue) === "no result") return "Draw";
+
+        if (resultValue === "TEAM:A" || resultValue === "TEAM:B") {
+            const teams = inferMatchTeams(match?.matchType, participantIds, normalizedParticipantTeams(match));
+            const winningTeam = resultValue === "TEAM:A" ? (teams?.[0] || []) : (teams?.[1] || []);
+            const won = winningTeam.some(pid => selectedIdSet.has(pid));
+            return won ? "Win" : "Loss";
+        }
+
+        const winnerId = resultParticipantId(resultValue);
+        if (winnerId) return selectedIdSet.has(winnerId) ? "Win" : "Loss";
+        if (isSpecialOutcomeResult(resultValue)) return "Draw";
+        return "Loss";
+    };
+
+    const recentMatches = [];
+    const eventsDesc = [...state.events].sort((a, b) => b.date.localeCompare(a.date));
+    for (const ev of eventsDesc) {
+        const matchesDesc = (Array.isArray(ev.matches) ? ev.matches : []).slice().reverse();
+        for (const match of matchesDesc) {
+            const participantRefs = Array.isArray(match?.participants) ? match.participants : [];
+            const participants = participantRefs
+                .map(ref => participantInfo(ref).name)
+                .filter(Boolean);
+            if (!participants.length) continue;
+
+            const includesSelected = participantRefs.some(ref => {
+                const raw = String(ref ?? "").trim();
+                if (!raw) return false;
+                if (raw === ss.id) return true;
+                return normalizeNameForCompare(participantInfo(raw).name) === normalizeNameForCompare(ss.name);
+            });
+            if (!includesSelected) continue;
+
+            recentMatches.push({
+                matchup: participants.join(" vs "),
+                outcome: matchOutcomeForSuperstar(match, participantRefs) || "Draw",
+            });
+            if (recentMatches.length >= 5) break;
+        }
+        if (recentMatches.length >= 5) break;
+    }
+
     const ssShows = superstarShowNames(ss);
     const champs = superstarChampionshipNames(ss);
     const titleText = champs.join(", ");
@@ -953,6 +1053,18 @@ async function openSuperstarDetails(id) {
           <span class="badge">Division: <b>${escapeHTML(ss.division)}</b></span>
           ${ss.faction ? `<span class="badge">Faction: <b>${escapeHTML(ss.faction)}</b></span>` : ""}
           ${ss.manager ? `<span class="badge">Manager: <b>${escapeHTML(ss.manager)}</b></span>` : ""}
+        </div>
+        <div class="ss-recent-matches">
+          <div class="h3">Last 5 Matches</div>
+          ${recentMatches.length
+            ? `<div class="stack" style="gap:6px;">${recentMatches.map(match => `
+                <div class="ss-recent-match-row">
+                  <div class="item-sub">${escapeHTML(match.matchup)}</div>
+                  <div class="ss-recent-result ${match.outcome === "Win" ? "ss-recent-result-win" : match.outcome === "Loss" ? "ss-recent-result-loss" : match.outcome === "Draw" ? "ss-recent-result-draw" : "ss-recent-result-dq"}">${escapeHTML(match.outcome)}</div>
+                </div>
+            `).join("")}</div>`
+            : `<div class="item-sub">No recent matches</div>`
+        }
         </div>
       </div>
     `;
@@ -1487,15 +1599,22 @@ function renderPlanner() {
         const teamB = teams?.[1] || [];
         const isTeamBased = isTeamOrHandicapMatch(m.matchType, participants.length);
         const winningTeam = m.result === "TEAM:A" ? teamA : m.result === "TEAM:B" ? teamB : [];
+        const specialResultOptions = `
+            <option value="DQ">DQ</option>
+        `;
         const winnerOptions = isTeamBased
             ? [
                 teamA.length ? `<option value="TEAM:A">Team A</option>` : "",
                 teamB.length ? `<option value="TEAM:B">Team B</option>` : "",
+                specialResultOptions,
             ].join("")
-            : participants.map(pid => {
-                const name = superstarNameById(pid) || pid;
-                return `<option value="${escapeAttr(pid)}">${escapeHTML(name)}</option>`;
-            }).join("");
+            : [
+                ...participants.map(pid => {
+                    const name = superstarNameById(pid) || pid;
+                    return `<option value="${escapeAttr(pid)}">${escapeHTML(name)}</option>`;
+                }),
+                specialResultOptions,
+            ].join("");
         const showPinBy = isTeamOrHandicapMatch(m.matchType, participants.length);
         const pinPool = showPinBy ? (winningTeam.length ? winningTeam : participants) : participants;
         const pinByOptions = pinPool.map(pid => {
@@ -1544,7 +1663,7 @@ function renderPlanner() {
         <td>
           <div class="stack" style="gap:6px;">
             <select class="cell-input small" data-field="result">
-              <option value="">${isTeamBased ? "(winning team)" : "(winner)"}</option>
+              <option value="">(winner)</option>
               ${winnerOptions}
             </select>
             ${showPinBy ? `
@@ -1581,7 +1700,9 @@ function renderPlanner() {
         const resultSelect = tr.querySelector('[data-field="result"]');
         if (resultSelect) {
             const resultValue = String(match.result || "");
-            if (resultValue && Array.from(resultSelect.options).some(opt => opt.value === resultValue)) {
+            if (!resultValue) {
+                resultSelect.value = "";
+            } else if (Array.from(resultSelect.options).some(opt => opt.value === resultValue)) {
                 resultSelect.value = resultValue;
             } else {
                 const normalizedResult = normalizeNameForCompare(resultValue);
@@ -1653,7 +1774,15 @@ function renderPlanner() {
                 const teamA = teams?.[0] || [];
                 const teamB = teams?.[1] || [];
                 if (ev2.matches[row].result !== "TEAM:A" && ev2.matches[row].result !== "TEAM:B") {
-                    ev2.matches[row].result = "";
+                    const normalizedResult = normalizeNameForCompare(ev2.matches[row].result);
+                    const isSpecial = normalizedResult === "dq"
+                        || normalizedResult.includes("disqualification")
+                        || normalizedResult === "draw"
+                        || normalizedResult === "tie"
+                        || normalizedResult === "no contest"
+                        || normalizedResult === "nc"
+                        || normalizedResult === "no result";
+                    if (!isSpecial) ev2.matches[row].result = "";
                 }
                 if (ev2.matches[row].result === "TEAM:A" && !teamA.length) ev2.matches[row].result = "";
                 if (ev2.matches[row].result === "TEAM:B" && !teamB.length) ev2.matches[row].result = "";
@@ -1730,7 +1859,15 @@ function renderPlanner() {
                         ev2.matches[row].pinBy = "";
                     }
                 } else if (ev2.matches[row].result && !String(ev2.matches[row].result).startsWith("TEAM:")) {
-                    ev2.matches[row].result = "";
+                    const normalizedResult = normalizeNameForCompare(ev2.matches[row].result);
+                    const isSpecial = normalizedResult === "dq"
+                        || normalizedResult.includes("disqualification")
+                        || normalizedResult === "draw"
+                        || normalizedResult === "tie"
+                        || normalizedResult === "no contest"
+                        || normalizedResult === "nc"
+                        || normalizedResult === "no result";
+                    if (!isSpecial) ev2.matches[row].result = "";
                 }
                 upsertEvent(ev2); // debounced via saveSoon
                 renderPlanner();
