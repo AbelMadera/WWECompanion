@@ -290,11 +290,11 @@ function setView(view) {
 
     const titles = {
         dashboard: ["Dashboard", ""],
-        calendar: ["Calendar", "Shows + PLEs on a timeline"],
-        planner: ["Planner", "Book your cards like your spreadsheet"],
+        calendar: ["Calendar", ""],
+        planner: ["Planner", ""],
         shows: ["Shows", "Create/remove shows & colors"],
-        roster: ["Roster", "Add superstars, assign shows + divisions"],
-        settings: ["Settings", "Schedule weekly shows, manage data, import JSON"],
+        roster: ["Roster", ""],
+        settings: ["Settings", ""],
     };
     $("#viewTitle").textContent = titles[view][0];
     $("#viewSubtitle").textContent = titles[view][1];
@@ -1821,7 +1821,7 @@ $("#quickOpenToday").addEventListener("click", () => {
 });
 
 // Export/Import/Reset
-$("#exportBtn").addEventListener("click", () => {
+function exportUniverseJSON() {
     const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -1829,40 +1829,9 @@ $("#exportBtn").addEventListener("click", () => {
     a.download = `universe-booker-export-${todayISO()}.json`;
     a.click();
     URL.revokeObjectURL(url);
-});
+}
 
-$("#importInput").addEventListener("change", async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const text = await file.text();
-    const imported = safeJSONParse(text);
-    if (!imported || !imported.version) {
-        await openModal({
-            title: "Import failed",
-            bodyHTML: `<div class="muted">That file doesn't look like a Universe Booker export.</div>`,
-            okText: "OK",
-            cancelText: "Close"
-        });
-        return;
-    }
-    state = normalizeStateData(imported);
-    store.save(state);
-    renderAll();
-    e.target.value = "";
-});
-
-$("#resetBtn").addEventListener("click", async () => {
-    const ok = await openModal({
-        title: "Reset app?",
-        bodyHTML: `<div>Reset will clear LocalStorage and return to empty state.</div>`,
-        okText: "Reset"
-    });
-    if (!ok.ok) return;
-    store.wipe();
-    state = normalizeStateData(store.load());
-    plannerEventId = null;
-    renderAll();
-});
+$("#settingsExportBtn").addEventListener("click", exportUniverseJSON);
 
 // Settings: Populate / Generate
 $("#addChampionshipBtn").addEventListener("click", async () => {

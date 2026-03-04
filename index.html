@@ -41,15 +41,6 @@
                     <h1 id="viewTitle">Dashboard</h1>
                     <div id="viewSubtitle" class="muted"></div>
                 </div>
-
-                <div class="topbar-actions">
-                    <button id="exportBtn" class="btn">Export</button>
-                    <label class="btn secondary file-btn">
-                        Import
-                        <input id="importInput" type="file" accept="application/json" />
-                    </label>
-                    <button id="resetBtn" class="btn danger">Reset</button>
-                </div>
             </header>
 
             <!-- DASHBOARD -->
@@ -286,6 +277,7 @@
 
                         <div class="h3">Danger Zone</div>
                         <div class="row gap wrap">
+                            <button class="btn" id="settingsExportBtn">Export Current Universe JSON</button>
                             <button class="btn secondary" id="settingsClearFileBtn">Clear Selected File</button>
                             <button class="btn secondary" id="wipeBtn">Wipe Everything</button>
                         </div>
