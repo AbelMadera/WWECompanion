@@ -882,17 +882,43 @@ textarea.cell-input {
 
 .weekly-controls {
     display: grid;
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 10px;
     margin-top: 10px;
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: rgba(255, 255, 255, .025);
 }
 
 .weekly-control {
     min-width: 0;
 }
 
+.weekly-control-date,
+.weekly-generate-btn {
+    grid-column: 1 / -1;
+}
+
+.weekly-control .tiny {
+    margin-bottom: 6px;
+}
+
 .weekly-generate-btn {
     width: 100%;
+    margin-top: 2px;
+}
+
+#settingsWeeklyStartDate {
+    text-align: left;
+}
+
+#settingsWeeklyStartDate::-webkit-date-and-time-value {
+    text-align: left;
+}
+
+#settingsWeeklyStartDate::-webkit-calendar-picker-indicator {
+    opacity: .9;
 }
 
 @media (max-width: 720px) {
@@ -916,16 +942,16 @@ textarea.cell-input {
     .edit-ss-inline {
         grid-template-columns: 1fr;
     }
+
+    .weekly-controls {
+        padding: 10px;
+        gap: 8px;
+    }
 }
 
 @media (min-width: 721px) {
     .weekly-controls {
         grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-
-    .weekly-control-date,
-    .weekly-generate-btn {
-        grid-column: 1 / -1;
     }
 
     .weekly-generate-btn {
