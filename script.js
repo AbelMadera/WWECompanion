@@ -511,7 +511,7 @@ function rankingRowsHTML(rows, startRank = 1) {
         const photo = superstarPhotoURL(ss);
         const rank = startRank + idx;
         return `
-          <div class="rank-row">
+          <div class="rank-row" data-open-ss="${ss.id}" role="button" tabindex="0" aria-label="Open ${escapeAttr(ss.name)} details">
             <div class="rank-left">
               ${photo
                 ? `<img class="rank-photo" src="${escapeAttr(photo)}" alt="${escapeAttr(ss.name)}" />`
@@ -543,8 +543,26 @@ async function openShowTopTenModal(showId) {
 
     const modalCancelBtn = $("#modalCancel");
     modalCancelBtn.classList.add("hidden");
+    let selectedSuperstarId = "";
+    $$("[data-open-ss]", $("#modalBody")).forEach(el => {
+        const open = () => {
+            selectedSuperstarId = String(el.dataset.openSs || "").trim();
+            closeModal({ ok: false });
+        };
+        el.addEventListener("click", open);
+        el.addEventListener("keydown", (e) => {
+            if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                open();
+            }
+        });
+    });
+
     await modalPromise;
     modalCancelBtn.classList.remove("hidden");
+    if (selectedSuperstarId) {
+        await openSuperstarDetails(selectedSuperstarId, { readOnly: true });
+    }
 }
 function showName(showId) {
     if (!showId) return "No show";
@@ -751,6 +769,19 @@ function renderDashboard() {
     $$("[data-show-more]", rankingsEl).forEach(btn => {
         btn.addEventListener("click", () => openShowTopTenModal(btn.dataset.showMore));
     });
+    $$("[data-open-ss]", rankingsEl).forEach(el => {
+        const open = () => {
+            el.blur();
+            openSuperstarDetails(el.dataset.openSs, { readOnly: true });
+        };
+        el.addEventListener("click", open);
+        el.addEventListener("keydown", (e) => {
+            if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                open();
+            }
+        });
+    });
 }
 
 // -------------------- SHOWS --------------------
@@ -926,7 +957,7 @@ async function editSuperstarFlow(id) {
     return true;
 }
 
-async function openSuperstarDetails(id) {
+async function openSuperstarDetails(id, { readOnly = false } = {}) {
     const ss = state.superstars.find(x => x.id === id);
     if (!ss) return;
 
@@ -1074,6 +1105,14 @@ async function openSuperstarDetails(id) {
     const modalActions = $(".modal-actions");
     const modalCancelBtn = $("#modalCancel");
     const modalOkBtn = $("#modalOk");
+
+    if (readOnly) {
+        modalCancelBtn.classList.add("hidden");
+        await modalPromise;
+        modalCancelBtn.classList.remove("hidden");
+        return;
+    }
+
     const footerEditBtn = document.createElement("button");
     footerEditBtn.id = "ssDetailEdit";
     footerEditBtn.className = "btn secondary";

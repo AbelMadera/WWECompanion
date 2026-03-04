@@ -505,6 +505,28 @@ h1 {
     border-radius: 10px;
     background: rgba(255, 255, 255, .025);
     padding: 8px 10px;
+    cursor: pointer;
+    transition:
+        transform var(--dur-fast) var(--ease-soft),
+        background var(--dur-fast) var(--ease-soft),
+        border-color var(--dur-fast) var(--ease-soft);
+}
+
+.rank-row:focus {
+    outline: none;
+}
+
+.rank-row:focus-visible {
+    background: rgba(255, 255, 255, .06);
+    border-color: #3a3a55;
+    transform: translateY(-1px);
+}
+
+@media (hover: hover) and (pointer: fine) {
+    .rank-row:hover {
+        background: rgba(255, 255, 255, .06);
+        transform: translateY(-1px);
+    }
 }
 
 .rank-left {
