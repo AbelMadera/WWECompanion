@@ -221,6 +221,163 @@ function superstarInitials(name) {
     if (!parts.length) return "?";
     return parts.slice(0, 2).map(p => p[0].toUpperCase()).join("");
 }
+function normalizeNameForCompare(value) {
+    return String(value ?? "")
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+}
+function ordinal(n) {
+    const mod100 = n % 100;
+    if (mod100 >= 11 && mod100 <= 13) return `${n}th`;
+    const mod10 = n % 10;
+    if (mod10 === 1) return `${n}st`;
+    if (mod10 === 2) return `${n}nd`;
+    if (mod10 === 3) return `${n}rd`;
+    return `${n}th`;
+}
+function toISODateDaysAgo(daysAgo) {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() - daysAgo);
+    return d.toISOString().slice(0, 10);
+}
+function resolveMatchParticipantIds(match, superstarNameToId) {
+    const ids = [];
+    const participants = Array.isArray(match?.participants) ? match.participants : [];
+    for (const ref of participants) {
+        const raw = String(ref ?? "").trim();
+        if (!raw) continue;
+        const byId = state.superstars.find(ss => ss.id === raw);
+        if (byId) {
+            ids.push(byId.id);
+            continue;
+        }
+        const byNameId = superstarNameToId.get(normalizeNameForCompare(raw));
+        if (byNameId) ids.push(byNameId);
+    }
+    return Array.from(new Set(ids));
+}
+function resolveMatchWinnerId(match, participantIds, superstarNameById) {
+    const result = normalizeNameForCompare(match?.result ?? "");
+    if (!result || participantIds.length === 0) return null;
+    for (const pid of participantIds) {
+        const participantName = normalizeNameForCompare(superstarNameById.get(pid) || "");
+        if (!participantName) continue;
+        if (result.includes(participantName)) return pid;
+    }
+    return null;
+}
+function matchImportanceMultiplier(event, matchIndex, matchesLength, match) {
+    const isMainEvent = matchIndex === (matchesLength - 1);
+    const isPpv = event.type === "ppv";
+    const titleHint = `${match?.matchType || ""} ${match?.storyline || ""}`.toLowerCase();
+    const isTitle = /title|championship|champ\b/.test(titleHint);
+    if (isTitle && isPpv) return 1.85;
+    if (isTitle) return 1.6;
+    if (isPpv) return 1.35;
+    if (isMainEvent) return 1.15;
+    return 1.0;
+}
+function computeWeeklyRankings() {
+    const baseRating = 1500;
+    const kBase = 24;
+    const weekStartISO = toISODateDaysAgo(6);
+
+    const superstarNameToId = new Map(
+        state.superstars.map(ss => [normalizeNameForCompare(ss.name), ss.id])
+    );
+    const superstarNameById = new Map(
+        state.superstars.map(ss => [ss.id, ss.name])
+    );
+    const ratings = new Map();
+    const recentForm = new Map();
+
+    state.superstars.forEach(ss => {
+        const winLossBonus = (toNonNegativeInt(ss.wins) - toNonNegativeInt(ss.losses)) * 8;
+        const championBonus = ss.isChampion ? 35 : 0;
+        const titleDepthBonus = parseChampionships(ss.championships).length * 10;
+        ratings.set(ss.id, baseRating + winLossBonus + championBonus + titleDepthBonus);
+        recentForm.set(ss.id, 0);
+    });
+
+    const processedEvents = state.events
+        .filter(e => /^\d{4}-\d{2}-\d{2}$/.test(String(e?.date || "")))
+        .filter(e => e.date <= todayISO())
+        .slice()
+        .sort((a, b) => a.date.localeCompare(b.date));
+
+    for (const ev of processedEvents) {
+        const matches = Array.isArray(ev.matches) ? ev.matches : [];
+        matches.forEach((match, idx) => {
+            const participantIds = resolveMatchParticipantIds(match, superstarNameToId);
+            if (participantIds.length < 2) return;
+
+            const winnerId = resolveMatchWinnerId(match, participantIds, superstarNameById);
+            const m = matchImportanceMultiplier(ev, idx, matches.length, match);
+            const kEff = kBase * m;
+
+            const deltas = new Map();
+            participantIds.forEach(id => deltas.set(id, 0));
+
+            for (let i = 0; i < participantIds.length; i++) {
+                for (let j = i + 1; j < participantIds.length; j++) {
+                    const a = participantIds[i];
+                    const b = participantIds[j];
+                    const ra = ratings.get(a) ?? baseRating;
+                    const rb = ratings.get(b) ?? baseRating;
+                    const ea = 1 / (1 + Math.pow(10, (rb - ra) / 400));
+                    const eb = 1 - ea;
+                    let sa = 0.5;
+                    let sb = 0.5;
+                    if (winnerId === a) {
+                        sa = 1;
+                        sb = 0;
+                    } else if (winnerId === b) {
+                        sa = 0;
+                        sb = 1;
+                    }
+                    deltas.set(a, (deltas.get(a) || 0) + (kEff * (sa - ea)));
+                    deltas.set(b, (deltas.get(b) || 0) + (kEff * (sb - eb)));
+                }
+            }
+
+            participantIds.forEach(id => {
+                ratings.set(id, (ratings.get(id) ?? baseRating) + (deltas.get(id) || 0));
+            });
+
+            if (ev.date >= weekStartISO) {
+                participantIds.forEach(id => {
+                    let formDelta = 1.5 * m;
+                    if (winnerId === id) formDelta += 8 * m;
+                    else if (winnerId) formDelta -= 4 * m;
+                    recentForm.set(id, (recentForm.get(id) || 0) + formDelta);
+                });
+            }
+        });
+    }
+
+    const byShow = new Map();
+    for (const show of state.shows) {
+        const rows = state.superstars
+            .filter(ss => superstarOnShow(ss, show.id))
+            .map(ss => ({
+                superstar: ss,
+                score: (ratings.get(ss.id) ?? baseRating) + (recentForm.get(ss.id) ?? 0),
+            }))
+            .sort((a, b) => {
+                if (b.score !== a.score) return b.score - a.score;
+                if (toNonNegativeInt(b.superstar.wins) !== toNonNegativeInt(a.superstar.wins)) {
+                    return toNonNegativeInt(b.superstar.wins) - toNonNegativeInt(a.superstar.wins);
+                }
+                return a.superstar.name.localeCompare(b.superstar.name);
+            })
+            .slice(0, 3);
+        byShow.set(show.id, rows);
+    }
+    return byShow;
+}
 function showName(showId) {
     if (!showId) return "No show";
     const s = getShow(showId);
@@ -327,6 +484,7 @@ $("#modalOk").addEventListener("click", () => closeModal({ ok: true }));
 // -------------------- DASHBOARD --------------------
 function renderDashboard() {
     const el = $("#nextEvent");
+    const rankingsEl = $("#weeklyRankings");
     const upcoming = state.events
         .filter(e => e.date >= todayISO())
         .sort((a, b) => a.date.localeCompare(b.date))[0];
@@ -358,6 +516,57 @@ function renderDashboard() {
       <span class="badge"><span class="dot"></span>Events: <b>${state.events.length}</b></span>
     </div>
   `;
+
+    if (!rankingsEl) return;
+    if (!state.shows.length) {
+        rankingsEl.innerHTML = `<div class="muted">Add shows to start weekly rankings.</div>`;
+        return;
+    }
+    if (!state.superstars.length) {
+        rankingsEl.innerHTML = `<div class="muted">Add superstars to generate rankings.</div>`;
+        return;
+    }
+
+    const rankingsByShow = computeWeeklyRankings();
+    rankingsEl.innerHTML = `
+      <div class="rankings-shows">
+        ${state.shows.map(show => {
+            const rows = rankingsByShow.get(show.id) || [];
+            return `
+              <div class="rankings-show-card">
+                <div class="item-title">
+                  <span class="badge"><span class="dot" style="background:${show.color}"></span>${escapeHTML(show.name)} Top 3</span>
+                </div>
+                ${rows.length
+                    ? `<div class="rankings-list">
+                        ${rows.map((entry, idx) => {
+                            const ss = entry.superstar;
+                            const photo = superstarPhotoURL(ss);
+                            const rank = idx + 1;
+                            return `
+                              <div class="rank-row">
+                                <div class="rank-left">
+                                  ${photo
+                                    ? `<img class="rank-photo" src="${escapeAttr(photo)}" alt="${escapeAttr(ss.name)}" />`
+                                    : `<div class="rank-photo-fallback">${escapeHTML(superstarInitials(ss.name))}</div>`
+                                }
+                                  <div class="rank-name-wrap">
+                                    <div class="rank-name">${escapeHTML(ss.name)}</div>
+                                    ${ss.isChampion ? `<span class="rank-champ">C</span>` : ``}
+                                  </div>
+                                </div>
+                                <div class="rank-pos">${ordinal(rank)}</div>
+                              </div>
+                            `;
+                        }).join("")}
+                      </div>`
+                    : `<div class="muted tiny">No ranked superstars on this show yet.</div>`
+                }
+              </div>
+            `;
+        }).join("")}
+      </div>
+    `;
 }
 
 // -------------------- SHOWS --------------------
