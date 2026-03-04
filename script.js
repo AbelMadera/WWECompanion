@@ -62,6 +62,7 @@ function enrichSuperstar(ss) {
         championships,
         faction: String(ss?.faction ?? "").trim(),
         manager: String(ss?.manager ?? "").trim(),
+        photo: String(ss?.photo ?? ss?.image ?? ss?.picture ?? "").trim(),
         wins: toNonNegativeInt(ss?.wins),
         losses: toNonNegativeInt(ss?.losses),
     };
@@ -109,6 +110,21 @@ function normalizeStateData(sourceState) {
         })
         : [];
 
+    normalized.weeklySchedule = Array.isArray(normalized.weeklySchedule)
+        ? normalized.weeklySchedule
+            .map(row => ({
+                showId: String(row?.showId ?? "").trim(),
+                weekday: Number(row?.weekday),
+            }))
+            .filter(row =>
+                row.showId &&
+                Number.isInteger(row.weekday) &&
+                row.weekday >= 0 &&
+                row.weekday <= 6 &&
+                normalized.shows.some(s => s.id === row.showId)
+            )
+        : [];
+
     return normalized;
 }
 function escapeHTML(str) {
@@ -128,6 +144,7 @@ function defaultState() {
         shows: [],        // {id, name, color}
         championships: [], // {id, name}
         superstars: [],   // {id, name, showIds:[], showId(legacy), division}
+        weeklySchedule: [], // [{showId, weekday}] where weekday is 0-6
         events: [],       // {id, date, type:"weekly"|"ppv", showId|null, name, matches:[...], defaultRows?}
         createdAt: Date.now(),
         updatedAt: Date.now(),
@@ -168,6 +185,15 @@ function saveSoon() {
 
 // -------------------- HELPERS --------------------
 function getShow(showId) { return state.shows.find(s => s.id === showId) || null; }
+const WEEKDAY_OPTIONS = [
+    { value: 0, label: "Sunday" },
+    { value: 1, label: "Monday" },
+    { value: 2, label: "Tuesday" },
+    { value: 3, label: "Wednesday" },
+    { value: 4, label: "Thursday" },
+    { value: 5, label: "Friday" },
+    { value: 6, label: "Saturday" },
+];
 function superstarOnShow(superstar, showId) {
     const ids = Array.isArray(superstar?.showIds) ? superstar.showIds : (superstar?.showId ? [superstar.showId] : []);
     return ids.includes(showId);
@@ -187,12 +213,39 @@ function superstarChampionshipNames(superstar) {
         .map(championshipName)
         .filter(Boolean);
 }
+function superstarPhotoURL(superstar) {
+    return String(superstar?.photo ?? "").trim();
+}
+function superstarInitials(name) {
+    const parts = String(name ?? "").trim().split(/\s+/).filter(Boolean);
+    if (!parts.length) return "?";
+    return parts.slice(0, 2).map(p => p[0].toUpperCase()).join("");
+}
 function showName(showId) {
     if (!showId) return "No show";
     const s = getShow(showId);
     return s ? s.name : "Unknown show";
 }
 function showColor(showId) { return getShow(showId)?.color || "#888"; }
+function addShowByNameColor(rawName, rawColor) {
+    const name = String(rawName ?? "").trim();
+    if (!name) return { ok: false, reason: "empty_name" };
+
+    const duplicate = state.shows.some(s => s.name.toLowerCase() === name.toLowerCase());
+    if (duplicate) return { ok: false, reason: "duplicate_name" };
+
+    const color = normalizeHexColor(rawColor) || "#d00000";
+    state.shows.push({ id: uid("show"), name, color });
+    return { ok: true };
+}
+function deleteShowAndUnassign(showId) {
+    state.superstars = state.superstars.map(ss => {
+        const nextShowIds = (ss.showIds || []).filter(id => id !== showId);
+        return { ...ss, showIds: nextShowIds, showId: nextShowIds[0] ?? null };
+    });
+    state.shows = state.shows.filter(x => x.id !== showId);
+    state.weeklySchedule = (state.weeklySchedule || []).filter(row => row.showId !== showId);
+}
 function managerNameSet() {
     return new Set(
         state.superstars
@@ -241,7 +294,7 @@ function setView(view) {
         planner: ["Planner", "Book your cards like your spreadsheet"],
         shows: ["Shows", "Create/remove shows & colors"],
         roster: ["Roster", "Add superstars, assign shows + divisions"],
-        settings: ["Settings", "Import data and manage championships"],
+        settings: ["Settings", "Schedule weekly shows, manage data, import JSON"],
     };
     $("#viewTitle").textContent = titles[view][0];
     $("#viewSubtitle").textContent = titles[view][1];
@@ -347,11 +400,7 @@ function renderShows() {
             });
             if (!ok.ok) return;
 
-            state.superstars = state.superstars.map(ss => {
-                const nextShowIds = (ss.showIds || []).filter(showId => showId !== id);
-                return { ...ss, showIds: nextShowIds, showId: nextShowIds[0] ?? null };
-            });
-            state.shows = state.shows.filter(x => x.id !== id);
+            deleteShowAndUnassign(id);
             saveSoon();
             renderAll();
         });
@@ -359,6 +408,171 @@ function renderShows() {
 }
 
 // -------------------- ROSTER --------------------
+async function deleteSuperstarFlow(id) {
+    const ss = state.superstars.find(x => x.id === id);
+    const ok = await openModal({
+        title: "Delete superstar?",
+        bodyHTML: `<div>Delete <b>${escapeHTML(ss?.name || "this superstar")}</b>?</div>`,
+        okText: "Delete"
+    });
+    if (!ok.ok) return false;
+
+    state.superstars = state.superstars.filter(x => x.id !== id);
+    saveSoon();
+    renderRoster();
+    renderPlannerEventSelect();
+    return true;
+}
+
+async function editSuperstarFlow(id) {
+    const ss = state.superstars.find(x => x.id === id);
+    if (!ss) return false;
+
+    const selectedShows = new Set(ss.showIds || []);
+    const showOptions = state.shows.length
+        ? state.shows.map(s => `
+            <label class="row gap wrap">
+              <input class="editSSShowItem" type="checkbox" value="${s.id}" ${selectedShows.has(s.id) ? "checked" : ""} />
+              <span>${escapeHTML(s.name)}</span>
+            </label>
+          `).join("")
+        : `<div class="muted tiny">No shows created yet.</div>`;
+    const selectedChampionships = new Set(parseChampionships(ss.championships));
+    const championshipOptions = state.championships.length
+        ? state.championships.map(c => `
+            <label class="row gap wrap">
+              <input class="editSSChampItem" type="checkbox" value="${c.id}" ${selectedChampionships.has(c.id) ? "checked" : ""} />
+              <span>${escapeHTML(c.name)}</span>
+            </label>
+          `).join("")
+        : `<div class="muted tiny">No championships created yet. Add them in Settings first.</div>`;
+
+    const bodyHTML = `
+      <div class="stack">
+        <input id="editSSName" class="input" value="${escapeAttr(ss.name)}" />
+        <input id="editSSPhoto" class="input" value="${escapeAttr(superstarPhotoURL(ss))}" placeholder="Photo URL (https://...)" />
+        <div class="muted tiny">Shows</div>
+        <div class="stack">${showOptions}</div>
+        <select id="editSSDiv" class="input">
+          ${["World", "Midcard", "Tag", "Women", "Other"].map(d => `<option value="${d}" ${d === ss.division ? "selected" : ""}>${d}</option>`).join("")}
+        </select>
+        <div class="muted tiny">Championships</div>
+        <div class="stack">${championshipOptions}</div>
+        <input id="editSSFaction" class="input" value="${escapeAttr(ss.faction || "")}" placeholder="Faction / Group affiliation" />
+        <input id="editSSManager" class="input" value="${escapeAttr(ss.manager || "")}" placeholder="Manager" />
+        <div class="row gap wrap">
+          <input id="editSSWins" class="input" type="number" min="0" value="${toNonNegativeInt(ss.wins)}" placeholder="Wins" />
+          <input id="editSSLosses" class="input" type="number" min="0" value="${toNonNegativeInt(ss.losses)}" placeholder="Losses" />
+        </div>
+        <div class="muted tiny">Tip: Champion status is automatic when at least one championship is selected.</div>
+      </div>
+    `;
+
+    const ok = await openModal({ title: "Edit Superstar", bodyHTML, okText: "Save" });
+    if (!ok.ok) return false;
+
+    const newName = $("#editSSName").value.trim();
+    const newPhoto = $("#editSSPhoto").value.trim();
+    const newShowIds = $$(".editSSShowItem:checked").map(el => el.value);
+    const newDiv = $("#editSSDiv").value;
+    const newChamps = $$(".editSSChampItem:checked").map(el => el.value);
+    const newFaction = $("#editSSFaction").value.trim();
+    const newManager = $("#editSSManager").value.trim();
+    const newWins = toNonNegativeInt($("#editSSWins").value);
+    const newLosses = toNonNegativeInt($("#editSSLosses").value);
+
+    if (!newName) return false;
+
+    state.superstars = state.superstars.map(x => x.id === id ? {
+        ...x,
+        name: newName,
+        photo: newPhoto,
+        showIds: Array.from(new Set(newShowIds)),
+        showId: newShowIds[0] ?? null,
+        division: newDiv,
+        isChampion: newChamps.length > 0,
+        championships: Array.from(new Set(newChamps)),
+        faction: newFaction,
+        manager: newManager,
+        wins: newWins,
+        losses: newLosses,
+    } : x);
+    saveSoon();
+    renderRoster();
+    renderPlanner();
+    return true;
+}
+
+async function openSuperstarDetails(id) {
+    const ss = state.superstars.find(x => x.id === id);
+    if (!ss) return;
+
+    const ssShows = superstarShowNames(ss);
+    const champs = superstarChampionshipNames(ss);
+    const record = `${toNonNegativeInt(ss.wins)}-${toNonNegativeInt(ss.losses)}`;
+    const photo = superstarPhotoURL(ss);
+
+    const bodyHTML = `
+      <div class="stack">
+        <div class="ss-profile-head">
+          ${photo
+            ? `<img class="ss-profile-photo" src="${escapeAttr(photo)}" alt="${escapeAttr(ss.name)}" />`
+            : `<div class="ss-profile-fallback">${escapeHTML(superstarInitials(ss.name))}</div>`
+        }
+          <div class="stack" style="gap:6px;">
+            <div class="h3" style="margin:0;">${escapeHTML(ss.name)}</div>
+            <div class="muted tiny">${escapeHTML(ssShows.join(", ") || "Unassigned")} • ${escapeHTML(ss.division)} Division</div>
+          </div>
+        </div>
+        <div class="row gap wrap">
+          <span class="badge">Record: <b>${record}</b></span>
+          <span class="badge">${champs.length ? "Champion" : "Not Champion"}</span>
+          ${champs.length ? `<span class="badge">Titles: <b>${escapeHTML(champs.join(", "))}</b></span>` : ""}
+          ${ss.faction ? `<span class="badge">Faction: <b>${escapeHTML(ss.faction)}</b></span>` : ""}
+          ${ss.manager ? `<span class="badge">Manager: <b>${escapeHTML(ss.manager)}</b></span>` : ""}
+        </div>
+      </div>
+    `;
+
+    const modalPromise = openModal({ title: "Superstar Details", bodyHTML, okText: "Close", cancelText: "Close" });
+
+    const modalActions = $(".modal-actions");
+    const modalCancelBtn = $("#modalCancel");
+    const modalOkBtn = $("#modalOk");
+    const footerEditBtn = document.createElement("button");
+    footerEditBtn.id = "ssDetailEdit";
+    footerEditBtn.className = "btn secondary";
+    footerEditBtn.type = "button";
+    footerEditBtn.textContent = "Edit Superstar";
+    const footerDeleteBtn = document.createElement("button");
+    footerDeleteBtn.id = "ssDetailDelete";
+    footerDeleteBtn.className = "btn danger";
+    footerDeleteBtn.type = "button";
+    footerDeleteBtn.textContent = "Delete Superstar";
+
+    modalCancelBtn.classList.add("hidden");
+    modalActions.insertBefore(footerEditBtn, modalOkBtn);
+    modalActions.insertBefore(footerDeleteBtn, modalOkBtn);
+
+    footerEditBtn.addEventListener("click", async () => {
+        closeModal({ ok: false });
+        const didSave = await editSuperstarFlow(id);
+        if (didSave) {
+            await openSuperstarDetails(id);
+        }
+    });
+    footerDeleteBtn.addEventListener("click", async () => {
+        closeModal({ ok: false });
+        await deleteSuperstarFlow(id);
+    });
+
+    await modalPromise;
+
+    footerEditBtn.remove();
+    footerDeleteBtn.remove();
+    modalCancelBtn.classList.remove("hidden");
+}
+
 function renderRoster() {
     populateShowSelects();
 
@@ -380,23 +594,22 @@ function renderRoster() {
     <div class="list">
       ${rows.map(ss => {
         const ssShows = superstarShowNames(ss);
-        const champs = superstarChampionshipNames(ss);
         const record = `${toNonNegativeInt(ss.wins)}-${toNonNegativeInt(ss.losses)}`;
+        const photo = superstarPhotoURL(ss);
         return `
-          <div class="item">
-            <div class="item-title">${escapeHTML(ss.name)}</div>
+          <div class="item roster-item" data-open-ss="${ss.id}" role="button" tabindex="0" aria-label="Open ${escapeAttr(ss.name)} details">
             <div class="row gap wrap">
-              <span class="badge">${escapeHTML(ssShows.join(", ") || "Unassigned")}</span>
-              <span class="badge">Division: <b>${escapeHTML(ss.division)}</b></span>
-              <span class="badge">Record: <b>${record}</b></span>
-              <span class="badge">${champs.length ? "Champion" : "Not Champion"}</span>
-              ${champs.length ? `<span class="badge">Titles: <b>${escapeHTML(champs.join(", "))}</b></span>` : ""}
-              ${ss.faction ? `<span class="badge">Faction: <b>${escapeHTML(ss.faction)}</b></span>` : ""}
-              ${ss.manager ? `<span class="badge">Manager: <b>${escapeHTML(ss.manager)}</b></span>` : ""}
+              ${photo
+                ? `<img class="ss-card-photo" src="${escapeAttr(photo)}" alt="${escapeAttr(ss.name)}" />`
+                : `<div class="ss-card-fallback">${escapeHTML(superstarInitials(ss.name))}</div>`
+            }
+              <div>
+                <div class="item-title">${escapeHTML(ss.name)}</div>
+                <div class="item-sub">${escapeHTML(ssShows.join(", ") || "Unassigned")} • ${escapeHTML(ss.division)} • ${record}</div>
+              </div>
             </div>
-            <div class="item-actions">
-              <button class="btn secondary" data-edit-ss="${ss.id}">Edit</button>
-              <button class="btn danger" data-del-ss="${ss.id}">Delete</button>
+            <div class="row gap wrap">
+              <span class="badge">Tap for details</span>
             </div>
           </div>
         `;
@@ -404,99 +617,14 @@ function renderRoster() {
     </div>
   `;
 
-    $$("[data-del-ss]").forEach(btn => {
-        btn.addEventListener("click", async () => {
-            const id = btn.dataset.delSs;
-            const ss = state.superstars.find(x => x.id === id);
-            const ok = await openModal({
-                title: "Delete superstar?",
-                bodyHTML: `<div>Delete <b>${escapeHTML(ss?.name || "this superstar")}</b>?</div>`,
-                okText: "Delete"
-            });
-            if (!ok.ok) return;
-
-            state.superstars = state.superstars.filter(x => x.id !== id);
-            saveSoon();
-            renderRoster();
-            renderPlannerEventSelect();
-        });
-    });
-
-    $$("[data-edit-ss]").forEach(btn => {
-        btn.addEventListener("click", async () => {
-            const id = btn.dataset.editSs;
-            const ss = state.superstars.find(x => x.id === id);
-            if (!ss) return;
-
-            const selectedShows = new Set(ss.showIds || []);
-            const showOptions = state.shows.length
-                ? state.shows.map(s => `
-                <label class="row gap wrap">
-                  <input class="editSSShowItem" type="checkbox" value="${s.id}" ${selectedShows.has(s.id) ? "checked" : ""} />
-                  <span>${escapeHTML(s.name)}</span>
-                </label>
-              `).join("")
-                : `<div class="muted tiny">No shows created yet.</div>`;
-            const selectedChampionships = new Set(parseChampionships(ss.championships));
-            const championshipOptions = state.championships.length
-                ? state.championships.map(c => `
-                <label class="row gap wrap">
-                  <input class="editSSChampItem" type="checkbox" value="${c.id}" ${selectedChampionships.has(c.id) ? "checked" : ""} />
-                  <span>${escapeHTML(c.name)}</span>
-                </label>
-              `).join("")
-                : `<div class="muted tiny">No championships created yet. Add them in Settings first.</div>`;
-
-            const bodyHTML = `
-        <div class="stack">
-          <input id="editSSName" class="input" value="${escapeAttr(ss.name)}" />
-          <div class="muted tiny">Shows</div>
-          <div class="stack">${showOptions}</div>
-          <select id="editSSDiv" class="input">
-            ${["World", "Midcard", "Tag", "Women", "Other"].map(d => `<option value="${d}" ${d === ss.division ? "selected" : ""}>${d}</option>`).join("")}
-          </select>
-          <div class="muted tiny">Championships</div>
-          <div class="stack">${championshipOptions}</div>
-          <input id="editSSFaction" class="input" value="${escapeAttr(ss.faction || "")}" placeholder="Faction / Group affiliation" />
-          <input id="editSSManager" class="input" value="${escapeAttr(ss.manager || "")}" placeholder="Manager" />
-          <div class="row gap wrap">
-            <input id="editSSWins" class="input" type="number" min="0" value="${toNonNegativeInt(ss.wins)}" placeholder="Wins" />
-            <input id="editSSLosses" class="input" type="number" min="0" value="${toNonNegativeInt(ss.losses)}" placeholder="Losses" />
-          </div>
-          <div class="muted tiny">Tip: Champion status is automatic when at least one championship is selected.</div>
-        </div>
-      `;
-
-            const ok = await openModal({ title: "Edit Superstar", bodyHTML, okText: "Save" });
-            if (!ok.ok) return;
-
-            const newName = $("#editSSName").value.trim();
-            const newShowIds = $$(".editSSShowItem:checked").map(el => el.value);
-            const newDiv = $("#editSSDiv").value;
-            const newChamps = $$(".editSSChampItem:checked").map(el => el.value);
-            const newFaction = $("#editSSFaction").value.trim();
-            const newManager = $("#editSSManager").value.trim();
-            const newWins = toNonNegativeInt($("#editSSWins").value);
-            const newLosses = toNonNegativeInt($("#editSSLosses").value);
-
-            if (!newName) return;
-
-            state.superstars = state.superstars.map(x => x.id === id ? {
-                ...x,
-                name: newName,
-                showIds: Array.from(new Set(newShowIds)),
-                showId: newShowIds[0] ?? null,
-                division: newDiv,
-                isChampion: newChamps.length > 0,
-                championships: Array.from(new Set(newChamps)),
-                faction: newFaction,
-                manager: newManager,
-                wins: newWins,
-                losses: newLosses,
-            } : x);
-            saveSoon();
-            renderRoster();
-            renderPlanner();
+    $$("[data-open-ss]").forEach(el => {
+        const open = () => openSuperstarDetails(el.dataset.openSs);
+        el.addEventListener("click", open);
+        el.addEventListener("keydown", (e) => {
+            if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                open();
+            }
         });
     });
 }
@@ -532,7 +660,10 @@ function renderCalendar() {
         const visibleEvents = events.slice(0, 2);
         const badges = visibleEvents.map(e => {
             const shortType = e.type === "ppv" ? "PLE" : "WK";
-            return `<span class="cal-pill" title="${escapeAttr(e.name || "(Unnamed Event)")}">${shortType}</span>`;
+            const pillStyle = e.type === "ppv"
+                ? "background:#ffffff;color:#111111;border-color:#ffffff;"
+                : `background:${showColor(e.showId)};color:#ffffff;border-color:${showColor(e.showId)};`;
+            return `<span class="cal-pill" style="${pillStyle}" title="${escapeAttr(e.name || "(Unnamed Event)")}">${shortType}</span>`;
         }).join("");
         const overflow = events.length > visibleEvents.length
             ? `<span class="cal-more">+${events.length - visibleEvents.length}</span>`
@@ -653,6 +784,13 @@ async function addEventFlow(dateISO = calSelectedISO) {
 
 // -------------------- PLANNER (optimized, no full rerender on typing) --------------------
 let plannerEventId = null;
+const MIN_PARTICIPANT_SLOTS = 2;
+
+function participantSlotCount(match) {
+    const participants = Array.isArray(match?.participants) ? match.participants : [];
+    const configured = Math.floor(Number(match?.participantSlots) || 0);
+    return Math.max(MIN_PARTICIPANT_SLOTS, participants.length, configured);
+}
 
 function renderPlannerEventSelect() {
     const sel = $("#plannerEventSelect");
@@ -707,7 +845,17 @@ function renderPlanner() {
     const optionsHTML = plannerRosterOptions(ev);
 
     body.innerHTML = ev.matches.map((m, idx) => {
-        const p = m.participants || [];
+        const slotCount = participantSlotCount(m);
+        const participantFields = Array.from({ length: slotCount }).map((_, slotIdx) => `
+          <select class="cell-input small" data-field="participant" data-slot="${slotIdx}">
+            <option value="">${slotIdx < 2 ? "(select)" : "(optional)"}</option>
+            ${optionsHTML}
+          </select>
+        `).join("");
+        const removeParticipantBtn = slotCount > MIN_PARTICIPANT_SLOTS
+            ? `<button type="button" class="btn secondary participant-add-btn" data-remove-participant="${idx}">- Participant</button>`
+            : "";
+
         return `
       <tr data-row="${idx}">
         <td>
@@ -715,23 +863,10 @@ function renderPlanner() {
         </td>
         <td>
           <div class="stack">
-            <select class="cell-input small" data-field="p1">
-              <option value="">(select)</option>
-              ${optionsHTML}
-            </select>
-            <select class="cell-input small" data-field="p2">
-              <option value="">(select)</option>
-              ${optionsHTML}
-            </select>
+            ${participantFields}
             <div class="row gap wrap">
-              <select class="cell-input small" data-field="p3">
-                <option value="">(optional)</option>
-                ${optionsHTML}
-              </select>
-              <select class="cell-input small" data-field="p4">
-                <option value="">(optional)</option>
-                ${optionsHTML}
-              </select>
+              <button type="button" class="btn secondary participant-add-btn" data-add-participant="${idx}">+ Participant</button>
+              ${removeParticipantBtn}
             </div>
           </div>
         </td>
@@ -759,11 +894,9 @@ function renderPlanner() {
         const row = Number(tr.dataset.row);
         const match = ev.matches[row];
         const p = match.participants || [];
-
-        tr.querySelector('[data-field="p1"]').value = p[0] || "";
-        tr.querySelector('[data-field="p2"]').value = p[1] || "";
-        tr.querySelector('[data-field="p3"]').value = p[2] || "";
-        tr.querySelector('[data-field="p4"]').value = p[3] || "";
+        $$('[data-field="participant"]', tr).forEach((el, slotIdx) => {
+            el.value = p[slotIdx] || "";
+        });
     });
 
     // One event listener for all row edits (event delegation)
@@ -780,23 +913,20 @@ function renderPlanner() {
         const ev2 = getEvent(plannerEventId);
         if (!ev2 || !ev2.matches[row]) return;
 
-        if (field === "p1" || field === "p2" || field === "p3" || field === "p4") {
-            const p1 = tr.querySelector('[data-field="p1"]').value;
-            const p2 = tr.querySelector('[data-field="p2"]').value;
-            const p3 = tr.querySelector('[data-field="p3"]').value;
-            const p4 = tr.querySelector('[data-field="p4"]').value;
-            const selected = [p1, p2, p3, p4];
+        if (field === "participant") {
+            const participantInputs = $$('[data-field="participant"]', tr);
+            const selected = participantInputs.map(input => input.value);
             const seen = new Set();
             const deduped = selected.map(v => {
                 if (!v || seen.has(v)) return "";
                 seen.add(v);
                 return v;
             });
-            tr.querySelector('[data-field="p1"]').value = deduped[0] || "";
-            tr.querySelector('[data-field="p2"]').value = deduped[1] || "";
-            tr.querySelector('[data-field="p3"]').value = deduped[2] || "";
-            tr.querySelector('[data-field="p4"]').value = deduped[3] || "";
+            participantInputs.forEach((input, slotIdx) => {
+                input.value = deduped[slotIdx] || "";
+            });
             ev2.matches[row].participants = deduped.filter(Boolean);
+            ev2.matches[row].participantSlots = participantSlotCount(ev2.matches[row]);
         } else if (field === "num") {
             ev2.matches[row].num = Number(target.value) || (row + 1);
         } else {
@@ -807,6 +937,35 @@ function renderPlanner() {
     };
     body.oninput = handlePlannerRowEdit;
     body.onchange = handlePlannerRowEdit;
+
+    // Add participant slot button
+    $$("[data-add-participant]").forEach(btn => {
+        btn.addEventListener("click", () => {
+            const idx = Number(btn.dataset.addParticipant);
+            const ev2 = getEvent(plannerEventId);
+            if (!ev2 || !ev2.matches[idx]) return;
+            ev2.matches[idx].participantSlots = participantSlotCount(ev2.matches[idx]) + 1;
+            upsertEvent(ev2);
+            renderPlanner();
+        });
+    });
+
+    $$("[data-remove-participant]").forEach(btn => {
+        btn.addEventListener("click", () => {
+            const idx = Number(btn.dataset.removeParticipant);
+            const ev2 = getEvent(plannerEventId);
+            if (!ev2 || !ev2.matches[idx]) return;
+
+            const currentCount = participantSlotCount(ev2.matches[idx]);
+            if (currentCount <= MIN_PARTICIPANT_SLOTS) return;
+
+            const nextCount = currentCount - 1;
+            ev2.matches[idx].participantSlots = nextCount;
+            ev2.matches[idx].participants = (ev2.matches[idx].participants || []).slice(0, nextCount);
+            upsertEvent(ev2);
+            renderPlanner();
+        });
+    });
 
     // Delete row buttons
     $$("[data-del-row]").forEach(btn => {
@@ -830,6 +989,7 @@ function addMatchRow() {
     ev.matches.push({
         num: ev.matches.length + 1,
         participants: [],
+        participantSlots: MIN_PARTICIPANT_SLOTS,
         matchType: "",
         storyline: "",
         result: "",
@@ -861,27 +1021,189 @@ function openPlanner(eventId) {
 
 // -------------------- SETTINGS: POPULATE / GENERATE --------------------
 function renderSettingsTools() {
+    const weeklyList = $("#settingsWeeklyScheduleList");
+    const weeklyStartDate = $("#settingsWeeklyStartDate");
+    const weeklyMonths = $("#settingsWeeklyMonths");
+    const weeklyRows = $("#settingsWeeklyRows");
+    const generateWeeklyBtn = $("#settingsGenerateWeeklyBtn");
+    const showsList = $("#settingsShowsList");
     const list = $("#championshipsList");
-    if (!list) return;
+    if (!weeklyList || !weeklyStartDate || !weeklyMonths || !weeklyRows || !generateWeeklyBtn || !showsList || !list) return;
+
+    const weeklyMap = new Map((state.weeklySchedule || []).map(row => [row.showId, row.weekday]));
+    if (!state.shows.length) {
+        weeklyList.innerHTML = `<div class="muted tiny">Add shows first, then set their weekly day here.</div>`;
+    } else {
+        weeklyList.innerHTML = `
+          <div class="list">
+            ${state.shows.map(s => {
+            const selected = weeklyMap.has(s.id) ? String(weeklyMap.get(s.id)) : "-1";
+            return `
+                <div class="item">
+                  <div class="row space gap wrap">
+                    <span class="badge"><span class="dot" style="background:${s.color}"></span>${escapeHTML(s.name)}</span>
+                    <select class="input" data-weekly-show="${s.id}" style="max-width:220px;">
+                      <option value="-1" ${selected === "-1" ? "selected" : ""}>Not scheduled</option>
+                      ${WEEKDAY_OPTIONS.map(day => `<option value="${day.value}" ${selected === String(day.value) ? "selected" : ""}>${day.label}</option>`).join("")}
+                    </select>
+                  </div>
+                </div>
+              `;
+        }).join("")}
+          </div>
+        `;
+    }
+
+    if (!weeklyStartDate.value) weeklyStartDate.value = todayISO();
+    if (!weeklyMonths.value) weeklyMonths.value = "3";
+    if (!weeklyRows.value) weeklyRows.value = "6";
+
+    $$("[data-weekly-show]").forEach(sel => {
+        sel.onchange = () => {
+            const showId = sel.dataset.weeklyShow;
+            const weekday = Number(sel.value);
+            state.weeklySchedule = (state.weeklySchedule || []).filter(row => row.showId !== showId);
+            if (weekday >= 0 && weekday <= 6) {
+                state.weeklySchedule.push({ showId, weekday });
+            }
+            saveSoon();
+        };
+    });
+
+    generateWeeklyBtn.onclick = async () => {
+        const rules = (state.weeklySchedule || []).filter(row =>
+            state.shows.some(s => s.id === row.showId) &&
+            Number.isInteger(Number(row.weekday)) &&
+            Number(row.weekday) >= 0 &&
+            Number(row.weekday) <= 6
+        ).map(row => ({ showId: row.showId, weekday: Number(row.weekday) }));
+
+        if (!rules.length) {
+            await openModal({
+                title: "No weekly shows set",
+                bodyHTML: `<div class="muted">Set at least one show to a weekday first.</div>`,
+                okText: "OK",
+                cancelText: "Close"
+            });
+            return;
+        }
+
+        const startISO = weeklyStartDate.value || todayISO();
+        const months = Math.max(1, Math.min(24, Number(weeklyMonths.value) || 3));
+        const defaultRows = Math.max(0, Math.min(20, Number(weeklyRows.value) || 6));
+        const beforeCount = state.events.length;
+
+        generateWeeklyEvents({ startISO, months, rules, defaultRows });
+        const added = state.events.length - beforeCount;
+        renderAll();
+
+        await openModal({
+            title: "Calendar populated",
+            bodyHTML: `<div class="muted">Added ${added} weekly events from ${startISO} for ${months} month(s).</div>`,
+            okText: "Done",
+            cancelText: "Close"
+        });
+    };
+
+    if (!state.shows.length) {
+        showsList.innerHTML = `<div class="muted tiny">No shows yet. Add one above.</div>`;
+    } else {
+        showsList.innerHTML = `
+          <div class="list">
+            ${state.shows.map(s => `
+              <div class="item">
+                <div class="item-title">
+                  <span class="badge"><span class="dot" style="background:${s.color}"></span>${escapeHTML(s.name)}</span>
+                </div>
+                <div class="item-sub">Color: ${escapeHTML(s.color)}</div>
+                <div class="item-actions">
+                  <button class="btn secondary" data-settings-edit-show="${s.id}">Edit</button>
+                  <button class="btn danger" data-settings-del-show="${s.id}">Delete</button>
+                </div>
+              </div>
+            `).join("")}
+          </div>
+        `;
+    }
+
+    $$("[data-settings-edit-show]").forEach(btn => {
+        btn.addEventListener("click", async () => {
+            const id = btn.dataset.settingsEditShow;
+            const show = getShow(id);
+            if (!show) return;
+
+            const ok = await openModal({
+                title: "Edit show",
+                bodyHTML: `
+                  <div class="stack">
+                    <input id="editShowName" class="input" value="${escapeAttr(show.name)}" />
+                    <input id="editShowColor" class="input" type="color" value="${escapeAttr(show.color || "#d00000")}" />
+                  </div>
+                `,
+                okText: "Save"
+            });
+            if (!ok.ok) return;
+
+            const nextName = $("#editShowName").value.trim();
+            const nextColor = normalizeHexColor($("#editShowColor").value) || "#d00000";
+            if (!nextName) return;
+
+            const duplicate = state.shows.find(s => s.id !== id && s.name.toLowerCase() === nextName.toLowerCase());
+            if (duplicate) {
+                await openModal({
+                    title: "Duplicate show name",
+                    bodyHTML: `<div class="muted">A show with that name already exists.</div>`,
+                    okText: "OK",
+                    cancelText: "Close"
+                });
+                return;
+            }
+
+            state.shows = state.shows.map(s => s.id === id ? { ...s, name: nextName, color: nextColor } : s);
+            saveSoon();
+            renderAll();
+        });
+    });
+
+    $$("[data-settings-del-show]").forEach(btn => {
+        btn.addEventListener("click", async () => {
+            const id = btn.dataset.settingsDelShow;
+            const s = getShow(id);
+            if (!s) return;
+
+            const ok = await openModal({
+                title: "Delete show?",
+                bodyHTML: `
+                  <div>Delete <b>${escapeHTML(s.name)}</b>?</div>
+                  <div class="muted tiny">Superstars assigned to it become unassigned. Existing events keep their showId but will display as “Unknown”.</div>
+                `,
+                okText: "Delete"
+            });
+            if (!ok.ok) return;
+
+            deleteShowAndUnassign(id);
+            saveSoon();
+            renderAll();
+        });
+    });
 
     if (!state.championships.length) {
         list.innerHTML = `<div class="muted tiny">No championships yet. Add one above.</div>`;
-        return;
-    }
-
-    list.innerHTML = `
-      <div class="list">
-        ${state.championships.map(c => `
-          <div class="item">
-            <div class="item-title">${escapeHTML(c.name)}</div>
-            <div class="item-actions">
-              <button class="btn secondary" data-edit-title="${c.id}">Edit</button>
-              <button class="btn danger" data-del-title="${c.id}">Delete</button>
-            </div>
+    } else {
+        list.innerHTML = `
+          <div class="list">
+            ${state.championships.map(c => `
+              <div class="item">
+                <div class="item-title">${escapeHTML(c.name)}</div>
+                <div class="item-actions">
+                  <button class="btn secondary" data-edit-title="${c.id}">Edit</button>
+                  <button class="btn danger" data-del-title="${c.id}">Delete</button>
+                </div>
+              </div>
+            `).join("")}
           </div>
-        `).join("")}
-      </div>
-    `;
+        `;
+    }
 
     $$("[data-edit-title]").forEach(btn => {
         btn.addEventListener("click", async () => {
@@ -1126,6 +1448,7 @@ function importPopulateJSON(payload, { replace = true } = {}) {
             championships,
             faction: row?.faction,
             manager: row?.manager,
+            photo: row?.photo ?? row?.image ?? row?.picture,
             wins: row?.wins,
             losses: row?.losses,
         }));
@@ -1183,6 +1506,7 @@ function generateWeeklyEvents({ startISO, months, rules, defaultRows = 6 }) {
                 const matches = Array.from({ length: Number(defaultRows) || 0 }).map((_, i) => ({
                     num: i + 1,
                     participants: [],
+                    participantSlots: MIN_PARTICIPANT_SLOTS,
                     matchType: "",
                     storyline: "",
                     result: "",
@@ -1240,7 +1564,7 @@ function seedStarterUniverse() {
         showId: raw.id,
         name: `RAW • ${iso}`,
         matches: Array.from({ length: 6 }).map((_, i) => ({
-            num: i + 1, participants: [], matchType: "", storyline: "", result: "", rivalryNotes: ""
+            num: i + 1, participants: [], participantSlots: MIN_PARTICIPANT_SLOTS, matchType: "", storyline: "", result: "", rivalryNotes: ""
         }))
     });
 
@@ -1301,8 +1625,8 @@ $$(".bnav-btn").forEach(btn => btn.addEventListener("click", () => setView(btn.d
 $("#addShow").addEventListener("click", () => {
     const name = $("#showName").value.trim();
     const color = $("#showColor").value || "#d00000";
-    if (!name) return;
-    state.shows.push({ id: uid("show"), name, color });
+    const result = addShowByNameColor(name, color);
+    if (!result.ok) return;
     saveSoon();
     $("#showName").value = "";
     renderAll();
@@ -1310,13 +1634,15 @@ $("#addShow").addEventListener("click", () => {
 
 $("#addSS").addEventListener("click", () => {
     const name = $("#ssName").value.trim();
+    const photo = $("#ssPhoto").value.trim();
     const showIds = Array.from($("#ssShows").selectedOptions).map(o => o.value);
     const division = $("#ssDivision").value;
     if (!name) return;
 
-    state.superstars.push(enrichSuperstar({ id: uid("ss"), name, showIds, showId: showIds[0] ?? null, division }));
+    state.superstars.push(enrichSuperstar({ id: uid("ss"), name, photo, showIds, showId: showIds[0] ?? null, division }));
     saveSoon();
     $("#ssName").value = "";
+    $("#ssPhoto").value = "";
     $("#ssShows").selectedIndex = -1;
     renderRoster();
 });
@@ -1404,6 +1730,30 @@ $("#addChampionshipBtn").addEventListener("click", async () => {
     input.value = "";
     saveSoon();
     renderSettingsTools();
+});
+
+$("#settingsAddShowBtn").addEventListener("click", async () => {
+    const nameInput = $("#settingsShowNameInput");
+    const colorInput = $("#settingsShowColorInput");
+    const name = nameInput.value.trim();
+    const color = colorInput.value || "#d00000";
+
+    const result = addShowByNameColor(name, color);
+    if (!result.ok) {
+        if (result.reason === "duplicate_name") {
+            await openModal({
+                title: "Duplicate show name",
+                bodyHTML: `<div class="muted">A show with that name already exists.</div>`,
+                okText: "OK",
+                cancelText: "Close"
+            });
+        }
+        return;
+    }
+
+    nameInput.value = "";
+    saveSoon();
+    renderAll();
 });
 
 $("#wipeBtn").addEventListener("click", async () => {

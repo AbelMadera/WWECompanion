@@ -16,9 +16,6 @@
             "name": "WWE Women's World Championship"
         },
         {
-            "name": "WWE Women's Tag Team Championship"
-        },
-        {
             "name": "Undisputed WWE Championship"
         },
         {
@@ -56,291 +53,1538 @@
     ],
     "roster": [
         {
-            "name": "Gunther",
-            "show": "RAW",
+            "name": "AJ Styles",
+            "show": "SmackDown",
             "division": "World",
-            "championships": [
-                "World Heavyweight Championship"
-            ]
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2025/03/AJ_03102025ca_7152_Profile--1988356d35d8e7ecddea1904a93f8629.png"
         },
         {
-            "name": "Seth Rollins",
-            "show": "RAW",
-            "division": "World"
-        },
-        {
-            "name": "CM Punk",
-            "show": "RAW",
-            "division": "World"
-        },
-        {
-            "name": "Drew McIntyre",
-            "show": "RAW",
-            "division": "World"
-        },
-        {
-            "name": "Sami Zayn",
-            "show": "RAW",
-            "division": "World"
-        },
-        {
-            "name": "Jey Uso",
-            "show": "RAW",
-            "division": "World"
-        },
-        {
-            "name": "Chad Gable",
-            "show": "RAW",
-            "division": "Midcard"
-        },
-        {
-            "name": "Dominik Mysterio",
-            "show": "RAW",
-            "division": "Midcard"
-        },
-        {
-            "name": "Finn Balor",
-            "show": "RAW",
-            "division": "Midcard"
-        },
-        {
-            "name": "JD McDonagh",
-            "show": "RAW",
-            "division": "Midcard"
-        },
-        {
-            "name": "Bronson Reed",
-            "show": "RAW",
-            "division": "Midcard"
-        },
-        {
-            "name": "Kofi Kingston",
-            "show": "RAW",
-            "division": "Tag"
-        },
-        {
-            "name": "Xavier Woods",
-            "show": "RAW",
-            "division": "Tag"
-        },
-        {
-            "name": "Otis",
-            "show": "RAW",
-            "division": "Tag"
+            "name": "AJ Lee",
+            "show": "Raw",
+            "division": "World",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2026/03/Punk_AJ_-02282026rf_663_Profile.png"
         },
         {
             "name": "Akira Tozawa",
             "show": "RAW",
-            "division": "Tag"
-        },
-        {
-            "name": "Rhea Ripley",
-            "show": "RAW",
-            "division": "Women",
-            "championships": [
-                "WWE Women's World Championship"
-            ]
-        },
-        {
-            "name": "Becky Lynch",
-            "show": "RAW",
-            "division": "Women"
-        },
-        {
-            "name": "Liv Morgan",
-            "show": "RAW",
-            "division": "Women"
-        },
-        {
-            "name": "Raquel Rodriguez",
-            "show": "RAW",
-            "division": "Women"
-        },
-        {
-            "name": "Shayna Baszler",
-            "show": "RAW",
-            "division": "Women"
+            "division": "Tag",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2024/03/Towaza_PROFILE--857e73f17aec36a5cb98d262adb3693e.png"
         },
         {
             "name": "Alexa Bliss",
             "show": "RAW",
-            "division": "Women"
+            "division": "Women",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2025/11/Alexa_Bliss_Profile.png"
         },
         {
-            "name": "Roman Reigns",
+            "name": "Alex Shelley",
             "show": "SmackDown",
-            "division": "World",
-            "championships": [
-                "Undisputed WWE Championship"
-            ]
+            "division": "Tag",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2024/10/Alex_Shelley_PROFILE--b35a2dbe63db140b14cc1cc81baa3013.png"
         },
         {
-            "name": "AJ Styles",
-            "show": "SmackDown",
-            "division": "World"
-        },
-        {
-            "name": "Kevin Owens",
-            "show": "SmackDown",
-            "division": "World"
-        },
-        {
-            "name": "Randy Orton",
-            "show": "SmackDown",
-            "division": "World"
-        },
-        {
-            "name": "Solo Sikoa",
-            "show": "SmackDown",
-            "division": "World"
-        },
-        {
-            "name": "LA Knight",
+            "name": "Aleister Black",
             "show": "SmackDown",
             "division": "Midcard",
-            "championships": [
-                "United States Championship"
-            ]
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2025/04/AleisterBlack_03172025AK_15093_Profile--c3e2607d6ede84bd77e0f4e4465abf1f.png"
         },
         {
-            "name": "Santos Escobar",
-            "show": "SmackDown",
-            "division": "Midcard"
+            "name": "Alba Fyre",
+            "show": "RAW",
+            "division": "Women",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2025/04/SECRET_HERVICE_04112025sb_0013_Profile--4f496c462c77c1d73d90b5bcffc427f5.png"
         },
         {
-            "name": "Grayson Waller",
-            "show": "SmackDown",
-            "division": "Midcard"
+            "name": "Andre Chase",
+            "show": "NXT",
+            "division": "Midcard",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2025/10/CS-037663_RET_1%20Image%20of%20Andre%20Chase_Profile.png"
         },
         {
-            "name": "Jimmy Uso",
+            "name": "Angel",
             "show": "SmackDown",
-            "division": "Tag"
+            "division": "Tag",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2025/08/Angel_PROFILE.png"
         },
         {
-            "name": "Butch",
+            "name": "Angelo Dawkins",
             "show": "SmackDown",
-            "division": "Tag"
+            "division": "Tag",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2024/07/ANGELODAWKINS_04262024gd_0059_Profile--bda1ff5f0ae4923aa2a2495a3514ca32.png"
         },
         {
-            "name": "Sheamus",
+            "name": "Apollo Crews",
             "show": "SmackDown",
-            "division": "Tag"
+            "division": "Midcard",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2022/07/ApolloCrews_07122022PM_4001_profile--b8d2a2b039636a09c9cdb87a3491c4ec.png"
+        },
+        {
+            "name": "Asuka",
+            "show": "RAW",
+            "division": "Women",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2026/02/Asuka_PROFILE.png"
+        },
+        {
+            "name": "Austin Theory",
+            "show": "RAW",
+            "division": "Midcard",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2026/01/Austen_Theory_profile.png"
+        },
+        {
+            "name": "Axiom",
+            "show": "NXT",
+            "division": "Midcard",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2026/01/Axiom_Profile.png"
+        },
+        {
+            "name": "B-Fab",
+            "show": "SmackDown",
+            "division": "Women",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2025/06/BFAB_03072025ej_20250625-update--7e45147c59a5dde1b6699d82941f34d2.png"
+        },
+        {
+            "name": "Bayley",
+            "show": "RAW",
+            "division": "Women",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2025/11/Bayley_PROFILE.png"
+        },
+        {
+            "name": "Becky Lynch",
+            "show": "RAW",
+            "division": "Women",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2024/03/Becky_Lynch_PROFILE--0a8b02ec3d3e203b817d3b7674bd0a9e.png"
+        },
+        {
+            "name": "Berto",
+            "show": "RAW",
+            "division": "Tag",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2025/08/humberto_PROFILE.png"
         },
         {
             "name": "Bianca Belair",
             "show": "SmackDown",
             "division": "Women",
-            "championships": [
-                "WWE Women's Championship"
-            ]
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2024/03/BiancaBelair_01282024RF_1159_Profile--f32b01959da5065b6d2b2b9887792b92.png"
         },
         {
-            "name": "Bayley",
-            "show": "SmackDown",
-            "division": "Women"
+            "name": "Blake Monroe",
+            "show": "NXT",
+            "division": "Women",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2025/12/blake_monroe_PROFILE_0.png"
         },
         {
-            "name": "Iyo Sky",
-            "show": "SmackDown",
-            "division": "Women"
+            "name": "Brie Bella",
+            "show": "RAW",
+            "division": "Women",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2019/12/Brie_Bella_Pro--a1bc869798010ba227c65a61608f977c.png"
         },
         {
-            "name": "Naomi",
-            "show": "SmackDown",
-            "division": "Women"
+            "name": "Brock Lesnar",
+            "show": "RAW",
+            "division": "World",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2025/09/brock_lesnar_Profile.png"
         },
         {
-            "name": "Chelsea Green",
+            "name": "Bron Breakker",
+            "show": "RAW",
+            "division": "World",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2026/01/Bron_Breakker_Profile.png"
+        },
+        {
+            "name": "Bronson Reed",
+            "show": "RAW",
+            "division": "Midcard",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2023/01/Bronson_Reed_PROFILE--0ff0270b2431f0938140d6dbaf76f203.png"
+        },
+        {
+            "name": "Brooks Jensen",
+            "show": "NXT",
+            "division": "Tag",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2025/03/Brooks_Jensen_PROFILE--71d9cb260015c0e223c78af680224849.png"
+        },
+        {
+            "name": "Brutus Creed",
+            "show": "RAW",
+            "division": "Tag",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2026/02/Brutus_01052026rf_107_Profile.png"
+        },
+        {
+            "name": "Candice LeRae",
             "show": "SmackDown",
-            "division": "Women"
+            "division": "Women",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2022/10/Candice_LaRae_PROFILE--def0e1f21f051d008260b704d49aa993.png"
         },
         {
             "name": "Carmelo Hayes",
             "show": "NXT",
             "division": "World",
-            "championships": [
-                "NXT Championship"
-            ]
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2026/02/Carmelo_Title_Final.png"
         },
         {
-            "name": "Trick Williams",
+            "name": "Chad Gable",
+            "show": "RAW",
+            "division": "Midcard",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2024/07/CHAD_GABLE_04292024sb_0018_Profile--80cc4054eafcd6232f28f65428e5ecfb.png"
+        },
+        {
+            "name": "Channing 'Stacks'",
             "show": "NXT",
-            "division": "World"
+            "division": "Midcard",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2024/05/Channing-Stacks-Lorenzo-%26-Tony_11142023AK_00865_PROFILE--5adcc2ffec1e93bc730d7529b184d776.png"
+        },
+        {
+            "name": "Charlie Dempsey",
+            "show": "SmackDown",
+            "division": "Women",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2024/10/Charlie_Dempsey_PROFILE--16e8cc60076c55451e77d63cf0456342.png"
+        },
+        {
+            "name": "Charlotte Flair",
+            "show": "SmackDown",
+            "division": "Women",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2025/11/Charlotte_Profile.png"
+        },
+        {
+            "name": "Chelsea Green",
+            "show": "SmackDown",
+            "division": "Women",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2026/01/CHELSEA_01102025ej_00647_Profile.png"
+        },
+        {
+            "name": "Chris Sabin",
+            "show": "RAW",
+            "division": "World",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2024/10/Chris_Sabin_PROFILE--db370eb2c74071f852c3ed1170cc0ec0.png"
+        },
+        {
+            "name": "CM Punk",
+            "show": "RAW",
+            "division": "World",
+            "image": "https://images-wixmp-ed30a86b8c4ca887773594c2.wixmp.com/f/f93c7dd1-057f-44a2-b7d6-a57152289672/dh4i0qh-38246356-174d-4ad2-b991-7323da500330.png/v1/fill/w_1063,h_752/cm_punk_2024_png_by_decentrenderz_dh4i0qh-pre.png?token=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1cm46YXBwOjdlMGQxODg5ODIyNjQzNzNhNWYwZDQxNWVhMGQyNmUwIiwiaXNzIjoidXJuOmFwcDo3ZTBkMTg4OTgyMjY0MzczYTVmMGQ0MTVlYTBkMjZlMCIsIm9iaiI6W1t7ImhlaWdodCI6Ijw9OTA2IiwicGF0aCI6Ii9mL2Y5M2M3ZGQxLTA1N2YtNDRhMi1iN2Q2LWE1NzE1MjI4OTY3Mi9kaDRpMHFoLTM4MjQ2MzU2LTE3NGQtNGFkMi1iOTkxLTczMjNkYTUwMDMzMC5wbmciLCJ3aWR0aCI6Ijw9MTI4MCJ9XV0sImF1ZCI6WyJ1cm46c2VydmljZTppbWFnZS5vcGVyYXRpb25zIl19.7O_DUpu3prj_ed5PZhlMzy-jEmDsdy1eQz-G2OqouaA"
+        },
+        {
+            "name": "Cody Rhodes",
+            "show": "SmackDown",
+            "division": "World",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2026/01/CODY_RHODES_PROFILE.png"
+        },
+        {
+            "name": "Cruz Del Toro",
+            "show": "RAW",
+            "division": "Tag",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2025/05/Cruz_Profile--26dbd426787793b6a93601e8e5604eae.png"
+        },
+        {
+            "name": "Damian Priest",
+            "show": "SmackDown",
+            "division": "World",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2022/04/Damien_Priest_Profile--769e2bd4aad556da498ade7f24a40d02.png"
+        },
+        {
+            "name": "Dexter Lumis",
+            "show": "SmackDown",
+            "division": "Midcard",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2024/11/Dexter_Lumis_PROFILE--1d145ce2da499684d3f29f1cc8c52200.png"
+        },
+        {
+            "name": "Dominik Mysterio",
+            "show": "RAW",
+            "division": "Midcard",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2025/02/Dominik_Mysterio_6616_profile--f4617d4abb18e42c2f577037e67cfe9e.png"
+        },
+        {
+            "name": "Dragon Lee",
+            "show": "RAW",
+            "division": "Midcard",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2023/04/DragonLee_PROFILE--1f4a6234a174e11bd6c26fda0292e73f.png"
+        },
+        {
+            "name": "Drew McIntyre",
+            "show": "RAW",
+            "division": "World",
+            "image": "https://images-wixmp-ed30a86b8c4ca887773594c2.wixmp.com/f/74745b0d-80b9-4775-8c8f-c7fc7259e179/dk322w2-523edcb2-47c6-437f-9124-05a31af294bd.png?token=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1cm46YXBwOjdlMGQxODg5ODIyNjQzNzNhNWYwZDQxNWVhMGQyNmUwIiwiaXNzIjoidXJuOmFwcDo3ZTBkMTg4OTgyMjY0MzczYTVmMGQ0MTVlYTBkMjZlMCIsIm9iaiI6W1t7InBhdGgiOiIvZi83NDc0NWIwZC04MGI5LTQ3NzUtOGM4Zi1jN2ZjNzI1OWUxNzkvZGszMjJ3Mi01MjNlZGNiMi00N2M2LTQzN2YtOTEyNC0wNWEzMWFmMjk0YmQucG5nIn1dXSwiYXVkIjpbInVybjpzZXJ2aWNlOmZpbGUuZG93bmxvYWQiXX0.t5xlb2TNzqScQk0lcBzKiutenudLDbyD_7l3SqAMyc4"
+        },
+        {
+            "name": "El Grande Americano",
+            "show": "RAW",
+            "division": "Midcard",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2025/09/El_Grande_Profile.png"
+        },
+        {
+            "name": "Elton Prince",
+            "show": "SmackDown",
+            "division": "Tag",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2022/06/Pretty_Deadly_04122022pm_2422_Profile--e7030a5d128d8517f185ada4d3e19f3e.png"
+        },
+        {
+            "name": "Erick Rowan",
+            "show": "SmackDown",
+            "division": "Tag",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2024/11/Erik_Rowann_PROFILE--c4f7b8df86d5c28e4df0c584885be942.png"
+        },
+        {
+            "name": "Erik",
+            "show": "RAW",
+            "division": "Tag",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2025/07/War_Raiders_06162025_430_Profile--3101409b8c78a27fbcde137223bf196b.png"
+        },
+        {
+            "name": "Ethan Page",
+            "show": "NXT",
+            "division": "Midcard",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2024/06/EthanPage_05282024br_2744_Profile--f52a0c7ad78f93fab6e658462a4ea19e.png"
+        },
+        {
+            "name": "Fallon Henley",
+            "show": "NXT",
+            "division": "Women",
+            "image": "https://ripped.topps.com/wp-content/uploads/2025/04/Fallon_10292024ak_8887_Profile-c7d7ade13fed3d80f73df7797fed5e9d-png.webp"
+        },
+        {
+            "name": "Finn Balor",
+            "show": "RAW",
+            "division": "World",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2026/02/Finn_Balor_PROFILE.png"
+        },
+        {
+            "name": "Giulia",
+            "show": "SmackDown",
+            "division": "Women",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2026/01/guilia_PROFILE.png"
+        },
+        {
+            "name": "Grayson Waller",
+            "show": "RAW",
+            "division": "Midcard",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2025/04/Grayson_Waller_profile--92c3d0a93d2c5acc4af983228e84f583.png"
+        },
+        {
+            "name": "Gunther",
+            "show": "RAW",
+            "division": "World",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2026/02/GUNTHER_07122025gd_0142_Profile.png"
+        },
+        {
+            "name": "Hank Walker",
+            "show": "NXT",
+            "division": "Tag",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2025/08/Hank_Walker_PROFILE.png"
         },
         {
             "name": "Ilja Dragunov",
+            "show": "RAW",
+            "division": "World",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2025/12/Ilja_Drag_PROFILE.png"
+        },
+        {
+            "name": "Ivar",
+            "show": "RAW",
+            "division": "Tag",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2025/07/War_Raiders_06162025_143_Profile--173cd97e7faaff56c5a3d135d67db19c.png"
+        },
+        {
+            "name": "Ivy Nile",
+            "show": "RAW",
+            "division": "Women",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2025/02/Ivy_Nile_Profile--fb092fa35273d9966ba7758188e57820.png"
+        },
+        {
+            "name": "Iyo Sky",
+            "show": "SmackDown",
+            "division": "Women",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2024/07/IyoSky_01282024RF_2393_Profile--57f7b2018f8d8b3f8e8407cfa6fc3f7c.png"
+        },
+        {
+            "name": "Izzi Dame",
             "show": "NXT",
-            "division": "World"
+            "division": "Women",
+            "image": "https://b.fssta.com/uploads/application/wwe/headshots/izzi-dame.png"
+        },
+        {
+            "name": "Jacob Fatu",
+            "show": "SmackDown",
+            "division": "Midcard",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2026/02/Jakob_Fatu_PROFILE.png"
+        },
+        {
+            "name": "Jacy Jayne",
+            "show": "NXT",
+            "division": "Women",
+            "image": "https://images-wixmp-ed30a86b8c4ca887773594c2.wixmp.com/f/f9324261-d6fe-48f5-837d-b733d506c866/dkxhtu2-5a467c47-f799-42a2-96bb-9501f180fb83.png?token=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1cm46YXBwOjdlMGQxODg5ODIyNjQzNzNhNWYwZDQxNWVhMGQyNmUwIiwiaXNzIjoidXJuOmFwcDo3ZTBkMTg4OTgyMjY0MzczYTVmMGQ0MTVlYTBkMjZlMCIsIm9iaiI6W1t7InBhdGgiOiIvZi9mOTMyNDI2MS1kNmZlLTQ4ZjUtODM3ZC1iNzMzZDUwNmM4NjYvZGt4aHR1Mi01YTQ2N2M0Ny1mNzk5LTQyYTItOTZiYi05NTAxZjE4MGZiODMucG5nIn1dXSwiYXVkIjpbInVybjpzZXJ2aWNlOmZpbGUuZG93bmxvYWQiXX0.XzoIJ0yoRn1zF3hYZ7-XwYDrTNJjP_tWhjFrOEVJhRA"
+        },
+        {
+            "name": "Jade Cargill",
+            "show": "SmackDown",
+            "division": "Women",
+            "image": "https://ripped.topps.com/wp-content/uploads/2025/04/JadeCargill_01282024RF_2813_Ntwk_Profile-aa21f2932fe9bf08034c3a8f54944f77-png.webp"
+        },
+        {
+            "name": "Jaida Parker",
+            "show": "NXT",
+            "division": "Women",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2025/02/Jaida_Parker_Profile_2--17de365498b502a70ced09df4ab891cb.png"
+        },
+        {
+            "name": "JC Mateo",
+            "show": "SmackDown",
+            "division": "Tag",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2025/11/JC_Mateo_PROFILE.png"
+        },
+        {
+            "name": "JD McDonagh",
+            "show": "RAW",
+            "division": "Midcard",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2025/10/JD_Profile.png"
+        },
+        {
+            "name": "Je'Von Evans",
+            "show": "NXT",
+            "division": "Midcard",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2026/02/JeVon-Evans_12022025KS_009_Profile.png"
+        },
+        {
+            "name": "Jey Uso",
+            "show": "RAW",
+            "division": "World",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2024/05/Jey-Uso_01292024RF_10011_Profile--02473cd8c088818b51e67ebf4a5f7949.png"
+        },
+        {
+            "name": "Jimmy Uso",
+            "show": "RAW",
+            "division": "Tag",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2024/03/jimmy_uso_PROFILE--197929cb5dedeeccbed95cfb9ed27f44.png"
+        },
+        {
+            "name": "Joaquin Wilde",
+            "show": "RAW",
+            "division": "Tag",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2022/11/Joaquin_Wilde_PROFILE--5774722603ceee6773046dfa9dd8c9cc.png"
+        },
+        {
+            "name": "Joe Gacy",
+            "show": "SmackDown",
+            "division": "Midcard",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2024/11/Joe_Gacy_PROFILE--0e73aa8cbaeedb1fed95adebaea161db.png"
+        },
+        {
+            "name": "Joe Hendry",
+            "show": "NXT",
+            "division": "Midcard",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2026/02/Joe-Hendry_02032026KS_020_Profile.png"
+        },
+        {
+            "name": "Johnny Gargano",
+            "show": "SmackDown",
+            "division": "Midcard",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2024/03/Johnny_Gargano_PROFILE--a87f51a0e83fbba0e9c709ccee977fdd.png"
+        },
+        {
+            "name": "Jordynne Grace",
+            "show": "NXT",
+            "division": "Women",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2026/02/Jordynn_Grace_PROFILE.png"
+        },
+        {
+            "name": "Josh Briggs",
+            "show": "NXT",
+            "division": "Tag",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2025/04/Josh_Briggs_PROFILE--1d2eb377803cab22377ffb4663ac3ceb.png"
+        },
+        {
+            "name": "Julius Creed",
+            "show": "RAW",
+            "division": "Tag",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2025/06/AmericanMade_05192025rf_20250625-update--8de235c7b84117aae10c152bf248cd6d.png"
+        },
+        {
+            "name": "Kairi Sane",
+            "show": "RAW",
+            "division": "Women",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2025/06/KairiSane_05262025br_40643_profile--0ffa6217b5d87f5169b89ba8786b70bb.png"
+        },
+        {
+            "name": "Karmen Petrovic",
+            "show": "NXT",
+            "division": "Women",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2025/05/Karmen-Petrovi_04152025br_26288_Profile--d108e4e457f208a3186f58964b91f6ad.png"
+        },
+        {
+            "name": "Kelani Jordan",
+            "show": "NXT",
+            "division": "Women",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2026/01/Kelani-Jordan_10282025MP_0028_Profile.png"
+        },
+        {
+            "name": "Kevin Owens",
+            "show": "SmackDown",
+            "division": "World",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2022/09/Kevin_OWens_PROFILE--05fe489008b716e22e4d0abeba8b4939.png"
+        },
+        {
+            "name": "Kiana James",
+            "show": "SmackDown",
+            "division": "Women",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2025/06/Kiana-James_04082025MP_20250625-update--e62c5f10ed5d38b69fc930b9f2a92a9a.png"
+        },
+        {
+            "name": "Kit Wilson",
+            "show": "SmackDown",
+            "division": "Tag",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2026/02/KitWilson_11072025ak_0140_Profile.png"
+        },
+        {
+            "name": "Kofi Kingston",
+            "show": "RAW",
+            "division": "Tag",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2025/02/Kofi_Kingston_Profile--239f308affc9b0d1fc7dc9a5d7d71c07.png"
+        },
+        {
+            "name": "LA Knight",
+            "show": "SmackDown",
+            "division": "Midcard",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2022/11/LA_Knight_PROFILE--a171170c728eef7fe7f0f21629d0eb7f.png"
+        },
+        {
+            "name": "Lash Legend",
+            "show": "NXT",
+            "division": "Women",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2025/03/LashLegend_02012025ak_14937_profile--b1c7bc0830c837359da71a960b830209.png"
+        },
+        {
+            "name": "Lexis King",
+            "show": "NXT",
+            "division": "Midcard",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2025/03/Lexis_King_PROFILE--0c288420b881581fff117fd4b79a12e0.png"
+        },
+        {
+            "name": "Liv Morgan",
+            "show": "RAW",
+            "division": "Women",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2026/01/liv_morgan_Profile.png"
+        },
+        {
+            "name": "Logan Paul",
+            "show": "RAW",
+            "division": "Midcard",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2022/07/Logan_Paul_PROFILE--479a7c8503950ea02f1b6f2819b79f81.png"
+        },
+        {
+            "name": "Lola Vice",
+            "show": "NXT",
+            "division": "Women",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2026/01/Loyla_07132025ca_071_Profile.png"
+        },
+        {
+            "name": "Ludwig Kaiser",
+            "show": "RAW",
+            "division": "Midcard",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2022/09/Ludwig_Kaiser_PROFILE--772d2e447b458a0453abc3758fde6732.png"
+        },
+        {
+            "name": "Lyra Valkyria",
+            "show": "RAW",
+            "division": "Midcard",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2025/11/Lyra_valkyr_PROFILE.png"
+        },
+        {
+            "name": "Maryse",
+            "show": "SmackDown",
+            "division": "Women",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2020/01/Maryse_Pro--d7ef6d197c970b03854bb995ac3da332.png"
+        },
+        {
+            "name": "Matt Cardona",
+            "show": "SmackDown",
+            "division": "Midcard",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2017/10/Zack_Ryder_pro--412a0605c16177bd2d36b89da2cefa16.png"
+        },
+        {
+            "name": "Maxxine Dupri",
+            "show": "RAW",
+            "division": "Women",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2026/01/MAXXINE_DUPRI_04112025sb_0048_Profile.png"
+        },
+        {
+            "name": "Michin",
+            "show": "SmackDown",
+            "division": "Women",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2025/02/Michin_Profile--70c14f952983098103bb517ba9a8a75f.png"
+        },
+        {
+            "name": "Montez Ford",
+            "show": "SmackDown",
+            "division": "Tag",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2024/07/MONTEZ_04262024gd_0059_Profile--94bfca3e9460b13deddf6e42c6c8e601.png"
+        },
+        {
+            "name": "Myles Borne",
+            "show": "NXT",
+            "division": "Midcard",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2025/05/Myles_Borne_Profile--f79f37896292d97128949956f6a4e040.png"
+        },
+        {
+            "name": "Naomi",
+            "show": "RAW",
+            "division": "Women",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2025/08/Naomi_04042025ca_0032_Profile.png"
+        },
+        {
+            "name": "Natalya",
+            "show": "RAW",
+            "division": "Women",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2026/02/Nattie_PROFILE.png"
+        },
+        {
+            "name": "Nathan Frazer",
+            "show": "SmackDown",
+            "division": "Tag",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2025/08/nathan_PROFILE.png"
+        },
+        {
+            "name": "Nia Jax",
+            "show": "SmackDown",
+            "division": "Women",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2025/09/Nia_Jax_Profile.png"
+        },
+        {
+            "name": "Nikki Bella",
+            "show": "RAW",
+            "division": "Women",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2026/01/Nikki_Bella_Profile.png"
+        },
+        {
+            "name": "Nikki Cross",
+            "show": "RAW",
+            "division": "Women",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2024/11/NIKKI_CROSS_PROFILE--241deaff1bae97fdfc29fe80dae39573.png"
+        },
+        {
+            "name": "Nikkita Lyons",
+            "show": "NXT",
+            "division": "Women",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2024/10/NikkitaLyons_10152024AK_01307_Profile--aae3c457dff8f3610c26464b2838b7e1.png"
+        },
+        {
+            "name": "Noam Dar",
+            "show": "NXT",
+            "division": "Midcard",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2024/06/NoamDar_05092023AK_00536_Profile--ebe450265ea329128718e3cb2c416b5c.png"
         },
         {
             "name": "Oba Femi",
             "show": "NXT",
             "division": "Midcard",
-            "championships": [
-                "NXT North American Championship"
-            ]
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2026/02/ObaFemi_10292024ak_0038_Profile.png"
         },
         {
-            "name": "Wes Lee",
+            "name": "Omos",
+            "show": "RAW",
+            "division": "World",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2021/09/004_OMOS_05032021jg_0093--b7339ffa67e25dc1769dc685a56d3a76.png"
+        },
+        {
+            "name": "Otis",
+            "show": "RAW",
+            "division": "Tag",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2024/07/Otis_06032024hm_00093_Profile--78da85f69a530cb6f6b4dd33837067c5.png"
+        },
+        {
+            "name": "Penta",
+            "show": "RAW",
+            "division": "Midcard",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2025/01/Penta_PROFILE--fc8cb945d793c867686a1f72d2cf6fb4.png"
+        },
+        {
+            "name": "Pete Dunne",
+            "show": "RAW",
+            "division": "Midcard",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2024/10/Pete_Dunne_PROFILE--a0ab480c2096125726af09aa74c705ec.png"
+        },
+        {
+            "name": "Piper Niven",
+            "show": "SmackDown",
+            "division": "Women",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2025/04/SECRET_HERVICE_04112025sb_0198_Profile--a6bc8da73f8a1a5875e58552b2b64664.png"
+        },
+        {
+            "name": "R-Truth",
+            "show": "SmackDown",
+            "division": "Midcard",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2025/06/Truth_06132025_00066_Profile--ed7c72fc8a8a610bf1101528d1e3f808.png"
+        },
+        {
+            "name": "Randy Orton",
+            "show": "SmackDown",
+            "division": "World",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2024/03/Randy_Orton_11272023rf_071_Profile--9f48e983c9e721c0a5659fc639f1c14a.png"
+        },
+        {
+            "name": "Raquel Rodriguez",
+            "show": "RAW",
+            "division": "Women",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2025/08/Raquelle_Rodriguez_PROFILE.png"
+        },
+        {
+            "name": "Rey Fenix",
+            "show": "SmackDown",
+            "division": "Midcard",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2025/04/RayFenix_03132025ak_15714_head_Swap_profile--dfb55dcd9de5ab975a99997531147d3a.png"
+        },
+        {
+            "name": "Rey Mysterio",
+            "show": "RAW",
+            "division": "World",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2025/02/Rey_Mysterio_Profile--4fedfa691c9ac3c8938c953a1fb0a8bd.png"
+        },
+        {
+            "name": "Rhea Ripley",
+            "show": "RAW",
+            "division": "Women",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2025/08/Rhea_PROFILE.png"
+        },
+        {
+            "name": "Ricky Saints",
             "show": "NXT",
-            "division": "Midcard"
+            "division": "Midcard",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2025/12/Ricky-Saints_03182025MP_0015_Profile.png"
+        },
+        {
+            "name": "Roman Reigns",
+            "show": "SmackDown",
+            "division": "World",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2025/04/24-10-25_Square_Gallery360_Gallery360_3810_Profile--5104a0e6cf4b331f2d93d5a9b9662164.png"
         },
         {
             "name": "Roxanne Perez",
-            "show": "NXT",
+            "show": "RAW",
             "division": "Women",
-            "championships": [
-                "NXT Women's Championship"
-            ]
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2025/08/Roxanne-Perez_03182025MP_0049_Profile.png"
         },
         {
-            "name": "Lyra Valkyria",
+            "name": "Rusev",
+            "show": "RAW",
+            "division": "Midcard",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2025/04/Rusev_04212025rf_098_Profile--86d07e43e6fa49c789ee40bb7ec05827.png"
+        },
+        {
+            "name": "Sami Zayn",
+            "show": "RAW",
+            "division": "World",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2025/10/Sami_Zayn_Profile.png"
+        },
+        {
+            "name": "Santos Escobar",
+            "show": "SmackDown",
+            "division": "Midcard",
+            "image": "https://www.wwe.com/f/styles/talent_champion_lg/public/all/2024/03/Santos_escobar_PROFILE--3ace9f6d9309a3e6f741db0441b04c9f.png"
+        },
+        {
+            "name": "Seth Rollins",
+            "show": "RAW",
+            "division": "World",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2025/10/24-10-26_Square_GALLERY360_Seth_Rollins_7564_Profile.png"
+        },
+        {
+            "name": "Shawn Spears",
             "show": "NXT",
-            "division": "Women"
+            "division": "Midcard",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2024/04/Shawn-Spears_03052024AK_00308_Profile--a15caef3595e049fbb19ca1fe405b3a0.png"
+        },
+        {
+            "name": "Sheamus",
+            "show": "SmackDown",
+            "division": "World",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2021/08/69640_Sheamus_12202019rf_056_Profile--e78f54cfb27b1ded3e1663a36ddc3175.png"
+        },
+        {
+            "name": "Shinsuke Nakamura",
+            "show": "SmackDown",
+            "division": "Midcard",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2024/03/SHINSUKE_04142023gd_0074_Profile--e88de0301924fdd95b49690d5b96885b.png"
+        },
+        {
+            "name": "Solo Sikoa",
+            "show": "SmackDown",
+            "division": "World",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2025/08/SOLO_10042024ej_00384_Profile.png"
+        },
+        {
+            "name": "Sol Ruca",
+            "show": "NXT",
+            "division": "Women",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2025/12/Sol_Ruca_PROFILE-3.png"
+        },
+        {
+            "name": "Stephanie Vaquer",
+            "show": "RAW",
+            "division": "Women",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2025/09/stephanie_Vaquer_Profile.png"
+        },
+        {
+            "name": "Talla Tonga",
+            "show": "SmackDown",
+            "division": "Tag",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2025/11/Tala_Tonga_PROFILE.png"
+        },
+        {
+            "name": "Tama Tonga",
+            "show": "SmackDown",
+            "division": "Tag",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2026/02/TamaTonga_12152005MM_11068_Profile.png"
+        },
+        {
+            "name": "Tank Ledger",
+            "show": "NXT",
+            "division": "Tag",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2025/08/Tank_Ledger_PROFILE.png"
+        },
+        {
+            "name": "Tatum Paxley",
+            "show": "NXT",
+            "division": "Women",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2026/02/Tatum-Paxley_12092025MP_0022_profile.png"
+        },
+        {
+            "name": "The Miz",
+            "show": "SmackDown",
+            "division": "Midcard",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2018/05/The_Miz_pro--f4e98cf4a7d4acc8e418ddf0f949e95e.png"
+        },
+        {
+            "name": "Thea Hail",
+            "show": "NXT",
+            "division": "Women",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2025/05/Thea-Hail_05132025MP_0018_Profile_%281%29--6cbd031408087ce2386128ae2229bb3e.png"
         },
         {
             "name": "Tiffany Stratton",
+            "show": "SmackDown",
+            "division": "Women",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2026/01/Tiffany_Stratton_Profile.png"
+        },
+        {
+            "name": "Tonga Loa",
+            "show": "SmackDown",
+            "division": "Tag",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2024/06/Tonga_05172024ej_7252_Profile--80eb2d3cd81d62aebe0e02ee6dadb44b.png"
+        },
+        {
+            "name": "Tony D’Angelo",
             "show": "NXT",
-            "division": "Women"
+            "division": "World",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2026/02/Tony_Dangelo_PROFILE.png"
+        },
+        {
+            "name": "Trick Williams",
+            "show": "NXT",
+            "division": "World",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2025/10/Trick_Williams_Profile.png"
+        },
+        {
+            "name": "Tyler Bate",
+            "show": "SmackDown",
+            "division": "Midcard",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2025/04/Tyler_Bate_Profile--53d69e455da72c4fe66586bbe35170b4.png"
+        },
+        {
+            "name": "Uncle Howdy",
+            "show": "SmackDown",
+            "division": "Midcard",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2024/11/Uncle_Howdy_PROFILE--b194fdc1d96eb7857c0116f8272fb12d.png"
+        },
+        {
+            "name": "Wendy Choo",
+            "show": "NXT",
+            "division": "Women",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2026/02/Wendy_Choo_PROFILE.png"
+        },
+        {
+            "name": "Wren Sinclair",
+            "show": "NXT",
+            "division": "Women",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2025/08/Wren-Sinclair_01212025BR_5800_Profile.png"
+        },
+        {
+            "name": "Xavier Woods",
+            "show": "RAW",
+            "division": "Tag",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2025/02/Xavier_Woods_Profile--dca7d01c13b88d5990a364ea17aa2b48.png"
+        },
+        {
+            "name": "Zaria",
+            "show": "NXT",
+            "division": "Women",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2024/12/Zaria_PROFILE--28b2725ae19bc67dababecb57d95303c.png"
+        },
+        {
+            "name": "Zelina Vega",
+            "show": "SmackDown",
+            "division": "Women",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2025/02/Zelina_Vega_Profile--8763715267a672e1a099563ad1b5dbcc.png"
         }
     ],
     "ples": [
-        {
-            "name": "Royal Rumble",
-            "date": "2026-01-25"
-        },
-        {
-            "name": "Elimination Chamber",
-            "date": "2026-02-22"
-        },
-        {
-            "name": "WrestleMania Night 1",
-            "date": "2026-04-04"
-        },
-        {
-            "name": "WrestleMania Night 2",
-            "date": "2026-04-05"
-        },
-        {
-            "name": "Backlash",
-            "date": "2026-05-10"
-        },
-        {
-            "name": "Money in the Bank",
-            "date": "2026-06-14"
-        },
-        {
-            "name": "SummerSlam Night 1",
-            "date": "2026-08-01"
-        },
-        {
-            "name": "SummerSlam Night 2",
-            "date": "2026-08-02"
-        },
-        {
-            "name": "Survivor Series",
-            "date": "2026-11-22"
-        }
-    ]
+{
+    "name": "Backlash",
+    "date": "2026-05-10"
+},
+{
+    "name": "Money in the Bank",
+    "date": "2026-06-14"
+},
+{
+    "name": "SummerSlam",
+    "date": "2026-08-02"
+},
+{
+    "name": "Survivor Series",
+    "date": "2026-11-22"
+},
+{
+    "name": "Royal Rumble",
+    "date": "2027-01-31"
+},
+{
+    "name": "Elimination Chamber",
+    "date": "2027-02-28"
+},
+{
+    "name": "WrestleMania Night 1",
+    "date": "2027-04-03"
+},
+{
+    "name": "WrestleMania Night 2",
+    "date": "2027-04-04"
+}
+],
+"weekly_shows": [
+{
+    "name": "SmackDown",
+    "date": "2026-05-01"
+},
+{
+    "name": "RAW",
+    "date": "2026-05-04"
+},
+{
+    "name": "NXT",
+    "date": "2026-05-05"
+},
+{
+    "name": "SmackDown",
+    "date": "2026-05-08"
+},
+{
+    "name": "RAW",
+    "date": "2026-05-11"
+},
+{
+    "name": "NXT",
+    "date": "2026-05-12"
+},
+{
+    "name": "SmackDown",
+    "date": "2026-05-15"
+},
+{
+    "name": "RAW",
+    "date": "2026-05-18"
+},
+{
+    "name": "NXT",
+    "date": "2026-05-19"
+},
+{
+    "name": "SmackDown",
+    "date": "2026-05-22"
+},
+{
+    "name": "RAW",
+    "date": "2026-05-25"
+},
+{
+    "name": "NXT",
+    "date": "2026-05-26"
+},
+{
+    "name": "SmackDown",
+    "date": "2026-05-29"
+},
+{
+    "name": "RAW",
+    "date": "2026-06-01"
+},
+{
+    "name": "NXT",
+    "date": "2026-06-02"
+},
+{
+    "name": "SmackDown",
+    "date": "2026-06-05"
+},
+{
+    "name": "RAW",
+    "date": "2026-06-08"
+},
+{
+    "name": "NXT",
+    "date": "2026-06-09"
+},
+{
+    "name": "SmackDown",
+    "date": "2026-06-12"
+},
+{
+    "name": "RAW",
+    "date": "2026-06-15"
+},
+{
+    "name": "NXT",
+    "date": "2026-06-16"
+},
+{
+    "name": "SmackDown",
+    "date": "2026-06-19"
+},
+{
+    "name": "RAW",
+    "date": "2026-06-22"
+},
+{
+    "name": "NXT",
+    "date": "2026-06-23"
+},
+{
+    "name": "SmackDown",
+    "date": "2026-06-26"
+},
+{
+    "name": "RAW",
+    "date": "2026-06-29"
+},
+{
+    "name": "NXT",
+    "date": "2026-06-30"
+},
+{
+    "name": "SmackDown",
+    "date": "2026-07-03"
+},
+{
+    "name": "RAW",
+    "date": "2026-07-06"
+},
+{
+    "name": "NXT",
+    "date": "2026-07-07"
+},
+{
+    "name": "SmackDown",
+    "date": "2026-07-10"
+},
+{
+    "name": "RAW",
+    "date": "2026-07-13"
+},
+{
+    "name": "NXT",
+    "date": "2026-07-14"
+},
+{
+    "name": "SmackDown",
+    "date": "2026-07-17"
+},
+{
+    "name": "RAW",
+    "date": "2026-07-20"
+},
+{
+    "name": "NXT",
+    "date": "2026-07-21"
+},
+{
+    "name": "SmackDown",
+    "date": "2026-07-24"
+},
+{
+    "name": "RAW",
+    "date": "2026-07-27"
+},
+{
+    "name": "NXT",
+    "date": "2026-07-28"
+},
+{
+    "name": "SmackDown",
+    "date": "2026-07-31"
+},
+{
+    "name": "RAW",
+    "date": "2026-08-03"
+},
+{
+    "name": "NXT",
+    "date": "2026-08-04"
+},
+{
+    "name": "SmackDown",
+    "date": "2026-08-07"
+},
+{
+    "name": "RAW",
+    "date": "2026-08-10"
+},
+{
+    "name": "NXT",
+    "date": "2026-08-11"
+},
+{
+    "name": "SmackDown",
+    "date": "2026-08-14"
+},
+{
+    "name": "RAW",
+    "date": "2026-08-17"
+},
+{
+    "name": "NXT",
+    "date": "2026-08-18"
+},
+{
+    "name": "SmackDown",
+    "date": "2026-08-21"
+},
+{
+    "name": "RAW",
+    "date": "2026-08-24"
+},
+{
+    "name": "NXT",
+    "date": "2026-08-25"
+},
+{
+    "name": "SmackDown",
+    "date": "2026-08-28"
+},
+{
+    "name": "RAW",
+    "date": "2026-08-31"
+},
+{
+    "name": "NXT",
+    "date": "2026-09-01"
+},
+{
+    "name": "SmackDown",
+    "date": "2026-09-04"
+},
+{
+    "name": "RAW",
+    "date": "2026-09-07"
+},
+{
+    "name": "NXT",
+    "date": "2026-09-08"
+},
+{
+    "name": "SmackDown",
+    "date": "2026-09-11"
+},
+{
+    "name": "RAW",
+    "date": "2026-09-14"
+},
+{
+    "name": "NXT",
+    "date": "2026-09-15"
+},
+{
+    "name": "SmackDown",
+    "date": "2026-09-18"
+},
+{
+    "name": "RAW",
+    "date": "2026-09-21"
+},
+{
+    "name": "NXT",
+    "date": "2026-09-22"
+},
+{
+    "name": "SmackDown",
+    "date": "2026-09-25"
+},
+{
+    "name": "RAW",
+    "date": "2026-09-28"
+},
+{
+    "name": "NXT",
+    "date": "2026-09-29"
+},
+{
+    "name": "SmackDown",
+    "date": "2026-10-02"
+},
+{
+    "name": "RAW",
+    "date": "2026-10-05"
+},
+{
+    "name": "NXT",
+    "date": "2026-10-06"
+},
+{
+    "name": "SmackDown",
+    "date": "2026-10-09"
+},
+{
+    "name": "RAW",
+    "date": "2026-10-12"
+},
+{
+    "name": "NXT",
+    "date": "2026-10-13"
+},
+{
+    "name": "SmackDown",
+    "date": "2026-10-16"
+},
+{
+    "name": "RAW",
+    "date": "2026-10-19"
+},
+{
+    "name": "NXT",
+    "date": "2026-10-20"
+},
+{
+    "name": "SmackDown",
+    "date": "2026-10-23"
+},
+{
+    "name": "RAW",
+    "date": "2026-10-26"
+},
+{
+    "name": "NXT",
+    "date": "2026-10-27"
+},
+{
+    "name": "SmackDown",
+    "date": "2026-10-30"
+},
+{
+    "name": "RAW",
+    "date": "2026-11-02"
+},
+{
+    "name": "NXT",
+    "date": "2026-11-03"
+},
+{
+    "name": "SmackDown",
+    "date": "2026-11-06"
+},
+{
+    "name": "RAW",
+    "date": "2026-11-09"
+},
+{
+    "name": "NXT",
+    "date": "2026-11-10"
+},
+{
+    "name": "SmackDown",
+    "date": "2026-11-13"
+},
+{
+    "name": "RAW",
+    "date": "2026-11-16"
+},
+{
+    "name": "NXT",
+    "date": "2026-11-17"
+},
+{
+    "name": "SmackDown",
+    "date": "2026-11-20"
+},
+{
+    "name": "RAW",
+    "date": "2026-11-23"
+},
+{
+    "name": "NXT",
+    "date": "2026-11-24"
+},
+{
+    "name": "SmackDown",
+    "date": "2026-11-27"
+},
+{
+    "name": "RAW",
+    "date": "2026-11-30"
+},
+{
+    "name": "NXT",
+    "date": "2026-12-01"
+},
+{
+    "name": "SmackDown",
+    "date": "2026-12-04"
+},
+{
+    "name": "RAW",
+    "date": "2026-12-07"
+},
+{
+    "name": "NXT",
+    "date": "2026-12-08"
+},
+{
+    "name": "SmackDown",
+    "date": "2026-12-11"
+},
+{
+    "name": "RAW",
+    "date": "2026-12-14"
+},
+{
+    "name": "NXT",
+    "date": "2026-12-15"
+},
+{
+    "name": "SmackDown",
+    "date": "2026-12-18"
+},
+{
+    "name": "RAW",
+    "date": "2026-12-21"
+},
+{
+    "name": "NXT",
+    "date": "2026-12-22"
+},
+{
+    "name": "SmackDown",
+    "date": "2026-12-25"
+},
+{
+    "name": "RAW",
+    "date": "2026-12-28"
+},
+{
+    "name": "NXT",
+    "date": "2026-12-29"
+},
+{
+    "name": "SmackDown",
+    "date": "2027-01-01"
+},
+{
+    "name": "RAW",
+    "date": "2027-01-04"
+},
+{
+    "name": "NXT",
+    "date": "2027-01-05"
+},
+{
+    "name": "SmackDown",
+    "date": "2027-01-08"
+},
+{
+    "name": "RAW",
+    "date": "2027-01-11"
+},
+{
+    "name": "NXT",
+    "date": "2027-01-12"
+},
+{
+    "name": "SmackDown",
+    "date": "2027-01-15"
+},
+{
+    "name": "RAW",
+    "date": "2027-01-18"
+},
+{
+    "name": "NXT",
+    "date": "2027-01-19"
+},
+{
+    "name": "SmackDown",
+    "date": "2027-01-22"
+},
+{
+    "name": "RAW",
+    "date": "2027-01-25"
+},
+{
+    "name": "NXT",
+    "date": "2027-01-26"
+},
+{
+    "name": "SmackDown",
+    "date": "2027-01-29"
+},
+{
+    "name": "RAW",
+    "date": "2027-02-01"
+},
+{
+    "name": "NXT",
+    "date": "2027-02-02"
+},
+{
+    "name": "SmackDown",
+    "date": "2027-02-05"
+},
+{
+    "name": "RAW",
+    "date": "2027-02-08"
+},
+{
+    "name": "NXT",
+    "date": "2027-02-09"
+},
+{
+    "name": "SmackDown",
+    "date": "2027-02-12"
+},
+{
+    "name": "RAW",
+    "date": "2027-02-15"
+},
+{
+    "name": "NXT",
+    "date": "2027-02-16"
+},
+{
+    "name": "SmackDown",
+    "date": "2027-02-19"
+},
+{
+    "name": "RAW",
+    "date": "2027-02-22"
+},
+{
+    "name": "NXT",
+    "date": "2027-02-23"
+},
+{
+    "name": "SmackDown",
+    "date": "2027-02-26"
+},
+{
+    "name": "RAW",
+    "date": "2027-03-01"
+},
+{
+    "name": "NXT",
+    "date": "2027-03-02"
+},
+{
+    "name": "SmackDown",
+    "date": "2027-03-05"
+},
+{
+    "name": "RAW",
+    "date": "2027-03-08"
+},
+{
+    "name": "NXT",
+    "date": "2027-03-09"
+},
+{
+    "name": "SmackDown",
+    "date": "2027-03-12"
+},
+{
+    "name": "RAW",
+    "date": "2027-03-15"
+},
+{
+    "name": "NXT",
+    "date": "2027-03-16"
+},
+{
+    "name": "SmackDown",
+    "date": "2027-03-19"
+},
+{
+    "name": "RAW",
+    "date": "2027-03-22"
+},
+{
+    "name": "NXT",
+    "date": "2027-03-23"
+},
+{
+    "name": "SmackDown",
+    "date": "2027-03-26"
+},
+{
+    "name": "RAW",
+    "date": "2027-03-29"
+},
+{
+    "name": "NXT",
+    "date": "2027-03-30"
+},
+{
+    "name": "SmackDown",
+    "date": "2027-04-02"
+},
+{
+    "name": "RAW",
+    "date": "2027-04-05"
+},
+{
+    "name": "NXT",
+    "date": "2027-04-06"
+},
+{
+    "name": "SmackDown",
+    "date": "2027-04-09"
+},
+{
+    "name": "RAW",
+    "date": "2027-04-12"
+},
+{
+    "name": "NXT",
+    "date": "2027-04-13"
+},
+{
+    "name": "SmackDown",
+    "date": "2027-04-16"
+},
+{
+    "name": "RAW",
+    "date": "2027-04-19"
+},
+{
+    "name": "NXT",
+    "date": "2027-04-20"
+},
+{
+    "name": "SmackDown",
+    "date": "2027-04-23"
+},
+{
+    "name": "RAW",
+    "date": "2027-04-26"
+},
+{
+    "name": "NXT",
+    "date": "2027-04-27"
+},
+{
+    "name": "SmackDown",
+    "date": "2027-04-30"
+}
+]
 }

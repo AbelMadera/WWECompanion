@@ -167,6 +167,7 @@
                     <div class="card-title">Add Superstar</div>
                     <div class="card-body row gap wrap">
                         <input id="ssName" class="input grow" placeholder="Superstar name" />
+                        <input id="ssPhoto" class="input grow" placeholder="Photo URL (optional)" />
                         <select id="ssShows" class="input" multiple size="4" title="Assign one or more shows"></select>
                         <select id="ssDivision" class="input">
                             <option value="World">World</option>
@@ -196,6 +197,50 @@
                 <div class="card">
                     <div class="card-title">Populate From JSON</div>
                     <div class="card-body">
+                        <div class="h3">Weekly Schedule</div>
+                        <div class="muted tiny">
+                            Pick a weekday for each show, then generate weekly events on the calendar.
+                        </div>
+                        <div id="settingsWeeklyScheduleList" class="stack" style="margin-top:10px;"></div>
+                        <div class="row gap wrap" style="margin-top:10px;">
+                            <label class="stack" style="min-width:170px;">
+                                <span class="muted tiny">Start date</span>
+                                <input id="settingsWeeklyStartDate" class="input" type="date" />
+                            </label>
+                            <label class="stack" style="min-width:120px;">
+                                <span class="muted tiny">Months</span>
+                                <input id="settingsWeeklyMonths" class="input" type="number" min="1" max="24" value="3" />
+                            </label>
+                            <label class="stack" style="min-width:120px;">
+                                <span class="muted tiny">Rows per show</span>
+                                <input id="settingsWeeklyRows" class="input" type="number" min="0" max="20" value="6" />
+                            </label>
+                            <button class="btn" id="settingsGenerateWeeklyBtn">Populate Calendar</button>
+                        </div>
+
+                        <div class="hr"></div>
+
+                        <div class="h3">Shows</div>
+                        <div class="row gap wrap">
+                            <input id="settingsShowNameInput" class="input grow"
+                                placeholder="Show name (RAW, SmackDown, NXT…)" />
+                            <input id="settingsShowColorInput" class="input" type="color" value="#d00000" title="Show Color" />
+                            <button class="btn" id="settingsAddShowBtn">Add Show</button>
+                        </div>
+                        <div id="settingsShowsList" class="stack" style="margin-top:10px;"></div>
+
+                        <div class="hr"></div>
+
+                        <div class="h3">Championships</div>
+                        <div class="row gap wrap">
+                            <input id="championshipNameInput" class="input grow"
+                                placeholder="Championship name (e.g., Intercontinental Championship)" />
+                            <button class="btn" id="addChampionshipBtn">Add Championship</button>
+                        </div>
+                        <div id="championshipsList" class="stack" style="margin-top:10px;"></div>
+
+                        <div class="hr"></div>
+
                         <div class="muted">
                             Import one JSON file to populate championships, shows, roster, and PLEs.
                         </div>
@@ -236,16 +281,6 @@
                                 <span class="muted tiny">Replace existing data before import</span>
                             </label>
                         </div>
-
-                        <div class="hr"></div>
-
-                        <div class="h3">Championships</div>
-                        <div class="row gap wrap">
-                            <input id="championshipNameInput" class="input grow"
-                                placeholder="Championship name (e.g., Intercontinental Championship)" />
-                            <button class="btn" id="addChampionshipBtn">Add Championship</button>
-                        </div>
-                        <div id="championshipsList" class="stack" style="margin-top:10px;"></div>
 
                         <div class="hr"></div>
 
