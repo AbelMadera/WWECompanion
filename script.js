@@ -742,7 +742,7 @@ function renderEventsOnSelectedDate() {
       ${events.map(e => {
         const dot = `<span class="dot" style="background:${showColor(e.showId)}"></span>`;
         return `
-          <div class="item">
+          <div class="item cal-event-item" data-open-event="${e.id}" role="button" tabindex="0" aria-label="Open ${escapeAttr(e.name || "(Unnamed Event)")} details">
             <div class="item-title">${escapeHTML(e.name || "(Unnamed Event)")}</div>
             <div class="row gap wrap">
               <span class="badge">${dot}${escapeHTML(showName(e.showId))}</span>
@@ -750,9 +750,8 @@ function renderEventsOnSelectedDate() {
               <span class="badge">${e.date}</span>
               <span class="badge">Rows: <b>${e.matches?.length || 0}</b></span>
             </div>
-            <div class="item-actions">
-              <button class="btn" data-open-planner="${e.id}">Open Planner</button>
-              <button class="btn danger" data-del-event="${e.id}">Delete</button>
+            <div class="row gap wrap" style="margin-top:10px;">
+              <span class="badge">Tap to view card</span>
             </div>
           </div>
         `;
@@ -760,25 +759,147 @@ function renderEventsOnSelectedDate() {
     </div>
   `;
 
-    $$("[data-open-planner]").forEach(btn => {
-        btn.addEventListener("click", () => openPlanner(btn.dataset.openPlanner));
-    });
-
-    $$("[data-del-event]").forEach(btn => {
-        btn.addEventListener("click", async () => {
-            const id = btn.dataset.delEvent;
-            const ev = getEvent(id);
-            const ok = await openModal({
-                title: "Delete event?",
-                bodyHTML: `<div>Delete <b>${escapeHTML(ev?.name || "this event")}</b> on ${ev?.date}?</div>`,
-                okText: "Delete"
-            });
-            if (!ok.ok) return;
-
-            deleteEvent(id);
-            renderAll();
+    $$("[data-open-event]").forEach(el => {
+        const open = () => {
+            el.blur();
+            openCalendarEventDetails(el.dataset.openEvent);
+        };
+        el.addEventListener("click", open);
+        el.addEventListener("keydown", (e) => {
+            if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                open();
+            }
         });
     });
+}
+
+function participantInfo(participantRef) {
+    const ref = String(participantRef ?? "").trim();
+    if (!ref) {
+        return { name: "TBD", photo: "" };
+    }
+    const byId = state.superstars.find(ss => ss.id === ref);
+    if (byId) {
+        return {
+            name: byId.name || "TBD",
+            photo: superstarPhotoURL(byId),
+        };
+    }
+    const byName = state.superstars.find(ss => ss.name.toLowerCase() === ref.toLowerCase());
+    if (byName) {
+        return {
+            name: byName.name || "TBD",
+            photo: superstarPhotoURL(byName),
+        };
+    }
+    return { name: ref, photo: "" };
+}
+
+async function openCalendarEventDetails(eventId) {
+    const ev = getEvent(eventId);
+    if (!ev) return;
+
+    const dot = `<span class="dot" style="background:${showColor(ev.showId)}"></span>`;
+    const matches = Array.isArray(ev.matches) ? ev.matches : [];
+    const orderedMatches = matches.map((m, idx) => ({ ...m, _idx: idx })).reverse();
+
+    const matchesHTML = orderedMatches.length
+        ? orderedMatches.map((m, renderIdx) => {
+            const isMainEvent = renderIdx === 0;
+            const participants = Array.isArray(m.participants) ? m.participants : [];
+            const left = participantInfo(participants[0]);
+            const right = participantInfo(participants[1]);
+            const extraCount = Math.max(0, participants.length - 2);
+            const extraText = extraCount > 0 ? ` +${extraCount} more` : "";
+            const title = m.matchType?.trim() || `Match ${m.num ?? (m._idx + 1)}`;
+            const resultText = String(m.result ?? "").trim();
+
+            return `
+              <div class="event-match-card ${isMainEvent ? "main-event-card" : ""}">
+                ${isMainEvent ? `<div class="event-main-label">Main Event</div>` : ""}
+                <div class="event-match-title">${escapeHTML(title)}</div>
+                <div class="event-fight-row">
+                  <div class="event-fighter">
+                    ${left.photo
+                    ? `<img class="event-fighter-photo ${isMainEvent ? "event-fighter-photo-main" : ""}" src="${escapeAttr(left.photo)}" alt="${escapeAttr(left.name)}" />`
+                    : `<div class="event-fighter-fallback ${isMainEvent ? "event-fighter-photo-main" : ""}">${escapeHTML(superstarInitials(left.name))}</div>`
+                }
+                    <div class="tiny">${escapeHTML(left.name)}</div>
+                  </div>
+                  <div class="event-vs ${isMainEvent ? "event-vs-main" : ""}">VS</div>
+                  <div class="event-fighter">
+                    ${right.photo
+                    ? `<img class="event-fighter-photo ${isMainEvent ? "event-fighter-photo-main" : ""}" src="${escapeAttr(right.photo)}" alt="${escapeAttr(right.name)}" />`
+                    : `<div class="event-fighter-fallback ${isMainEvent ? "event-fighter-photo-main" : ""}">${escapeHTML(superstarInitials(right.name))}</div>`
+                }
+                    <div class="tiny">${escapeHTML(right.name)}</div>
+                  </div>
+                </div>
+                <div class="muted tiny">
+                  ${resultText ? `Result: ${escapeHTML(resultText)} • ` : ""}${participants.length ? `${participants.length} participants${extraText}` : "No participants set yet"}
+                </div>
+              </div>
+            `;
+        }).join("")
+        : `<div class="muted">No matches scheduled yet for this event.</div>`;
+
+    const bodyHTML = `
+      <div class="stack">
+        <div class="row gap wrap">
+          <span class="badge">${dot}${escapeHTML(showName(ev.showId))}</span>
+          <span class="badge">${escapeHTML(ev.type.toUpperCase())}</span>
+          <span class="badge">${ev.date}</span>
+          <span class="badge">Rows: <b>${matches.length}</b></span>
+        </div>
+        <div class="event-match-list">${matchesHTML}</div>
+      </div>
+    `;
+
+    const modalPromise = openModal({
+        title: ev.name || "(Unnamed Event)",
+        bodyHTML,
+        okText: "Close",
+        cancelText: "Close"
+    });
+
+    const modalActions = $(".modal-actions");
+    const modalCancelBtn = $("#modalCancel");
+    const modalOkBtn = $("#modalOk");
+    const plannerBtn = document.createElement("button");
+    plannerBtn.className = "btn";
+    plannerBtn.type = "button";
+    plannerBtn.textContent = "Open Planner";
+    const deleteBtn = document.createElement("button");
+    deleteBtn.className = "btn danger";
+    deleteBtn.type = "button";
+    deleteBtn.textContent = "Delete";
+
+    modalCancelBtn.classList.add("hidden");
+    modalActions.insertBefore(plannerBtn, modalOkBtn);
+    modalActions.insertBefore(deleteBtn, modalOkBtn);
+
+    plannerBtn.addEventListener("click", () => {
+        closeModal({ ok: false });
+        openPlanner(eventId);
+    });
+    deleteBtn.addEventListener("click", async () => {
+        closeModal({ ok: false });
+        const ev2 = getEvent(eventId);
+        const ok = await openModal({
+            title: "Delete event?",
+            bodyHTML: `<div>Delete <b>${escapeHTML(ev2?.name || "this event")}</b> on ${ev2?.date}?</div>`,
+            okText: "Delete"
+        });
+        if (!ok.ok) return;
+        deleteEvent(eventId);
+        renderAll();
+    });
+
+    await modalPromise;
+    plannerBtn.remove();
+    deleteBtn.remove();
+    modalCancelBtn.classList.remove("hidden");
 }
 
 async function addEventFlow(dateISO = calSelectedISO) {
