@@ -125,6 +125,29 @@ function normalizeStateData(sourceState) {
             )
         : [];
 
+    const validShowIds = new Set(
+        Array.isArray(normalized.shows)
+            ? normalized.shows.map(s => String(s?.id ?? "").trim()).filter(Boolean)
+            : []
+    );
+    normalized.events = Array.isArray(normalized.events)
+        ? normalized.events.map(ev => {
+            const type = String(ev?.type ?? "weekly").trim().toLowerCase() === "ppv" ? "ppv" : "weekly";
+            const ids = Array.isArray(ev?.showIds)
+                ? ev.showIds.map(id => String(id ?? "").trim()).filter(id => validShowIds.has(id))
+                : [];
+            const legacyShowId = String(ev?.showId ?? "").trim();
+            if (legacyShowId && validShowIds.has(legacyShowId)) ids.unshift(legacyShowId);
+            const showIds = Array.from(new Set(ids));
+            return {
+                ...ev,
+                type,
+                showIds,
+                showId: showIds[0] ?? null,
+            };
+        })
+        : [];
+
     return normalized;
 }
 function escapeHTML(str) {
@@ -529,6 +552,24 @@ function showName(showId) {
     return s ? s.name : "Unknown show";
 }
 function showColor(showId) { return getShow(showId)?.color || "#888"; }
+function eventShowIds(event) {
+    const ids = Array.isArray(event?.showIds)
+        ? event.showIds.map(id => String(id ?? "").trim()).filter(Boolean)
+        : [];
+    if (ids.length) return Array.from(new Set(ids));
+    const legacy = String(event?.showId ?? "").trim();
+    return legacy ? [legacy] : [];
+}
+function eventHasShow(event, showId) {
+    if (!showId) return false;
+    return eventShowIds(event).includes(showId);
+}
+function eventShowNames(event) {
+    const names = eventShowIds(event)
+        .map(showName)
+        .filter(n => n && n !== "Unknown show" && n !== "No show");
+    return Array.from(new Set(names));
+}
 function addShowByNameColor(rawName, rawColor) {
     const name = String(rawName ?? "").trim();
     if (!name) return { ok: false, reason: "empty_name" };
@@ -565,9 +606,24 @@ function rosterForShow(showId, { excludeManagers = false } = {}) {
 }
 function getEvent(eventId) { return state.events.find(e => e.id === eventId) || null; }
 function upsertEvent(event) {
+    const type = String(event?.type ?? "weekly").toLowerCase() === "ppv" ? "ppv" : "weekly";
+    const rawShowIds = Array.isArray(event?.showIds)
+        ? event.showIds.map(id => String(id ?? "").trim()).filter(Boolean)
+        : [];
+    const mergedShowIds = rawShowIds.length
+        ? rawShowIds
+        : (event?.showId ? [String(event.showId).trim()] : []);
+    const showIds = Array.from(new Set(mergedShowIds));
+    const normalizedEvent = {
+        ...event,
+        type,
+        showIds,
+        showId: showIds[0] ?? null,
+    };
+
     const idx = state.events.findIndex(e => e.id === event.id);
-    if (idx >= 0) state.events[idx] = event;
-    else state.events.push(event);
+    if (idx >= 0) state.events[idx] = normalizedEvent;
+    else state.events.push(normalizedEvent);
     state.events.sort((a, b) => a.date.localeCompare(b.date));
     saveSoon();
 }
@@ -638,7 +694,10 @@ function renderDashboard() {
         el.innerHTML = `<div class="muted">No upcoming events. Add one from Calendar or Settings.</div>`;
     } else {
         const typeTag = upcoming.type === "ppv" ? "PLE" : "WEEKLY";
-        const showTagText = upcoming.type === "ppv" ? "PLE" : showName(upcoming.showId);
+        const ppvShows = eventShowNames(upcoming).join(" + ");
+        const showTagText = upcoming.type === "ppv"
+            ? (ppvShows || "PLE")
+            : showName(upcoming.showId);
         const showTagStyle = upcoming.type === "ppv"
             ? "background:rgba(255,255,255,.14);border-color:rgba(255,255,255,.28);"
             : `background:rgba(255,255,255,.08);border-color:${showColor(upcoming.showId)};`;
@@ -1022,7 +1081,7 @@ function renderCalendar() {
 
         const events = state.events
             .filter(e => e.date === iso)
-            .filter(e => showFilter === "all" ? true : (e.showId === showFilter));
+            .filter(e => showFilter === "all" ? true : eventHasShow(e, showFilter));
 
         const visibleEvents = events.slice(0, 2);
         const badges = visibleEvents.map(e => {
@@ -1064,7 +1123,7 @@ function renderEventsOnSelectedDate() {
 
     const events = state.events
         .filter(e => e.date === calSelectedISO)
-        .filter(e => showFilter === "all" ? true : (e.showId === showFilter));
+        .filter(e => showFilter === "all" ? true : eventHasShow(e, showFilter));
 
     if (events.length === 0) {
         list.innerHTML = `<div class="muted">No events on <b>${calSelectedISO}</b>.</div>`;
@@ -1074,12 +1133,15 @@ function renderEventsOnSelectedDate() {
     list.innerHTML = `
     <div class="list">
       ${events.map(e => {
-        const dot = `<span class="dot" style="background:${showColor(e.showId)}"></span>`;
+        const ids = eventShowIds(e);
+        const showBadges = ids.length
+            ? ids.map(id => `<span class="badge"><span class="dot" style="background:${showColor(id)}"></span>${escapeHTML(showName(id))}</span>`).join("")
+            : `<span class="badge"><span class="dot" style="background:${showColor(e.showId)}"></span>${escapeHTML(showName(e.showId))}</span>`;
         return `
           <div class="item cal-event-item" data-open-event="${e.id}" role="button" tabindex="0" aria-label="Open ${escapeAttr(e.name || "(Unnamed Event)")} details">
             <div class="item-title">${escapeHTML(e.name || "(Unnamed Event)")}</div>
             <div class="row gap wrap">
-              <span class="badge">${dot}${escapeHTML(showName(e.showId))}</span>
+              ${showBadges}
               <span class="badge">${escapeHTML(e.type.toUpperCase())}</span>
               <span class="badge">${e.date}</span>
               <span class="badge">Rows: <b>${e.matches?.length || 0}</b></span>
@@ -1136,7 +1198,10 @@ async function openCalendarEventDetails(eventId) {
     const ev = getEvent(eventId);
     if (!ev) return;
 
-    const dot = `<span class="dot" style="background:${showColor(ev.showId)}"></span>`;
+    const showIds = eventShowIds(ev);
+    const showBadges = showIds.length
+        ? showIds.map(showId => `<span class="badge"><span class="dot" style="background:${showColor(showId)}"></span>${escapeHTML(showName(showId))}</span>`).join("")
+        : `<span class="badge"><span class="dot" style="background:${showColor(ev.showId)}"></span>${escapeHTML(showName(ev.showId))}</span>`;
     const matches = Array.isArray(ev.matches) ? ev.matches : [];
     const orderedMatches = matches.map((m, idx) => ({ ...m, _idx: idx })).reverse();
 
@@ -1187,7 +1252,7 @@ async function openCalendarEventDetails(eventId) {
     const bodyHTML = `
       <div class="stack">
         <div class="row gap wrap">
-          <span class="badge">${dot}${escapeHTML(showName(ev.showId))}</span>
+          ${showBadges}
           <span class="badge">${escapeHTML(ev.type.toUpperCase())}</span>
           <span class="badge">${ev.date}</span>
           <span class="badge">Rows: <b>${matches.length}</b></span>
@@ -1256,20 +1321,84 @@ async function addEventFlow(dateISO = calSelectedISO) {
         <option value="ppv">PLE / PPV</option>
       </select>
       <select id="evShow" class="input">${showOptions}</select>
+      <div id="evShowsWrap" class="stack hidden">
+        <div class="muted tiny">Shows included in this PLE / PPV</div>
+        <div id="evShows" class="show-tag-picker"></div>
+      </div>
       <input id="evName" class="input" placeholder="Event name (e.g., May - Week 1)" />
-      <div class="muted tiny">Tip: You can bulk-create schedules in Settings.</div>
     </div>
   `;
 
-    const ok = await openModal({ title: "Add Event", bodyHTML, okText: "Create" });
+    const modalPromise = openModal({ title: "Add Event", bodyHTML, okText: "Create" });
+    const typeEl = $("#evType");
+    const showEl = $("#evShow");
+    const showsWrapEl = $("#evShowsWrap");
+    const showsEl = $("#evShows");
+    const selectedPpvShowIds = new Set();
+
+    const renderPpvShowPicker = () => {
+        if (!showsEl) return;
+        if (!state.shows.length) {
+            showsEl.innerHTML = `<div class="muted tiny">No shows created yet.</div>`;
+            return;
+        }
+        showsEl.innerHTML = state.shows.map(s => {
+            const active = selectedPpvShowIds.has(s.id);
+            const bg = active ? `${s.color}33` : "rgba(255,255,255,.03)";
+            const border = active ? s.color : "var(--line)";
+            return `
+              <button type="button" class="show-tag-btn ${active ? "active" : ""}" data-ev-show="${s.id}"
+                style="border-color:${border};background:${bg};">
+                <span class="dot" style="background:${s.color}"></span>
+                <span>${escapeHTML(s.name)}</span>
+              </button>
+            `;
+        }).join("");
+        $$("[data-ev-show]", showsEl).forEach(btn => {
+            btn.addEventListener("click", () => {
+                const showId = btn.dataset.evShow;
+                if (!showId) return;
+                if (selectedPpvShowIds.has(showId)) selectedPpvShowIds.delete(showId);
+                else selectedPpvShowIds.add(showId);
+                renderPpvShowPicker();
+            });
+        });
+    };
+
+    const syncEventTypeFields = () => {
+        const isPpv = typeEl?.value === "ppv";
+        if (showEl) {
+            showEl.classList.toggle("hidden", isPpv);
+            showEl.disabled = isPpv;
+            showEl.style.display = isPpv ? "none" : "";
+        }
+        if (showsWrapEl) {
+            showsWrapEl.classList.toggle("hidden", !isPpv);
+            showsWrapEl.style.display = isPpv ? "" : "none";
+        }
+        if (!isPpv) {
+            selectedPpvShowIds.clear();
+            if (showsEl) showsEl.innerHTML = "";
+            return;
+        }
+        renderPpvShowPicker();
+    };
+
+    syncEventTypeFields();
+    typeEl?.addEventListener("change", syncEventTypeFields);
+
+    const ok = await modalPromise;
     if (!ok.ok) return;
 
     const date = $("#evDate").value;
     const type = $("#evType").value;
     const showId = $("#evShow").value || null;
+    const showIds = type === "ppv"
+        ? Array.from(selectedPpvShowIds)
+        : (showId ? [showId] : []);
     const name = $("#evName").value.trim() || (type === "ppv" ? "PLE / PPV" : "Weekly Show");
 
-    const event = { id: uid("event"), date, type, showId, name, matches: [] };
+    const event = { id: uid("event"), date, type, showId: showIds[0] ?? null, showIds, name, matches: [] };
     upsertEvent(event);
 
     calSelectedISO = date;
@@ -1293,7 +1422,11 @@ function renderPlannerEventSelect() {
     const events = [...state.events].sort((a, b) => a.date.localeCompare(b.date));
 
     sel.innerHTML = events.length
-        ? events.map(e => `<option value="${e.id}">${e.date} • ${escapeHTML(e.name || "(Unnamed)")} • ${escapeHTML(showName(e.showId))}</option>`).join("")
+        ? events.map(e => {
+            const names = eventShowNames(e);
+            const label = names.length ? names.join(" + ") : showName(e.showId);
+            return `<option value="${e.id}">${e.date} • ${escapeHTML(e.name || "(Unnamed)")} • ${escapeHTML(label)}</option>`;
+        }).join("")
         : `<option value="">No events yet (create one)</option>`;
 
     if (!plannerEventId && events.length) plannerEventId = events[0].id;
@@ -1306,9 +1439,15 @@ function renderPlannerEventSelect() {
 }
 
 function plannerRosterOptions(ev) {
-    const roster = ev.showId
-        ? rosterForShow(ev.showId, { excludeManagers: true })
-        : state.superstars.filter(ss => !managerNameSet().has(ss.name.toLowerCase()));
+    const eventShows = eventShowIds(ev);
+    const managers = managerNameSet();
+    const roster = eventShows.length
+        ? state.superstars.filter(ss => {
+            if (managers.has(ss.name.toLowerCase())) return false;
+            const ids = Array.isArray(ss?.showIds) ? ss.showIds : (ss?.showId ? [ss.showId] : []);
+            return ids.some(showId => eventShows.includes(showId));
+        })
+        : state.superstars.filter(ss => !managers.has(ss.name.toLowerCase()));
     return roster
         .slice()
         .sort((a, b) => a.name.localeCompare(b.name))
@@ -1334,7 +1473,8 @@ function renderPlanner() {
         return;
     }
 
-    meta.textContent = `${ev.date} • ${ev.type.toUpperCase()} • ${showName(ev.showId)} • ${ev.matches.length} rows`;
+    const metaShows = eventShowNames(ev);
+    meta.textContent = `${ev.date} • ${ev.type.toUpperCase()} • ${metaShows.length ? metaShows.join(" + ") : showName(ev.showId)} • ${ev.matches.length} rows`;
 
     const optionsHTML = plannerRosterOptions(ev);
 
