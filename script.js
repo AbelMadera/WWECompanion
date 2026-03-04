@@ -618,7 +618,10 @@ function renderRoster() {
   `;
 
     $$("[data-open-ss]").forEach(el => {
-        const open = () => openSuperstarDetails(el.dataset.openSs);
+        const open = () => {
+            el.blur();
+            openSuperstarDetails(el.dataset.openSs);
+        };
         el.addEventListener("click", open);
         el.addEventListener("keydown", (e) => {
             if (e.key === "Enter" || e.key === " ") {

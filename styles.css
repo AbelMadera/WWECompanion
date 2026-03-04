@@ -332,9 +332,21 @@ h1 {
     cursor: pointer;
 }
 
-.roster-item:hover {
+.roster-item:focus {
+    outline: none;
+}
+
+.roster-item:focus-visible {
     background: rgba(255, 255, 255, .06);
+    border-color: #3a3a55;
     transform: translateY(-1px);
+}
+
+@media (hover: hover) and (pointer: fine) {
+    .roster-item:hover {
+        background: rgba(255, 255, 255, .06);
+        transform: translateY(-1px);
+    }
 }
 
 .item-title {
