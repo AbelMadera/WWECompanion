@@ -873,6 +873,7 @@ async function openSuperstarDetails(id) {
 
     const ssShows = superstarShowNames(ss);
     const champs = superstarChampionshipNames(ss);
+    const titleText = champs.join(", ");
     const record = `${toNonNegativeInt(ss.wins)}-${toNonNegativeInt(ss.losses)}`;
     const photo = superstarPhotoURL(ss);
 
@@ -884,14 +885,13 @@ async function openSuperstarDetails(id) {
             : `<div class="ss-profile-fallback">${escapeHTML(superstarInitials(ss.name))}</div>`
         }
           <div class="stack" style="gap:6px;">
-            <div class="h3" style="margin:0;">${escapeHTML(ss.name)}</div>
-            <div class="muted tiny">${escapeHTML(ssShows.join(", ") || "Unassigned")} • ${escapeHTML(ss.division)} Division</div>
+            <div class="h3" style="margin:0;">${escapeHTML(ss.name)}${ss.isChampion ? ` <span class="champ-inline">C</span>` : ``}</div>
+            <div class="muted tiny">${escapeHTML(ssShows.join(", ") || "Unassigned")}${titleText ? ` • ${escapeHTML(titleText)}` : ``}</div>
           </div>
         </div>
         <div class="row gap wrap">
           <span class="badge">Record: <b>${record}</b></span>
-          <span class="badge">${champs.length ? "Champion" : "Not Champion"}</span>
-          ${champs.length ? `<span class="badge">Titles: <b>${escapeHTML(champs.join(", "))}</b></span>` : ""}
+          <span class="badge">Division: <b>${escapeHTML(ss.division)}</b></span>
           ${ss.faction ? `<span class="badge">Faction: <b>${escapeHTML(ss.faction)}</b></span>` : ""}
           ${ss.manager ? `<span class="badge">Manager: <b>${escapeHTML(ss.manager)}</b></span>` : ""}
         </div>
@@ -968,7 +968,7 @@ function renderRoster() {
                 : `<div class="ss-card-fallback">${escapeHTML(superstarInitials(ss.name))}</div>`
             }
               <div>
-                <div class="item-title">${escapeHTML(ss.name)}</div>
+                <div class="item-title">${escapeHTML(ss.name)}${ss.isChampion ? ` <span class="champ-inline">C</span>` : ``}</div>
                 <div class="item-sub">${escapeHTML(ssShows.join(", ") || "Unassigned")} • ${escapeHTML(ss.division)} • ${record}</div>
               </div>
             </div>
@@ -1111,13 +1111,14 @@ function renderEventsOnSelectedDate() {
 function participantInfo(participantRef) {
     const ref = String(participantRef ?? "").trim();
     if (!ref) {
-        return { name: "TBD", photo: "" };
+        return { name: "TBD", photo: "", isChampion: false };
     }
     const byId = state.superstars.find(ss => ss.id === ref);
     if (byId) {
         return {
             name: byId.name || "TBD",
             photo: superstarPhotoURL(byId),
+            isChampion: !!byId.isChampion,
         };
     }
     const byName = state.superstars.find(ss => ss.name.toLowerCase() === ref.toLowerCase());
@@ -1125,9 +1126,10 @@ function participantInfo(participantRef) {
         return {
             name: byName.name || "TBD",
             photo: superstarPhotoURL(byName),
+            isChampion: !!byName.isChampion,
         };
     }
-    return { name: ref || "TBD", photo: "" };
+    return { name: ref || "TBD", photo: "", isChampion: false };
 }
 
 async function openCalendarEventDetails(eventId) {
@@ -1165,7 +1167,7 @@ async function openCalendarEventDetails(eventId) {
                     ? `<img class="event-fighter-photo ${isMainEvent ? "event-fighter-photo-main" : ""}" src="${escapeAttr(left.photo)}" alt="${escapeAttr(left.name)}" />`
                     : `<div class="event-fighter-fallback ${isMainEvent ? "event-fighter-photo-main" : ""}">${left.name === "TBD" ? "?" : escapeHTML(superstarInitials(left.name))}</div>`
                 }
-                    <div class="tiny">${escapeHTML(left.name)}</div>
+                    <div class="tiny event-fighter-name">${escapeHTML(left.name)}${left.isChampion ? ` <span class="event-champ">C</span>` : ``}</div>
                   </div>
                   <div class="event-vs ${isMainEvent ? "event-vs-main" : ""}">VS</div>
                   <div class="event-fighter">
@@ -1173,7 +1175,7 @@ async function openCalendarEventDetails(eventId) {
                     ? `<img class="event-fighter-photo ${isMainEvent ? "event-fighter-photo-main" : ""}" src="${escapeAttr(right.photo)}" alt="${escapeAttr(right.name)}" />`
                     : `<div class="event-fighter-fallback ${isMainEvent ? "event-fighter-photo-main" : ""}">${right.name === "TBD" ? "?" : escapeHTML(superstarInitials(right.name))}</div>`
                 }
-                    <div class="tiny">${escapeHTML(right.name)}</div>
+                    <div class="tiny event-fighter-name">${escapeHTML(right.name)}${right.isChampion ? ` <span class="event-champ">C</span>` : ``}</div>
                   </div>
                 </div>
                 ${resultText ? `<div class="muted tiny">Result: ${escapeHTML(resultText)}${escapeHTML(pinText)}</div>` : ``}
