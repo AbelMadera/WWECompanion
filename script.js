@@ -431,7 +431,7 @@ async function editSuperstarFlow(id) {
     const selectedShows = new Set(ss.showIds || []);
     const showOptions = state.shows.length
         ? state.shows.map(s => `
-            <label class="row gap wrap">
+            <label class="edit-ss-check-item">
               <input class="editSSShowItem" type="checkbox" value="${s.id}" ${selectedShows.has(s.id) ? "checked" : ""} />
               <span>${escapeHTML(s.name)}</span>
             </label>
@@ -440,30 +440,60 @@ async function editSuperstarFlow(id) {
     const selectedChampionships = new Set(parseChampionships(ss.championships));
     const championshipOptions = state.championships.length
         ? state.championships.map(c => `
-            <label class="row gap wrap">
+            <label class="edit-ss-check-item">
               <input class="editSSChampItem" type="checkbox" value="${c.id}" ${selectedChampionships.has(c.id) ? "checked" : ""} />
               <span>${escapeHTML(c.name)}</span>
             </label>
           `).join("")
         : `<div class="muted tiny">No championships created yet. Add them in Settings first.</div>`;
 
+    const photo = superstarPhotoURL(ss);
     const bodyHTML = `
-      <div class="stack">
-        <input id="editSSName" class="input" value="${escapeAttr(ss.name)}" />
-        <input id="editSSPhoto" class="input" value="${escapeAttr(superstarPhotoURL(ss))}" placeholder="Photo URL (https://...)" />
-        <div class="muted tiny">Shows</div>
-        <div class="stack">${showOptions}</div>
-        <select id="editSSDiv" class="input">
-          ${["World", "Midcard", "Tag", "Women", "Other"].map(d => `<option value="${d}" ${d === ss.division ? "selected" : ""}>${d}</option>`).join("")}
-        </select>
-        <div class="muted tiny">Championships</div>
-        <div class="stack">${championshipOptions}</div>
-        <input id="editSSFaction" class="input" value="${escapeAttr(ss.faction || "")}" placeholder="Faction / Group affiliation" />
-        <input id="editSSManager" class="input" value="${escapeAttr(ss.manager || "")}" placeholder="Manager" />
-        <div class="row gap wrap">
-          <input id="editSSWins" class="input" type="number" min="0" value="${toNonNegativeInt(ss.wins)}" placeholder="Wins" />
-          <input id="editSSLosses" class="input" type="number" min="0" value="${toNonNegativeInt(ss.losses)}" placeholder="Losses" />
+      <div class="stack edit-ss-form">
+        <div class="edit-ss-header">
+          ${photo
+            ? `<img class="edit-ss-avatar" src="${escapeAttr(photo)}" alt="${escapeAttr(ss.name)}" />`
+            : `<div class="edit-ss-avatar-fallback">${escapeHTML(superstarInitials(ss.name))}</div>`
+        }
+          <div class="muted tiny">Update profile details, shows, titles, and record.</div>
         </div>
+
+        <div class="edit-ss-section">
+          <label class="edit-ss-label" for="editSSName">Name</label>
+          <input id="editSSName" class="input" value="${escapeAttr(ss.name)}" />
+          <label class="edit-ss-label" for="editSSPhoto" style="margin-top:10px;">Photo URL</label>
+          <input id="editSSPhoto" class="input" value="${escapeAttr(photo)}" placeholder="Photo URL (https://...)" />
+        </div>
+
+        <div class="edit-ss-section">
+          <label class="edit-ss-label">Shows</label>
+          <div class="edit-ss-check-grid">${showOptions}</div>
+          <label class="edit-ss-label" for="editSSDiv" style="margin-top:10px;">Division</label>
+          <select id="editSSDiv" class="input">
+            ${["World", "Midcard", "Tag", "Women", "Other"].map(d => `<option value="${d}" ${d === ss.division ? "selected" : ""}>${d}</option>`).join("")}
+          </select>
+        </div>
+
+        <div class="edit-ss-section">
+          <label class="edit-ss-label">Championships</label>
+          <div class="edit-ss-check-grid">${championshipOptions}</div>
+        </div>
+
+        <div class="edit-ss-section">
+          <label class="edit-ss-label" for="editSSFaction">Faction / Group affiliation</label>
+          <input id="editSSFaction" class="input" value="${escapeAttr(ss.faction || "")}" placeholder="Faction / Group affiliation" />
+          <label class="edit-ss-label" for="editSSManager" style="margin-top:10px;">Manager</label>
+          <input id="editSSManager" class="input" value="${escapeAttr(ss.manager || "")}" placeholder="Manager" />
+        </div>
+
+        <div class="edit-ss-section">
+          <label class="edit-ss-label">Record</label>
+          <div class="edit-ss-inline">
+            <input id="editSSWins" class="input" type="number" min="0" value="${toNonNegativeInt(ss.wins)}" placeholder="Wins" />
+            <input id="editSSLosses" class="input" type="number" min="0" value="${toNonNegativeInt(ss.losses)}" placeholder="Losses" />
+          </div>
+        </div>
+
         <div class="muted tiny">Tip: Champion status is automatic when at least one championship is selected.</div>
       </div>
     `;
