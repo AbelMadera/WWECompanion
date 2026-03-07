@@ -248,6 +248,102 @@ function superstarInitials(name) {
 function superstarNameById(id) {
     return state.superstars.find(ss => ss.id === id)?.name || "";
 }
+function resolveSuperstarIdFromRef(ref) {
+    const raw = String(ref ?? "").trim();
+    if (!raw) return "";
+    const byId = state.superstars.find(ss => ss.id === raw);
+    if (byId) return byId.id;
+    const normalizedRaw = normalizeNameForCompare(raw);
+    const byName = state.superstars.find(ss => normalizeNameForCompare(ss.name) === normalizedRaw);
+    return byName?.id || "";
+}
+function isDQResult(resultValue) {
+    const normalized = normalizeNameForCompare(resultValue);
+    return normalized === "dq" || normalized.includes("disqualification");
+}
+function isDrawRecordResult(resultValue) {
+    const normalized = normalizeNameForCompare(resultValue);
+    return normalized === "draw" || normalized === "tie";
+}
+function computeSuperstarRecords() {
+    const records = new Map();
+    state.superstars.forEach(ss => {
+        records.set(ss.id, { wins: 0, losses: 0, draws: 0 });
+    });
+
+    state.events.forEach(ev => {
+        const matches = Array.isArray(ev?.matches) ? ev.matches : [];
+        matches.forEach(match => {
+            const participantIds = Array.from(new Set(
+                (Array.isArray(match?.participants) ? match.participants : [])
+                    .map(resolveSuperstarIdFromRef)
+                    .filter(Boolean)
+            ));
+            if (participantIds.length < 2) return;
+
+            const resultValue = String(match?.result ?? "").trim();
+            if (!resultValue) {
+                // "(winner)" placeholder counts as a draw for all participants
+                participantIds.forEach(pid => {
+                    const rec = records.get(pid);
+                    if (!rec) return;
+                    rec.draws += 1;
+                });
+                return;
+            }
+            if (normalizeNameForCompare(resultValue) === "no result") return;
+            if (isDQResult(resultValue)) return; // DQ does not affect W/L/D
+
+            if (isDrawRecordResult(resultValue)) {
+                participantIds.forEach(pid => {
+                    const rec = records.get(pid);
+                    if (!rec) return;
+                    rec.draws += 1;
+                });
+                return;
+            }
+
+            if (resultValue === "TEAM:A" || resultValue === "TEAM:B") {
+                const teams = inferMatchTeams(match?.matchType, participantIds, normalizedParticipantTeams(match));
+                const winners = resultValue === "TEAM:A" ? (teams?.[0] || []) : (teams?.[1] || []);
+                const losers = resultValue === "TEAM:A" ? (teams?.[1] || []) : (teams?.[0] || []);
+                if (!winners.length || !losers.length) return;
+                winners.forEach(pid => {
+                    const rec = records.get(pid);
+                    if (!rec) return;
+                    rec.wins += 1;
+                });
+                losers.forEach(pid => {
+                    const rec = records.get(pid);
+                    if (!rec) return;
+                    rec.losses += 1;
+                });
+                return;
+            }
+
+            const winnerId = resolveSuperstarIdFromRef(resultValue);
+            if (!winnerId || !participantIds.includes(winnerId)) return;
+            participantIds.forEach(pid => {
+                const rec = records.get(pid);
+                if (!rec) return;
+                if (pid === winnerId) rec.wins += 1;
+                else rec.losses += 1;
+            });
+        });
+    });
+
+    return records;
+}
+function superstarRecordById(superstarId, recordMap = null) {
+    const records = recordMap || computeSuperstarRecords();
+    return records.get(superstarId) || { wins: 0, losses: 0, draws: 0 };
+}
+function formatRecord(record) {
+    const wins = toNonNegativeInt(record?.wins);
+    const losses = toNonNegativeInt(record?.losses);
+    const draws = toNonNegativeInt(record?.draws);
+    return draws > 0 ? `${wins}-${draws}-${losses}` : `${wins}-${losses}`;
+}
 function isTeamOrHandicapMatch(matchType, participantCount) {
     const t = String(matchType || "").toLowerCase();
     if (participantCount < 3) return false;
@@ -350,6 +446,7 @@ function computeWeeklyRankings(topN = 3) {
     const baseRating = 1500;
     const kBase = 24;
     const weekStartISO = toISODateDaysAgo(6);
+    const records = computeSuperstarRecords();
 
     const superstarNameToId = new Map(
         state.superstars.map(ss => [normalizeNameForCompare(ss.name), ss.id])
@@ -361,7 +458,8 @@ function computeWeeklyRankings(topN = 3) {
     const recentForm = new Map();
 
     state.superstars.forEach(ss => {
-        const winLossBonus = (toNonNegativeInt(ss.wins) - toNonNegativeInt(ss.losses)) * 8;
+        const record = superstarRecordById(ss.id, records);
+        const winLossBonus = (toNonNegativeInt(record.wins) - toNonNegativeInt(record.losses)) * 8;
         const championBonus = ss.isChampion ? 35 : 0;
         const titleDepthBonus = parseChampionships(ss.championships).length * 10;
         ratings.set(ss.id, baseRating + winLossBonus + championBonus + titleDepthBonus);
@@ -495,8 +593,10 @@ function computeWeeklyRankings(topN = 3) {
             }))
             .sort((a, b) => {
                 if (b.score !== a.score) return b.score - a.score;
-                if (toNonNegativeInt(b.superstar.wins) !== toNonNegativeInt(a.superstar.wins)) {
-                    return toNonNegativeInt(b.superstar.wins) - toNonNegativeInt(a.superstar.wins);
+                const bWins = toNonNegativeInt(superstarRecordById(b.superstar.id, records).wins);
+                const aWins = toNonNegativeInt(superstarRecordById(a.superstar.id, records).wins);
+                if (bWins !== aWins) {
+                    return bWins - aWins;
                 }
                 return a.superstar.name.localeCompare(b.superstar.name);
             })
@@ -879,7 +979,7 @@ async function editSuperstarFlow(id) {
             ? `<img class="edit-ss-avatar" src="${escapeAttr(photo)}" alt="${escapeAttr(ss.name)}" />`
             : `<div class="edit-ss-avatar-fallback">${escapeHTML(superstarInitials(ss.name))}</div>`
         }
-          <div class="muted tiny">Update profile details, shows, titles, and record.</div>
+          <div class="muted tiny">Update profile details, shows, and titles.</div>
         </div>
 
         <div class="edit-ss-section">
@@ -910,14 +1010,6 @@ async function editSuperstarFlow(id) {
           <input id="editSSManager" class="input" value="${escapeAttr(ss.manager || "")}" placeholder="Manager" />
         </div>
 
-        <div class="edit-ss-section">
-          <label class="edit-ss-label">Record</label>
-          <div class="edit-ss-inline">
-            <input id="editSSWins" class="input" type="number" min="0" value="${toNonNegativeInt(ss.wins)}" placeholder="Wins" />
-            <input id="editSSLosses" class="input" type="number" min="0" value="${toNonNegativeInt(ss.losses)}" placeholder="Losses" />
-          </div>
-        </div>
-
         <div class="muted tiny">Tip: Champion status is automatic when at least one championship is selected.</div>
       </div>
     `;
@@ -932,8 +1024,6 @@ async function editSuperstarFlow(id) {
     const newChamps = $$(".editSSChampItem:checked").map(el => el.value);
     const newFaction = $("#editSSFaction").value.trim();
     const newManager = $("#editSSManager").value.trim();
-    const newWins = toNonNegativeInt($("#editSSWins").value);
-    const newLosses = toNonNegativeInt($("#editSSLosses").value);
 
     if (!newName) return false;
 
@@ -948,8 +1038,6 @@ async function editSuperstarFlow(id) {
         championships: Array.from(new Set(newChamps)),
         faction: newFaction,
         manager: newManager,
-        wins: newWins,
-        losses: newLosses,
     } : x);
     saveSoon();
     renderRoster();
@@ -960,6 +1048,7 @@ async function editSuperstarFlow(id) {
 async function openSuperstarDetails(id, { readOnly = false } = {}) {
     const ss = state.superstars.find(x => x.id === id);
     if (!ss) return;
+    const recordMap = computeSuperstarRecords();
 
     const isDisqualificationResult = (resultValue) => {
         const normalized = normalizeNameForCompare(resultValue);
@@ -1064,7 +1153,7 @@ async function openSuperstarDetails(id, { readOnly = false } = {}) {
     const ssShows = superstarShowNames(ss);
     const champs = superstarChampionshipNames(ss);
     const titleText = champs.join(", ");
-    const record = `${toNonNegativeInt(ss.wins)}-${toNonNegativeInt(ss.losses)}`;
+    const record = formatRecord(superstarRecordById(ss.id, recordMap));
     const photo = superstarPhotoURL(ss);
 
     const bodyHTML = `
@@ -1149,6 +1238,7 @@ async function openSuperstarDetails(id, { readOnly = false } = {}) {
 
 function renderRoster() {
     populateShowSelects();
+    const recordMap = computeSuperstarRecords();
 
     const search = $("#rosterSearch").value.trim().toLowerCase();
     const showFilter = $("#rosterFilter").value || "all";
@@ -1168,7 +1258,7 @@ function renderRoster() {
     <div class="list">
       ${rows.map(ss => {
         const ssShows = superstarShowNames(ss);
-        const record = `${toNonNegativeInt(ss.wins)}-${toNonNegativeInt(ss.losses)}`;
+        const record = formatRecord(superstarRecordById(ss.id, recordMap));
         const photo = superstarPhotoURL(ss);
         return `
           <div class="item roster-item" data-open-ss="${ss.id}" role="button" tabindex="0" aria-label="Open ${escapeAttr(ss.name)} details">
