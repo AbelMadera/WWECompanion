@@ -1909,7 +1909,8 @@ function renderPlanner() {
                     if (!isSpecial) ev2.matches[row].result = "";
                 }
                 upsertEvent(ev2); // debounced via saveSoon
-                renderPlanner();
+                // Avoid re-rendering on every keystroke on mobile; refresh once field is committed.
+                if (e.type === "change") renderPlanner();
                 return;
             }
         }
