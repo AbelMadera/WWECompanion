@@ -62,7 +62,7 @@
             "name": "AJ Lee",
             "show": "Raw",
             "division": "World",
-            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2026/03/Punk_AJ_-02282026rf_663_Profile.png"
+            "image": "https://web.archive.org/web/20260118043803im_/https://www.wwe.com/f/styles/talent_champion_xl/public/2025/10/aj_lee_Profile.png"
         },
         {
             "name": "Akira Tozawa",
@@ -226,13 +226,14 @@
             "name": "Candice LeRae",
             "show": "SmackDown",
             "division": "Women",
-            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2022/10/Candice_LaRae_PROFILE--def0e1f21f051d008260b704d49aa993.png"
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2022/10/Candice_LaRae_PROFILE--def0e1f21f051d008260b704d49aa993.png",
+            "faction": "DIY"
         },
         {
             "name": "Carmelo Hayes",
             "show": "NXT",
             "division": "World",
-            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2026/02/Carmelo_Title_Final.png"
+            "image": "https://images-wixmp-ed30a86b8c4ca887773594c2.wixmp.com/f/7843b08d-394c-47d9-b18a-de80afda3649/dfsqvu3-0479f0a6-6b68-41c4-a279-4cda5dd1700a.png?token=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1cm46YXBwOjdlMGQxODg5ODIyNjQzNzNhNWYwZDQxNWVhMGQyNmUwIiwiaXNzIjoidXJuOmFwcDo3ZTBkMTg4OTgyMjY0MzczYTVmMGQ0MTVlYTBkMjZlMCIsIm9iaiI6W1t7InBhdGgiOiIvZi83ODQzYjA4ZC0zOTRjLTQ3ZDktYjE4YS1kZTgwYWZkYTM2NDkvZGZzcXZ1My0wNDc5ZjBhNi02YjY4LTQxYzQtYTI3OS00Y2RhNWRkMTcwMGEucG5nIn1dXSwiYXVkIjpbInVybjpzZXJ2aWNlOmZpbGUuZG93bmxvYWQiXX0.Gc6NSnOEr8ABvJ5VoZBIvm64GlhgTV6PQmAz2fnoue4"
         },
         {
             "name": "Chad Gable",
@@ -332,6 +333,12 @@
             "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2025/09/El_Grande_Profile.png"
         },
         {
+            "name": "El Hijo del Vikingo",
+            "show": "RAW",
+            "division": "World",
+            "image": "https://el-mexicano.com.mx/Uploads/Article/82483/d45daf08-d82e-4501-9bed-d291c86b0214.jpeg"
+        },
+        {
             "name": "Elton Prince",
             "show": "SmackDown",
             "division": "Tag",
@@ -373,10 +380,16 @@
             "faction": "Judgment Day"
         },
         {
+            "name": "Flammer",
+            "show": "RAW",
+            "division": "Women",
+            "image": "https://i.redd.it/aaa-talent-confirmed-for-2k26-v0-onu08gcbs2kg1.jpg?width=1197&format=pjpg&auto=webp&s=0687f51feb32d9660ac4742ce090691d7f36dfbc"
+        },
+        {
             "name": "Giulia",
             "show": "SmackDown",
             "division": "Women",
-            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2026/01/guilia_PROFILE.png"
+            "image": "https://images-wixmp-ed30a86b8c4ca887773594c2.wixmp.com/f/7405138d-81a0-44ad-9d20-c24e1903a1db/di8cobg-45f27218-b979-4dc4-9854-3ff03123ee0a.png/v1/fill/w_1063,h_752/giulia__official__wwe_render_2024_by_wrestlerender_di8cobg-pre.png?token=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1cm46YXBwOjdlMGQxODg5ODIyNjQzNzNhNWYwZDQxNWVhMGQyNmUwIiwiaXNzIjoidXJuOmFwcDo3ZTBkMTg4OTgyMjY0MzczYTVmMGQ0MTVlYTBkMjZlMCIsIm9iaiI6W1t7ImhlaWdodCI6Ijw9OTA2IiwicGF0aCI6Ii9mLzc0MDUxMzhkLTgxYTAtNDRhZC05ZDIwLWMyNGUxOTAzYTFkYi9kaThjb2JnLTQ1ZjI3MjE4LWI5NzktNGRjNC05ODU0LTNmZjAzMTIzZWUwYS5wbmciLCJ3aWR0aCI6Ijw9MTI4MCJ9XV0sImF1ZCI6WyJ1cm46c2VydmljZTppbWFnZS5vcGVyYXRpb25zIl19.JV4xKSZvGfnOLdfbuUcZXZYiIk4dEVQ14nqKR3n05Nc"
         },
         {
             "name": "Grayson Waller",
@@ -456,6 +469,13 @@
             "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2025/02/Jaida_Parker_Profile_2--17de365498b502a70ced09df4ab891cb.png"
         },
         {
+            "name": "Jazmyn Nyx",
+            "show": "NXT",
+            "division": "Women",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2024/04/Jazmyn-Nyx_04022024AK_00065_Profile--fe2fc89125707bdb374b3c140c976aa1.png",
+            "faction": "Fatal Influence"
+        },
+        {
             "name": "JC Mateo",
             "show": "SmackDown",
             "division": "Tag",
@@ -513,7 +533,8 @@
             "name": "Johnny Gargano",
             "show": "SmackDown",
             "division": "Midcard",
-            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2024/03/Johnny_Gargano_PROFILE--a87f51a0e83fbba0e9c709ccee977fdd.png"
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2024/03/Johnny_Gargano_PROFILE--a87f51a0e83fbba0e9c709ccee977fdd.png",
+            "faction": "DIY"
         },
         {
             "name": "Jordynne Grace",
@@ -662,6 +683,12 @@
             "faction": "Street Profits"
         },
         {
+            "name": "Mr. Iguana",
+            "show": "SmackDown",
+            "division": "Midcard",
+            "image": "https://wrestlingfiguredatabase.com/cdn/shop/collections/mr-iguana-1-render.png?v=1749845376"
+        },
+        {
             "name": "Myles Borne",
             "show": "NXT",
             "division": "Midcard",
@@ -677,7 +704,7 @@
             "name": "Natalya",
             "show": "RAW",
             "division": "Women",
-            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2024/10/Natalya_PROFILE--a0ab480c2096125726af09aa74c705ec.png"
+            "image": "https://images-wixmp-ed30a86b8c4ca887773594c2.wixmp.com/f/426a90e4-24b6-4ac1-a379-6d730e0022bd/deybidz-08517221-e524-4891-8479-1d15d70909de.png?token=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1cm46YXBwOjdlMGQxODg5ODIyNjQzNzNhNWYwZDQxNWVhMGQyNmUwIiwiaXNzIjoidXJuOmFwcDo3ZTBkMTg4OTgyMjY0MzczYTVmMGQ0MTVlYTBkMjZlMCIsIm9iaiI6W1t7InBhdGgiOiIvZi80MjZhOTBlNC0yNGI2LTRhYzEtYTM3OS02ZDczMGUwMDIyYmQvZGV5Ymlkei0wODUxNzIyMS1lNTI0LTQ4OTEtODQ3OS0xZDE1ZDcwOTA5ZGUucG5nIn1dXSwiYXVkIjpbInVybjpzZXJ2aWNlOmZpbGUuZG93bmxvYWQiXX0.3Ahk1rxi4CtPr26z3yFQ6in8YPhyQij1cU3a3lkQAKU"
         },
         {
             "name": "Nathan Frazer",
@@ -750,6 +777,12 @@
             "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2024/10/Pete_Dunne_PROFILE--a0ab480c2096125726af09aa74c705ec.png"
         },
         {
+            "name": "Psycho Clown",
+            "show": "RAW",
+            "division": "Midcard",
+            "image": "https://cdn2.mediotiempo.com/uploads/media/2016/05/12/psycho-clown-20.jpg"
+        },
+        {
             "name": "Piper Niven",
             "show": "SmackDown",
             "division": "Women",
@@ -799,6 +832,12 @@
             "show": "NXT",
             "division": "Midcard",
             "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2025/12/Ricky-Saints_03182025MP_0015_Profile.png"
+        },
+        {
+            "name": "Ridge Holland",
+            "show": "NXT",
+            "division": "Midcard",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2024/06/RIDGE_05072024ej_00237_Profile--9a127e62f5a2823e4a4697eb9e281134.png"
         },
         {
             "name": "Roman Reigns",
@@ -874,7 +913,7 @@
             "name": "Stephanie Vaquer",
             "show": "RAW",
             "division": "Women",
-            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2025/09/stephanie_Vaquer_Profile.png"
+            "image": "https://web.archive.org/web/20250531022626im_/https://www.wwe.com/f/styles/talent_champion_s/public/all/2024/10/StephanieVaquer_09242024AK_1145_Profile--088352bcc50c017c1708e7d67850ccd0.png"
         },
         {
             "name": "Talla Tonga",
@@ -904,6 +943,12 @@
             "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2026/02/Tatum-Paxley_12092025MP_0022_profile.png"
         },
         {
+            "name": "Tavion Heights",
+            "show": "NXT",
+            "division": "Midcard",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2025/08/Tavion_Heights_PROFILE.png"
+        },
+        {
             "name": "The Miz",
             "show": "SmackDown",
             "division": "Midcard",
@@ -920,6 +965,13 @@
             "show": "SmackDown",
             "division": "Women",
             "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/2026/01/Tiffany_Stratton_Profile.png"
+        },
+        {
+            "name": "Tommaso Ciampa",
+            "show": "SmackDown",
+            "division": "Tag",
+            "image": "https://web.archive.org/web/20241125111022im_/https://www.wwe.com/f/styles/talent_champion_s/public/all/2024/03/Ciampa_PROFILE--9ca478f7bf247d625c15f91e3ea81595.png",
+            "faction": "DIY"
         },
         {
             "name": "Tonga Loa",
@@ -945,6 +997,12 @@
             "show": "SmackDown",
             "division": "Midcard",
             "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2025/04/Tyler_Bate_Profile--53d69e455da72c4fe66586bbe35170b4.png"
+        },
+        {
+            "name": "Yoshiki Inamura",
+            "show": "NXT",
+            "division": "Midcard",
+            "image": "https://progresswrestling.com/wp-content/uploads/2023/12/Yoshiki-Inamura.png"
         },
         {
             "name": "Uncle Howdy",
@@ -983,6 +1041,12 @@
             "show": "SmackDown",
             "division": "Women",
             "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2025/02/Zelina_Vega_Profile--8763715267a672e1a099563ad1b5dbcc.png"
+        },
+        {
+            "name": "Zoey Stark",
+            "show": "SmackDown",
+            "division": "Women",
+            "image": "https://www.wwe.com/f/styles/talent_champion_xl/public/all/2022/08/Zoey_Stark_PROFILE--e21a485ac636e7db6ccfe8e332886baf.png"
         }
     ],
     "ples": [
