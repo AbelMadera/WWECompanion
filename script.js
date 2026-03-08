@@ -819,6 +819,10 @@ function renderDashboard() {
         const mainEventLeft = participantInfo(mainEventParticipants[0] || "");
         const mainEventRight = participantInfo(mainEventParticipants[1] || "");
         const mainEventType = String(mainEvent?.matchType || "").trim();
+        const mainEventChampionshipName = championshipName(String(mainEvent?.championshipId || "").trim());
+        const mainEventTitleHint = `${mainEvent?.matchType || ""} ${mainEvent?.storyline || ""} ${mainEvent?.rivalryNotes || ""}`.toLowerCase();
+        const isChampionshipMainEvent = !!mainEventChampionshipName
+            || /title|championship|champ\b/.test(mainEventTitleHint);
         const showTagText = upcoming.type === "ppv"
             ? (ppvShows || "PLE")
             : showName(upcoming.showId);
@@ -834,7 +838,9 @@ function renderDashboard() {
         <span class="badge" style="${showTagStyle}">${escapeHTML(showTagText)}</span>
       </div>
       <div style="margin-top:4px;">
-        <div class="muted tiny">Main Event</div>
+        ${mainEvent && isChampionshipMainEvent
+                ? `<div class="event-championship-label">${escapeHTML(mainEventChampionshipName || "Championship")}</div>`
+                : ``}
         ${mainEvent ? `
           <div class="event-fight-row" style="margin-top:6px;justify-content:center;">
             <div class="event-fighter">
@@ -1485,6 +1491,7 @@ async function openCalendarEventDetails(eventId) {
             const participants = Array.isArray(m.participants) ? m.participants : [];
             const left = participantInfo(participants[0]);
             const right = participantInfo(participants[1]);
+            const championshipOnTheLine = championshipName(String(m?.championshipId || "").trim());
             const title = m.matchType?.trim() || `Match ${m.num ?? (m._idx + 1)}`;
             const winnerRef = String(m.result ?? "").trim();
             const winnerName = winnerRef === "TEAM:A"
@@ -1497,7 +1504,8 @@ async function openCalendarEventDetails(eventId) {
             const pinText = pinByName ? ` • Pin by: ${pinByName}` : "";
 
             return `
-              <div class="event-match-card ${isMainEvent ? "main-event-card" : ""}">
+              <div class="event-match-card ${isMainEvent ? "main-event-card" : ""} ${championshipOnTheLine ? "has-championship-badge" : ""}">
+                ${championshipOnTheLine ? `<div class="event-match-corner-title">${escapeHTML(championshipOnTheLine)}</div>` : ""}
                 ${isMainEvent ? `<div class="event-main-label">Main Event</div>` : ""}
                 <div class="event-match-title">${escapeHTML(title)}</div>
                 <div class="event-fight-row">
@@ -1761,6 +1769,10 @@ function renderPlanner() {
     meta.textContent = `${ev.date} • ${ev.type.toUpperCase()} • ${metaShows.length ? metaShows.join(" + ") : showName(ev.showId)} • ${ev.matches.length} rows`;
 
     const optionsHTML = plannerRosterOptions(ev);
+    const championshipOptionsHTML = [
+        `<option value="">None</option>`,
+        ...state.championships.map(c => `<option value="${escapeAttr(c.id)}">${escapeHTML(c.name)}</option>`)
+    ].join("");
 
     body.innerHTML = ev.matches.map((m, idx) => {
         const slotCount = participantSlotCount(m);
@@ -1833,6 +1845,11 @@ function renderPlanner() {
           <textarea class="cell-input" data-field="storyline" placeholder="Storyline notes…">${escapeHTML(m.storyline || "")}</textarea>
         </td>
         <td>
+          <select class="cell-input small" data-field="championshipId">
+            ${championshipOptionsHTML}
+          </select>
+        </td>
+        <td>
           <div class="stack" style="gap:6px;">
             <select class="cell-input small" data-field="result">
               <option value="">(winner)</option>
@@ -1897,6 +1914,13 @@ function renderPlanner() {
             } else {
                 pinBySelect.value = "";
             }
+        }
+        const championshipSelect = tr.querySelector('[data-field="championshipId"]');
+        if (championshipSelect) {
+            const championshipId = String(match.championshipId || "");
+            championshipSelect.value = Array.from(championshipSelect.options).some(opt => opt.value === championshipId)
+                ? championshipId
+                : "";
         }
     });
 
@@ -2108,6 +2132,7 @@ function addMatchRow() {
         participantSlots: MIN_PARTICIPANT_SLOTS,
         matchType: "",
         storyline: "",
+        championshipId: "",
         result: "",
         pinBy: "",
         rivalryNotes: "",
@@ -2627,6 +2652,7 @@ function generateWeeklyEvents({ startISO, months, rules, defaultRows = 6 }) {
                     participantSlots: MIN_PARTICIPANT_SLOTS,
                     matchType: "",
                     storyline: "",
+                    championshipId: "",
                     result: "",
                     pinBy: "",
                     rivalryNotes: "",
@@ -2683,7 +2709,7 @@ function seedStarterUniverse() {
         showId: raw.id,
         name: `RAW • ${iso}`,
         matches: Array.from({ length: 6 }).map((_, i) => ({
-            num: i + 1, participants: [], participantTeams: {}, participantSlots: MIN_PARTICIPANT_SLOTS, matchType: "", storyline: "", result: "", pinBy: "", rivalryNotes: ""
+            num: i + 1, participants: [], participantTeams: {}, participantSlots: MIN_PARTICIPANT_SLOTS, matchType: "", storyline: "", championshipId: "", result: "", pinBy: "", rivalryNotes: ""
         }))
     });
 
