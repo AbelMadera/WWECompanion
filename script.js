@@ -1821,21 +1821,23 @@ function renderPlanner() {
           </div>
         `).join("");
         const removeParticipantBtn = slotCount > MIN_PARTICIPANT_SLOTS
-            ? `<button type="button" class="btn secondary participant-add-btn" data-remove-participant="${idx}">- Participant</button>`
+            ? `<button type="button" class="btn secondary participant-add-btn" data-remove-participant="${idx}">-</button>`
             : "";
 
         return `
       <tr data-row="${idx}">
         <td>
-          <input class="cell-input small" data-field="num" inputmode="numeric" value="${escapeAttr(m.num ?? (idx + 1))}" />
+          <div class="stack" style="gap:6px;">
+            <input class="cell-input small" data-field="num" inputmode="numeric" value="${escapeAttr(m.num ?? (idx + 1))}" />
+            <div class="row gap">
+              <button type="button" class="btn secondary participant-add-btn" data-add-participant="${idx}">+</button>
+              ${removeParticipantBtn}
+            </div>
+          </div>
         </td>
         <td>
           <div class="stack">
             ${participantFields}
-            <div class="row gap wrap">
-              <button type="button" class="btn secondary participant-add-btn" data-add-participant="${idx}">+ Participant</button>
-              ${removeParticipantBtn}
-            </div>
           </div>
         </td>
         <td>
