@@ -813,6 +813,12 @@ function renderDashboard() {
     } else {
         const typeTag = upcoming.type === "ppv" ? "PLE" : "WEEKLY";
         const ppvShows = eventShowNames(upcoming).join(" + ");
+        const matches = Array.isArray(upcoming.matches) ? upcoming.matches : [];
+        const mainEvent = matches.length ? matches[matches.length - 1] : null;
+        const mainEventParticipants = Array.isArray(mainEvent?.participants) ? mainEvent.participants : [];
+        const mainEventLeft = participantInfo(mainEventParticipants[0] || "");
+        const mainEventRight = participantInfo(mainEventParticipants[1] || "");
+        const mainEventType = String(mainEvent?.matchType || "").trim();
         const showTagText = upcoming.type === "ppv"
             ? (ppvShows || "PLE")
             : showName(upcoming.showId);
@@ -820,16 +826,43 @@ function renderDashboard() {
             ? "background:rgba(255,255,255,.14);border-color:rgba(255,255,255,.28);"
             : `background:rgba(255,255,255,.08);border-color:${showColor(upcoming.showId)};`;
         el.innerHTML = `
+      <div class="stack" style="align-items:center;text-align:center;gap:8px;">
       <div><b>${escapeHTML(upcoming.name || "(Unnamed Event)")}</b></div>
-      <div class="muted tiny" style="margin-top:6px;">${upcoming.date}</div>
-      <div class="row gap wrap" style="margin-top:10px;">
+      <div class="muted tiny">${upcoming.date}</div>
+      <div class="row gap wrap" style="margin-top:2px;justify-content:center;">
         <span class="badge">${typeTag}</span>
         <span class="badge" style="${showTagStyle}">${escapeHTML(showTagText)}</span>
       </div>
-      <div class="item-actions">
+      <div style="margin-top:4px;">
+        <div class="muted tiny">Main Event</div>
+        ${mainEvent ? `
+          <div class="event-fight-row" style="margin-top:6px;justify-content:center;">
+            <div class="event-fighter">
+              ${mainEventLeft.photo
+                ? `<img class="event-fighter-photo" src="${escapeAttr(mainEventLeft.photo)}" alt="${escapeAttr(mainEventLeft.name)}" />`
+                : `<div class="event-fighter-fallback">${mainEventLeft.name === "TBD" ? "?" : escapeHTML(superstarInitials(mainEventLeft.name))}</div>`
+            }
+              <div class="tiny event-fighter-name">${escapeHTML(mainEventLeft.name)}${mainEventLeft.isChampion ? ` <span class="event-champ">C</span>` : ``}</div>
+            </div>
+            <div class="event-vs">VS</div>
+            <div class="event-fighter">
+              ${mainEventRight.photo
+                ? `<img class="event-fighter-photo" src="${escapeAttr(mainEventRight.photo)}" alt="${escapeAttr(mainEventRight.name)}" />`
+                : `<div class="event-fighter-fallback">${mainEventRight.name === "TBD" ? "?" : escapeHTML(superstarInitials(mainEventRight.name))}</div>`
+            }
+              <div class="tiny event-fighter-name">${escapeHTML(mainEventRight.name)}${mainEventRight.isChampion ? ` <span class="event-champ">C</span>` : ``}</div>
+            </div>
+          </div>
+          ${mainEventType ? `<div class="muted tiny" style="margin-top:6px;">${escapeHTML(mainEventType)}</div>` : ``}
+        ` : `<div class="muted tiny">Not planned yet</div>`}
+      </div>
+      <div class="item-actions" style="justify-content:center;">
+        <button class="btn secondary" data-view-event="${upcoming.id}">View</button>
         <button class="btn" data-open-planner="${upcoming.id}">Open Planner</button>
       </div>
+      </div>
     `;
+        el.querySelector('[data-view-event]')?.addEventListener("click", () => openCalendarEventDetails(upcoming.id));
         el.querySelector('[data-open-planner]')?.addEventListener("click", () => openPlanner(upcoming.id));
     }
 
@@ -1637,7 +1670,17 @@ async function addEventFlow(dateISO = calSelectedISO) {
     const showIds = type === "ppv"
         ? Array.from(selectedPpvShowIds)
         : (showId ? [showId] : []);
-    const name = $("#evName").value.trim() || (type === "ppv" ? "PLE / PPV" : "Weekly Show");
+    const fallbackWeeklyShowName = (() => {
+        const label = showName(showId);
+        if (!label || label === "No show" || label === "Unknown show") return "Weekly Show";
+        return label;
+    })();
+    const [year = "", month = "", day = ""] = String(date || "").split("-");
+    const prettyDate = (month && day && year) ? `${month}-${day}-${year}` : String(date || "");
+    const defaultName = type === "ppv"
+        ? "PLE / PPV"
+        : `${fallbackWeeklyShowName} • ${prettyDate}`;
+    const name = $("#evName").value.trim() || defaultName;
 
     const event = { id: uid("event"), date, type, showId: showIds[0] ?? null, showIds, name, matches: [] };
     upsertEvent(event);
