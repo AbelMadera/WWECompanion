@@ -8,9 +8,19 @@ const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 function uid(prefix = "id") {
     return `${prefix}_${Math.random().toString(16).slice(2)}_${Date.now().toString(16)}`;
 }
+function toISODateLocal(date) {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, "0");
+    const d = String(date.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+}
 function todayISO() {
-    const d = new Date(); d.setHours(0, 0, 0, 0);
-    return d.toISOString().slice(0, 10);
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return toISODateLocal(d);
+}
+function isISODate(value) {
+    return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ""));
 }
 function parseISO(iso) {
     const [y, m, dd] = iso.split("-").map(Number);
@@ -69,6 +79,10 @@ function enrichSuperstar(ss) {
 }
 function normalizeStateData(sourceState) {
     const normalized = sourceState || defaultState();
+    normalized.universeStartDate = isISODate(normalized.universeStartDate) ? normalized.universeStartDate : todayISO();
+    normalized.completedDates = Array.isArray(normalized.completedDates)
+        ? Array.from(new Set(normalized.completedDates.filter(isISODate))).sort()
+        : [];
     normalized.championships = Array.isArray(normalized.championships)
         ? normalized.championships.map(enrichChampionship).filter(Boolean)
         : [];
@@ -169,6 +183,8 @@ function defaultState() {
         superstars: [],   // {id, name, showIds:[], showId(legacy), division}
         weeklySchedule: [], // [{showId, weekday}] where weekday is 0-6
         events: [],       // {id, date, type:"weekly"|"ppv", showId|null, name, matches:[...], defaultRows?}
+        universeStartDate: todayISO(),
+        completedDates: [],
         createdAt: Date.now(),
         updatedAt: Date.now(),
     };
@@ -209,6 +225,44 @@ function saveSoon() {
 
 // -------------------- HELPERS --------------------
 function getShow(showId) { return state.shows.find(s => s.id === showId) || null; }
+function getUniverseStartISO() {
+    if (!isISODate(state.universeStartDate)) state.universeStartDate = todayISO();
+    return state.universeStartDate;
+}
+function completedDateSet() {
+    if (!Array.isArray(state.completedDates)) state.completedDates = [];
+    return new Set(state.completedDates.filter(isISODate));
+}
+function isUniverseDateCompleted(iso) {
+    return completedDateSet().has(iso);
+}
+function setUniverseDateCompleted(iso, done) {
+    if (!isISODate(iso)) return;
+    const set = completedDateSet();
+    if (done) set.add(iso);
+    else set.delete(iso);
+    state.completedDates = Array.from(set).sort();
+}
+function getUniverseCurrentISO() {
+    const startISO = getUniverseStartISO();
+    const done = completedDateSet();
+    const cursor = parseISO(startISO);
+    for (let i = 0; i < 36600; i++) {
+        const iso = toISODateLocal(cursor);
+        if (!done.has(iso)) return iso;
+        cursor.setDate(cursor.getDate() + 1);
+    }
+    return startISO;
+}
+function nextUniverseEvent() {
+    const startISO = getUniverseStartISO();
+    const done = completedDateSet();
+    return state.events
+        .filter(e => isISODate(e?.date))
+        .filter(e => e.date >= startISO)
+        .filter(e => !done.has(e.date))
+        .sort((a, b) => a.date.localeCompare(b.date))[0] || null;
+}
 const WEEKDAY_OPTIONS = [
     { value: 0, label: "Sunday" },
     { value: 1, label: "Monday" },
@@ -400,7 +454,7 @@ function toISODateDaysAgo(daysAgo) {
     const d = new Date();
     d.setHours(0, 0, 0, 0);
     d.setDate(d.getDate() - daysAgo);
-    return d.toISOString().slice(0, 10);
+    return toISODateLocal(d);
 }
 function resolveMatchParticipantIds(match, superstarNameToId) {
     const ids = [];
@@ -804,12 +858,11 @@ $("#modalOk").addEventListener("click", () => closeModal({ ok: true }));
 function renderDashboard() {
     const el = $("#nextEvent");
     const rankingsEl = $("#weeklyRankings");
-    const upcoming = state.events
-        .filter(e => e.date >= todayISO())
-        .sort((a, b) => a.date.localeCompare(b.date))[0];
+    const universeToday = getUniverseCurrentISO();
+    const upcoming = nextUniverseEvent();
 
     if (!upcoming) {
-        el.innerHTML = `<div class="muted">No upcoming events. Add one from Calendar or Settings.</div>`;
+        el.innerHTML = `<div class="muted">No upcoming events after universe day <b>${universeToday}</b>. Add one from Calendar or Settings.</div>`;
     } else {
         const typeTag = upcoming.type === "ppv" ? "PLE" : "WEEKLY";
         const ppvShows = eventShowNames(upcoming).join(" + ");
@@ -833,6 +886,7 @@ function renderDashboard() {
       <div class="stack" style="align-items:center;text-align:center;gap:8px;">
       <div><b>${escapeHTML(upcoming.name || "(Unnamed Event)")}</b></div>
       <div class="muted tiny">${upcoming.date}</div>
+      <div class="muted tiny">Universe day: ${universeToday}</div>
       <div class="row gap wrap" style="margin-top:2px;justify-content:center;">
         <span class="badge">${typeTag}</span>
         <span class="badge" style="${showTagStyle}">${escapeHTML(showTagText)}</span>
@@ -1336,12 +1390,21 @@ function renderRoster() {
 }
 
 // -------------------- CALENDAR --------------------
-let calCursor = new Date(); calCursor.setDate(1);
-let calSelectedISO = todayISO();
+let calSelectedISO = getUniverseCurrentISO();
+let calCursor = parseISO(calSelectedISO); calCursor.setDate(1); calCursor.setHours(0, 0, 0, 0);
 
 function renderCalendar() {
     populateShowSelects();
     $("#calendarTitle").textContent = formatMonthTitle(calCursor);
+    const startISO = getUniverseStartISO();
+    const universeCurrentISO = getUniverseCurrentISO();
+    const doneDates = completedDateSet();
+    const startInput = $("#calUniverseStartDate");
+    if (startInput && startInput.value !== startISO) startInput.value = startISO;
+    const toggleDoneBtn = $("#calToggleDone");
+    if (toggleDoneBtn) {
+        toggleDoneBtn.textContent = doneDates.has(calSelectedISO) ? "Unmark Day Done" : "Mark Day Done";
+    }
 
     const showFilter = $("#calShowFilter").value || "all";
 
@@ -1354,10 +1417,11 @@ function renderCalendar() {
     for (let i = 0; i < 42; i++) {
         const d = new Date(gridStart);
         d.setDate(gridStart.getDate() + i);
-        const iso = d.toISOString().slice(0, 10);
+        const iso = toISODateLocal(d);
 
         const inMonth = d.getMonth() === calCursor.getMonth();
         const day = d.getDate();
+        const done = doneDates.has(iso);
 
         const events = state.events
             .filter(e => e.date === iso)
@@ -1376,9 +1440,9 @@ function renderCalendar() {
             : "";
 
         cells.push(`
-      <div class="cal-cell" data-date="${iso}"
+      <div class="cal-cell ${done ? "is-done" : ""}" data-date="${iso}"
         style="opacity:${inMonth ? 1 : 0.45}; outline:${iso === calSelectedISO ? '2px solid rgba(255,255,255,.25)' : 'none'}">
-        <div class="cal-date">${day}</div>
+        <div class="cal-date">${day}${iso === startISO ? ` <span class="cal-day-state">START</span>` : ``}${iso === universeCurrentISO ? ` <span class="cal-day-state">NOW</span>` : ``}</div>
         <div class="cal-badges">${badges}${overflow}</div>
       </div>
     `);
@@ -1400,18 +1464,20 @@ function renderCalendar() {
 function renderEventsOnSelectedDate() {
     const showFilter = $("#calShowFilter").value || "all";
     const list = $("#eventsList");
+    const dayDone = isUniverseDateCompleted(calSelectedISO);
 
     const events = state.events
         .filter(e => e.date === calSelectedISO)
         .filter(e => showFilter === "all" ? true : eventHasShow(e, showFilter));
 
     if (events.length === 0) {
-        list.innerHTML = `<div class="muted">No events on <b>${calSelectedISO}</b>.</div>`;
+        list.innerHTML = `<div class="muted">No events on <b>${calSelectedISO}</b>. ${dayDone ? "This day is marked done." : ""}</div>`;
         return;
     }
 
     list.innerHTML = `
     <div class="list">
+      <div class="muted tiny">${dayDone ? "This day is marked done and counts as passed." : "This day is not marked done yet."}</div>
       ${events.map(e => {
         const ids = eventShowIds(e);
         const showBadges = ids.length
@@ -2154,7 +2220,7 @@ async function newEventFromPlanner() {
         });
         return;
     }
-    await addEventFlow(todayISO());
+    await addEventFlow(getUniverseCurrentISO());
 }
 
 function openPlanner(eventId) {
@@ -2198,7 +2264,7 @@ function renderSettingsTools() {
         `;
     }
 
-    if (!weeklyStartDate.value) weeklyStartDate.value = todayISO();
+    if (!weeklyStartDate.value) weeklyStartDate.value = getUniverseStartISO();
     if (!weeklyMonths.value) weeklyMonths.value = "3";
     if (!weeklyRows.value) weeklyRows.value = "6";
 
@@ -2232,7 +2298,7 @@ function renderSettingsTools() {
             return;
         }
 
-        const startISO = weeklyStartDate.value || todayISO();
+        const startISO = weeklyStartDate.value || getUniverseStartISO();
         const months = Math.max(1, Math.min(24, Number(weeklyMonths.value) || 3));
         const defaultRows = Math.max(0, Math.min(20, Number(weeklyRows.value) || 6));
         const beforeCount = state.events.length;
@@ -2637,7 +2703,7 @@ function generateWeeklyEvents({ startISO, months, rules, defaultRows = 6 }) {
     // Walk day by day
     let cur = new Date(start);
     while (cur <= end) {
-        const iso = cur.toISOString().slice(0, 10);
+        const iso = toISODateLocal(cur);
         const dow = cur.getDay();
 
         for (const rule of rules) {
@@ -2825,16 +2891,64 @@ $("#rosterSearch").addEventListener("input", () => renderRoster());
 
 $("#calPrev").addEventListener("click", () => { calCursor.setMonth(calCursor.getMonth() - 1); renderCalendar(); });
 $("#calNext").addEventListener("click", () => { calCursor.setMonth(calCursor.getMonth() + 1); renderCalendar(); });
-$("#calToday").addEventListener("click", () => { calCursor = new Date(); calCursor.setDate(1); calSelectedISO = todayISO(); renderCalendar(); });
+$("#calToday").addEventListener("click", () => {
+    const now = parseISO(getUniverseCurrentISO());
+    calCursor = new Date(now);
+    calCursor.setDate(1);
+    calCursor.setHours(0, 0, 0, 0);
+    calSelectedISO = toISODateLocal(now);
+    renderCalendar();
+});
+$("#calUniverseStartDate")?.addEventListener("change", (e) => {
+    const iso = String(e.target.value || "");
+    if (!isISODate(iso)) return;
+    state.universeStartDate = iso;
+    const startDate = parseISO(iso);
+    calCursor = new Date(startDate);
+    calCursor.setDate(1);
+    calCursor.setHours(0, 0, 0, 0);
+    calSelectedISO = iso;
+    saveSoon();
+    renderCalendar();
+    renderDashboard();
+});
+$("#calSetStartFromSelected")?.addEventListener("click", () => {
+    if (!isISODate(calSelectedISO)) return;
+    state.universeStartDate = calSelectedISO;
+    saveSoon();
+    renderCalendar();
+    renderDashboard();
+});
+$("#calToggleDone")?.addEventListener("click", () => {
+    if (!isISODate(calSelectedISO)) return;
+    const done = isUniverseDateCompleted(calSelectedISO);
+    setUniverseDateCompleted(calSelectedISO, !done);
+    saveSoon();
+    renderCalendar();
+    renderDashboard();
+});
+$("#calProgressDay")?.addEventListener("click", () => {
+    if (!isISODate(calSelectedISO)) return;
+    setUniverseDateCompleted(calSelectedISO, true);
+    const next = parseISO(calSelectedISO);
+    next.setDate(next.getDate() + 1);
+    calSelectedISO = toISODateLocal(next);
+    calCursor = new Date(next);
+    calCursor.setDate(1);
+    calCursor.setHours(0, 0, 0, 0);
+    saveSoon();
+    renderCalendar();
+    renderDashboard();
+});
 
 $("#addEventBtn").addEventListener("click", () => addEventFlow(calSelectedISO));
 
 $("#addMatchRow").addEventListener("click", addMatchRow);
 $("#plannerNewEvent").addEventListener("click", newEventFromPlanner);
 
-$("#quickAddEvent")?.addEventListener("click", () => addEventFlow(todayISO()));
+$("#quickAddEvent")?.addEventListener("click", () => addEventFlow(getUniverseCurrentISO()));
 $("#quickOpenToday")?.addEventListener("click", () => {
-    const iso = todayISO();
+    const iso = getUniverseCurrentISO();
     const todayEvents = state.events.filter(e => e.date === iso).sort((a, b) => a.type.localeCompare(b.type));
     if (todayEvents[0]) openPlanner(todayEvents[0].id);
     else addEventFlow(iso);
