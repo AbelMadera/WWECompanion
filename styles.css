@@ -841,6 +841,22 @@ h1 {
 }
 
 /* Calendar */
+.calendar-weekdays {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 8px;
+    margin: 8px 0;
+}
+
+.calendar-weekday {
+    text-align: center;
+    font-size: 11px;
+    font-weight: 900;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--muted);
+}
+
 .calendar {
     display: grid;
     grid-template-columns: repeat(7, 1fr);
@@ -1262,8 +1278,14 @@ textarea.cell-input {
         margin-left: 4px;
     }
 
+    .calendar-weekdays,
     .calendar {
         gap: 5px;
+    }
+
+    .calendar-weekday {
+        font-size: 10px;
+        letter-spacing: .06em;
     }
 
     .cal-cell {

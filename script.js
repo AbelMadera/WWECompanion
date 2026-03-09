@@ -316,14 +316,19 @@ function nextUniverseEvent() {
         .sort((a, b) => a.date.localeCompare(b.date))[0] || null;
 }
 const WEEKDAY_OPTIONS = [
-    { value: 0, label: "Sunday" },
     { value: 1, label: "Monday" },
     { value: 2, label: "Tuesday" },
     { value: 3, label: "Wednesday" },
     { value: 4, label: "Thursday" },
     { value: 5, label: "Friday" },
     { value: 6, label: "Saturday" },
+    { value: 0, label: "Sunday" },
 ];
+function calendarWeekdaySundayZero(date) {
+    // In the custom 28-day calendar, day 1 is Monday.
+    // This maps day-of-month to 0-6 using Sunday=0, Monday=1 ... Saturday=6.
+    return date.getDate() % 7;
+}
 function superstarOnShow(superstar, showId) {
     const ids = Array.isArray(superstar?.showIds) ? superstar.showIds : (superstar?.showId ? [superstar.showId] : []);
     return ids.includes(showId);
@@ -2910,7 +2915,7 @@ function generateWeeklyEvents({ startISO, months, rules, defaultRows = 6 }) {
     let cur = new Date(start);
     while (cur <= end) {
         const iso = toISODateLocal(cur);
-        const dow = cur.getDay();
+        const dow = calendarWeekdaySundayZero(cur);
 
         for (const rule of rules) {
             if (rule.weekday === dow) {
