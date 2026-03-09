@@ -1,40 +1,79 @@
 {
     "championships": [
         {
-            "name": "World Heavyweight Championship"
+            "name": "World Heavyweight Championship",
+            "gender": "Men",
+            "show": "RAW"
         },
         {
-            "name": "Intercontinental Championship"
+            "name": "Intercontinental Championship",
+            "gender": "Men",
+            "show": "RAW"
         },
         {
-            "name": "United States Championship"
+            "name": "Women's Intercontinental Championship",
+            "gender": "Women",
+            "show": "RAW"
         },
         {
-            "name": "RAW Tag Team Championship"
+            "name": "United States Championship",
+            "gender": "Men",
+            "show": "SmackDown"
         },
         {
-            "name": "WWE Women's World Championship"
+            "name": "Women's United States Championship",
+            "gender": "Women",
+            "show": "SmackDown"
         },
         {
-            "name": "Undisputed WWE Championship"
+            "name": "RAW Tag Team Championship",
+            "gender": "Men",
+            "show": "RAW"
         },
         {
-            "name": "SmackDown Tag Team Championship"
+            "name": "WWE Women's World Championship",
+            "gender": "Women",
+            "show": "RAW"
         },
         {
-            "name": "WWE Women's Championship"
+            "name": "Undisputed WWE Championship",
+            "gender": "Men",
+            "show": "SmackDown"
         },
         {
-            "name": "NXT Championship"
+            "name": "SmackDown Tag Team Championship",
+            "gender": "Men",
+            "show": "SmackDown"
         },
         {
-            "name": "NXT North American Championship"
+            "name": "WWE Women's Championship",
+            "gender": "Women",
+            "show": "SmackDown"
         },
         {
-            "name": "NXT Tag Team Championship"
+            "name": "NXT Championship",
+            "gender": "Men",
+            "show": "NXT"
         },
         {
-            "name": "NXT Women's Championship"
+            "name": "NXT North American Championship",
+            "gender": "Men",
+            "show": "NXT"
+        },
+        {
+            "name": "NXT Tag Team Championship",
+            "gender": "Men",
+            "show": "NXT"
+        },
+        {
+            "name": "NXT Women's Championship",
+            "gender": "Women",
+            "show": "NXT"
+        },
+        {
+            "name": "WWE Women's Tag Team Championship",
+            "gender": "Women",
+            "show": "RAW, NXT, SmackDown"
         }
     ],
     "shows": [

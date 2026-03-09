@@ -46,14 +46,36 @@ function parseChampionships(value) {
     }
     return [];
 }
+function parseShowRefs(value) {
+    if (Array.isArray(value)) {
+        return value
+            .flatMap(v => String(v ?? "").split(","))
+            .map(v => v.trim())
+            .filter(Boolean);
+    }
+    if (typeof value === "string") {
+        return value.split(",").map(v => v.trim()).filter(Boolean);
+    }
+    return [];
+}
 function enrichChampionship(championship) {
     const name = typeof championship === "string"
         ? championship.trim()
         : String(championship?.name ?? "").trim();
     if (!name) return null;
+    const rawShowRefs = Array.from(new Set([
+        ...parseShowRefs(championship?.showIds),
+        ...parseShowRefs(championship?.shows),
+        ...parseShowRefs(championship?.showId),
+        ...parseShowRefs(championship?.show),
+        ...parseShowRefs(championship?.showName),
+    ]));
     return {
         id: championship?.id || uid("title"),
         name,
+        gender: String(championship?.gender ?? "").trim(),
+        showIds: rawShowRefs,
+        showId: rawShowRefs[0] ?? null, // legacy compatibility
     };
 }
 function enrichSuperstar(ss) {
@@ -83,8 +105,39 @@ function normalizeStateData(sourceState) {
     normalized.completedDates = Array.isArray(normalized.completedDates)
         ? Array.from(new Set(normalized.completedDates.filter(isISODate))).sort()
         : [];
+    normalized.shows = Array.isArray(normalized.shows)
+        ? normalized.shows
+            .map(s => {
+                const id = String(s?.id ?? "").trim() || uid("show");
+                const name = String(s?.name ?? "").trim();
+                if (!name) return null;
+                return {
+                    id,
+                    name,
+                    color: normalizeHexColor(s?.color) || randomShowColor(name),
+                };
+            })
+            .filter(Boolean)
+        : [];
+
+    const validShowIds = new Set(normalized.shows.map(s => s.id));
+    const showNameToId = new Map(normalized.shows.map(s => [s.name.toLowerCase(), s.id]));
     normalized.championships = Array.isArray(normalized.championships)
-        ? normalized.championships.map(enrichChampionship).filter(Boolean)
+        ? normalized.championships
+            .map(enrichChampionship)
+            .filter(Boolean)
+            .map(c => {
+                const resolvedShowIds = Array.from(new Set(
+                    parseShowRefs(c?.showIds)
+                        .map(ref => validShowIds.has(ref) ? ref : (showNameToId.get(String(ref).toLowerCase()) || null))
+                        .filter(Boolean)
+                ));
+                return {
+                    ...c,
+                    showIds: resolvedShowIds,
+                    showId: resolvedShowIds[0] ?? null,
+                };
+            })
         : [];
 
     const byId = new Map(normalized.championships.map(c => [c.id, c]));
@@ -113,7 +166,11 @@ function normalizeStateData(sourceState) {
             const validShowIds = ss.showIds.filter(showId => normalized.shows.some(s => s.id === showId));
             const championshipIds = parseChampionships(ss.championships)
                 .map(resolveChampionshipId)
-                .filter(Boolean);
+                .filter(Boolean)
+                .filter(championshipId => {
+                    const championship = byId.get(championshipId);
+                    return championshipAvailableForShowIds(championship, validShowIds);
+                });
             return {
                 ...ss,
                 showIds: validShowIds,
@@ -139,11 +196,6 @@ function normalizeStateData(sourceState) {
             )
         : [];
 
-    const validShowIds = new Set(
-        Array.isArray(normalized.shows)
-            ? normalized.shows.map(s => String(s?.id ?? "").trim()).filter(Boolean)
-            : []
-    );
     normalized.events = Array.isArray(normalized.events)
         ? normalized.events.map(ev => {
             const type = String(ev?.type ?? "weekly").trim().toLowerCase() === "ppv" ? "ppv" : "weekly";
@@ -179,7 +231,7 @@ function defaultState() {
     return {
         version: 2,
         shows: [],        // {id, name, color}
-        championships: [], // {id, name}
+        championships: [], // {id, name, gender?, showIds:[], showId(legacy)}
         superstars: [],   // {id, name, showIds:[], showId(legacy), division}
         weeklySchedule: [], // [{showId, weekday}] where weekday is 0-6
         events: [],       // {id, date, type:"weekly"|"ppv", showId|null, name, matches:[...], defaultRows?}
@@ -285,6 +337,16 @@ function getChampionship(championshipId) {
 }
 function championshipName(championshipId) {
     return getChampionship(championshipId)?.name || "";
+}
+function championshipAvailableForShowIds(championship, showIds) {
+    const eventOrRosterShowIds = Array.isArray(showIds) ? showIds.filter(Boolean) : [];
+    if (!eventOrRosterShowIds.length) return true;
+    const champShowIds = Array.isArray(championship?.showIds) ? championship.showIds.filter(Boolean) : [];
+    if (!champShowIds.length) return true;
+    return champShowIds.some(showId => eventOrRosterShowIds.includes(showId));
+}
+function eligibleChampionshipsForShowIds(showIds) {
+    return state.championships.filter(c => championshipAvailableForShowIds(c, showIds));
 }
 function superstarChampionshipNames(superstar) {
     return parseChampionships(superstar?.championships)
@@ -756,7 +818,21 @@ function addShowByNameColor(rawName, rawColor) {
 function deleteShowAndUnassign(showId) {
     state.superstars = state.superstars.map(ss => {
         const nextShowIds = (ss.showIds || []).filter(id => id !== showId);
-        return { ...ss, showIds: nextShowIds, showId: nextShowIds[0] ?? null };
+        const nextChampionships = parseChampionships(ss.championships).filter(championshipId => {
+            const championship = getChampionship(championshipId);
+            return championshipAvailableForShowIds(championship, nextShowIds);
+        });
+        return {
+            ...ss,
+            showIds: nextShowIds,
+            showId: nextShowIds[0] ?? null,
+            championships: nextChampionships,
+            isChampion: nextChampionships.length > 0,
+        };
+    });
+    state.championships = state.championships.map(c => {
+        const nextShowIds = Array.isArray(c?.showIds) ? c.showIds.filter(id => id !== showId) : [];
+        return { ...c, showIds: nextShowIds, showId: nextShowIds[0] ?? null };
     });
     state.shows = state.shows.filter(x => x.id !== showId);
     state.weeklySchedule = (state.weeklySchedule || []).filter(row => row.showId !== showId);
@@ -1055,14 +1131,15 @@ async function editSuperstarFlow(id) {
           `).join("")
         : `<div class="muted tiny">No shows created yet.</div>`;
     const selectedChampionships = new Set(parseChampionships(ss.championships));
-    const championshipOptions = state.championships.length
-        ? state.championships.map(c => `
+    const availableChampionships = eligibleChampionshipsForShowIds(Array.from(selectedShows));
+    const championshipOptions = availableChampionships.length
+        ? availableChampionships.map(c => `
             <label class="edit-ss-check-item">
               <input class="editSSChampItem" type="checkbox" value="${c.id}" ${selectedChampionships.has(c.id) ? "checked" : ""} />
               <span>${escapeHTML(c.name)}</span>
             </label>
           `).join("")
-        : `<div class="muted tiny">No championships created yet. Add them in Settings first.</div>`;
+        : `<div class="muted tiny">No championships available for the selected show(s).</div>`;
 
     const photo = superstarPhotoURL(ss);
     const bodyHTML = `
@@ -1112,9 +1189,12 @@ async function editSuperstarFlow(id) {
 
     const newName = $("#editSSName").value.trim();
     const newPhoto = $("#editSSPhoto").value.trim();
-    const newShowIds = $$(".editSSShowItem:checked").map(el => el.value);
+    const newShowIds = Array.from(new Set($$(".editSSShowItem:checked").map(el => el.value)));
     const newDiv = $("#editSSDiv").value;
-    const newChamps = $$(".editSSChampItem:checked").map(el => el.value);
+    const allowedChampionshipIds = new Set(eligibleChampionshipsForShowIds(newShowIds).map(c => c.id));
+    const newChamps = $$(".editSSChampItem:checked")
+        .map(el => el.value)
+        .filter(championshipId => allowedChampionshipIds.has(championshipId));
     const newFaction = $("#editSSFaction").value.trim();
     const newManager = $("#editSSManager").value.trim();
 
@@ -1835,9 +1915,22 @@ function renderPlanner() {
     meta.textContent = `${ev.date} • ${ev.type.toUpperCase()} • ${metaShows.length ? metaShows.join(" + ") : showName(ev.showId)} • ${ev.matches.length} rows`;
 
     const optionsHTML = plannerRosterOptions(ev);
+    const eventShows = eventShowIds(ev);
+    const availableChampionships = eligibleChampionshipsForShowIds(eventShows);
+    const availableChampionshipIdSet = new Set(availableChampionships.map(c => c.id));
+    let clearedUnavailableChampionship = false;
+    ev.matches = ev.matches.map(match => {
+        const championshipId = String(match?.championshipId || "").trim();
+        if (championshipId && !availableChampionshipIdSet.has(championshipId)) {
+            clearedUnavailableChampionship = true;
+            return { ...match, championshipId: "" };
+        }
+        return match;
+    });
+    if (clearedUnavailableChampionship) upsertEvent(ev);
     const championshipOptionsHTML = [
         `<option value="">None</option>`,
-        ...state.championships.map(c => `<option value="${escapeAttr(c.id)}">${escapeHTML(c.name)}</option>`)
+        ...availableChampionships.map(c => `<option value="${escapeAttr(c.id)}">${escapeHTML(c.name)}</option>`)
     ].join("");
 
     body.innerHTML = ev.matches.map((m, idx) => {
@@ -2562,7 +2655,7 @@ function addChampionshipByName(rawName) {
     if (!name) return false;
     const exists = state.championships.some(c => c.name.toLowerCase() === name.toLowerCase());
     if (exists) return false;
-    state.championships.push({ id: uid("title"), name });
+    state.championships.push(enrichChampionship({ name }));
     return true;
 }
 
@@ -2591,15 +2684,6 @@ function importPopulateJSON(payload, { replace = true } = {}) {
 
     const result = { championships: 0, shows: 0, roster: 0, ples: 0 };
 
-    for (const row of championshipsInput) {
-        const normalized = enrichChampionship(row);
-        if (!normalized) continue;
-        if (championshipByName.has(normalized.name.toLowerCase())) continue;
-        state.championships.push(normalized);
-        championshipByName.set(normalized.name.toLowerCase(), normalized.id);
-        result.championships += 1;
-    }
-
     for (const row of showsInput) {
         const name = typeof row === "string" ? row.trim() : String(row?.name ?? "").trim();
         if (!name) continue;
@@ -2613,6 +2697,24 @@ function importPopulateJSON(payload, { replace = true } = {}) {
         showNameToId.set(name.toLowerCase(), id);
         showIdSet.add(id);
         result.shows += 1;
+    }
+
+    for (const row of championshipsInput) {
+        const normalized = enrichChampionship(row);
+        if (!normalized) continue;
+        if (championshipByName.has(normalized.name.toLowerCase())) continue;
+        const resolvedShowIds = Array.from(new Set(
+            parseShowRefs(normalized.showIds)
+                .map(ref => showIdSet.has(ref) ? ref : (showNameToId.get(String(ref).toLowerCase()) || null))
+                .filter(Boolean)
+        ));
+        state.championships.push({
+            ...normalized,
+            showIds: resolvedShowIds,
+            showId: resolvedShowIds[0] ?? null,
+        });
+        championshipByName.set(normalized.name.toLowerCase(), normalized.id);
+        result.championships += 1;
     }
 
     for (const row of rosterInput) {
@@ -2649,13 +2751,17 @@ function importPopulateJSON(payload, { replace = true } = {}) {
                 return created.id;
             })
             .filter(Boolean);
+        const championshipShowFiltered = championships.filter(championshipId => {
+            const championship = getChampionship(championshipId);
+            return championshipAvailableForShowIds(championship, showIds);
+        });
         state.superstars.push(enrichSuperstar({
             id: uid("ss"),
             name,
             showId: showIds[0] ?? null,
             showIds,
             division,
-            championships,
+            championships: championshipShowFiltered,
             faction: row?.faction,
             manager: row?.manager,
             photo: row?.photo ?? row?.image ?? row?.picture,
@@ -2671,15 +2777,29 @@ function importPopulateJSON(payload, { replace = true } = {}) {
         if (!name || !/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
 
         const showFromName = String(row?.show ?? row?.showName ?? "").trim().toLowerCase();
+        let showIds = [];
+        if (Array.isArray(row?.showIds)) {
+            showIds = row.showIds.map(x => String(x ?? "").trim()).filter(x => showIdSet.has(x));
+        } else if (Array.isArray(row?.shows)) {
+            showIds = row.shows
+                .map(x => showNameToId.get(String(x ?? "").trim().toLowerCase()) || null)
+                .filter(Boolean);
+        } else if (showFromName) {
+            showIds = parseShowRefs(showFromName)
+                .map(x => showNameToId.get(String(x ?? "").trim().toLowerCase()) || null)
+                .filter(Boolean);
+        }
         let showId = row?.showId ?? null;
-        if (showFromName) showId = showNameToId.get(showFromName) ?? showId;
-        if (showId && !showIdSet.has(showId)) showId = null;
+        if (showId && showIdSet.has(showId)) showIds.unshift(showId);
+        showIds = Array.from(new Set(showIds));
+        showId = showIds[0] ?? null;
 
         state.events.push({
             id: uid("event"),
             date,
             type: "ppv",
             showId,
+            showIds,
             name,
             matches: Array.isArray(row?.matches) ? row.matches : []
         });
