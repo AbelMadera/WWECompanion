@@ -1937,11 +1937,78 @@ async function addEventFlow(dateISO = calSelectedISO) {
 // -------------------- PLANNER (optimized, no full rerender on typing) --------------------
 let plannerEventId = null;
 const MIN_PARTICIPANT_SLOTS = 2;
+let plannerDragSourceRow = null;
+let plannerTouchDragState = null;
 
 function participantSlotCount(match) {
     const participants = Array.isArray(match?.participants) ? match.participants : [];
     const configured = Math.floor(Number(match?.participantSlots) || 0);
     return Math.max(MIN_PARTICIPANT_SLOTS, participants.length, configured);
+}
+
+function ensurePlannerMatchIds(ev) {
+    if (!ev || !Array.isArray(ev.matches)) return false;
+    let changed = false;
+    ev.matches = ev.matches.map(match => {
+        const existing = String(match?.id || "").trim();
+        if (existing) return match;
+        changed = true;
+        return { ...match, id: uid("match") };
+    });
+    return changed;
+}
+
+function renumberPlannerMatches(matches) {
+    if (!Array.isArray(matches)) return;
+    matches.forEach((match, idx) => {
+        if (match && typeof match === "object") match.num = idx + 1;
+    });
+}
+
+function capturePlannerRowPositions() {
+    const positions = new Map();
+    $$("#matchesBody tr[data-match-id]").forEach(tr => {
+        const matchId = String(tr.dataset.matchId || "");
+        if (!matchId) return;
+        positions.set(matchId, tr.getBoundingClientRect().top);
+    });
+    return positions;
+}
+
+function animatePlannerRows(fromPositions) {
+    if (!(fromPositions instanceof Map) || fromPositions.size === 0) return;
+    const rows = $$("#matchesBody tr[data-match-id]");
+    rows.forEach(tr => {
+        const matchId = String(tr.dataset.matchId || "");
+        const oldTop = fromPositions.get(matchId);
+        if (typeof oldTop !== "number") return;
+        const newTop = tr.getBoundingClientRect().top;
+        const deltaY = oldTop - newTop;
+        if (Math.abs(deltaY) < 1) return;
+        tr.style.transition = "none";
+        tr.style.transform = `translateY(${deltaY}px)`;
+        requestAnimationFrame(() => {
+            tr.style.transition = "transform 220ms cubic-bezier(0.22, 1, 0.36, 1)";
+            tr.style.transform = "translateY(0)";
+            const clear = () => {
+                tr.style.transition = "";
+                tr.style.transform = "";
+                tr.removeEventListener("transitionend", clear);
+            };
+            tr.addEventListener("transitionend", clear);
+        });
+    });
+}
+
+function movePlannerMatch(matches, fromIndex, toIndex) {
+    if (!Array.isArray(matches)) return false;
+    if (!Number.isInteger(fromIndex) || !Number.isInteger(toIndex)) return false;
+    if (fromIndex === toIndex) return false;
+    if (fromIndex < 0 || fromIndex >= matches.length) return false;
+    if (toIndex < 0 || toIndex >= matches.length) return false;
+    const [movedMatch] = matches.splice(fromIndex, 1);
+    matches.splice(toIndex, 0, movedMatch);
+    return true;
 }
 
 function renderPlannerEventSelect() {
@@ -1984,7 +2051,7 @@ function plannerRosterOptions(ev) {
         .join("");
 }
 
-function renderPlanner() {
+function renderPlanner(fromPositions = null) {
     renderPlannerEventSelect();
     const meta = $("#plannerMeta");
     const body = $("#matchesBody");
@@ -2001,6 +2068,7 @@ function renderPlanner() {
         body.innerHTML = "";
         return;
     }
+    if (ensurePlannerMatchIds(ev)) upsertEvent(ev);
 
     const metaShows = eventShowNames(ev);
     meta.textContent = `${ev.date} • ${ev.type.toUpperCase()} • ${metaShows.length ? metaShows.join(" + ") : showName(ev.showId)} • ${ev.matches.length} rows`;
@@ -2075,10 +2143,16 @@ function renderPlanner() {
             : "";
 
         return `
-      <tr data-row="${idx}">
+      <tr data-row="${idx}" data-match-id="${escapeAttr(m.id || "")}" draggable="true">
         <td>
           <div class="stack" style="gap:6px;">
-            <input class="cell-input small" data-field="num" inputmode="numeric" value="${escapeAttr(m.num ?? (idx + 1))}" />
+            <button
+              type="button"
+              class="planner-drag-handle"
+              data-drag-handle
+              title="Drag to reorder match"
+              aria-label="Drag to reorder match"
+            >&#8942;&#8942;</button>
             <div class="row gap">
               <button type="button" class="btn secondary participant-add-btn" data-add-participant="${idx}">+</button>
               ${removeParticipantBtn}
@@ -2124,6 +2198,7 @@ function renderPlanner() {
       </tr>
     `;
     }).join("");
+    animatePlannerRows(fromPositions);
 
     // Set selected values after render (avoids brittle string replacement)
     $$("#matchesBody tr").forEach(tr => {
@@ -2174,6 +2249,124 @@ function renderPlanner() {
                 ? championshipId
                 : "";
         }
+    });
+
+    $$("#matchesBody tr").forEach(tr => {
+        tr.addEventListener("dragstart", (e) => {
+            if (!e.target.closest("[data-drag-handle]")) {
+                e.preventDefault();
+                return;
+            }
+            plannerDragSourceRow = Number(tr.dataset.row);
+            tr.classList.add("planner-row-dragging");
+            if (e.dataTransfer) {
+                e.dataTransfer.effectAllowed = "move";
+                e.dataTransfer.setData("text/plain", String(plannerDragSourceRow));
+            }
+        });
+
+        tr.addEventListener("dragover", (e) => {
+            if (plannerDragSourceRow === null) return;
+            e.preventDefault();
+            tr.classList.add("planner-row-drop-target");
+            if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+        });
+
+        tr.addEventListener("dragleave", () => {
+            tr.classList.remove("planner-row-drop-target");
+        });
+
+        tr.addEventListener("drop", (e) => {
+            e.preventDefault();
+            tr.classList.remove("planner-row-drop-target");
+
+            const toIndex = Number(tr.dataset.row);
+            const fromIndex = plannerDragSourceRow;
+            plannerDragSourceRow = null;
+            if (!Number.isInteger(fromIndex)) return;
+
+            const ev2 = getEvent(plannerEventId);
+            if (!ev2) return;
+
+            const oldPositions = capturePlannerRowPositions();
+            const moved = movePlannerMatch(ev2.matches, fromIndex, toIndex);
+            if (!moved) return;
+            renumberPlannerMatches(ev2.matches);
+            upsertEvent(ev2);
+            renderPlanner(oldPositions);
+        });
+
+        tr.addEventListener("dragend", () => {
+            plannerDragSourceRow = null;
+            $$("#matchesBody tr").forEach(rowEl => {
+                rowEl.classList.remove("planner-row-dragging");
+                rowEl.classList.remove("planner-row-drop-target");
+            });
+        });
+    });
+
+    const clearTouchDragClasses = () => {
+        $$("#matchesBody tr").forEach(rowEl => {
+            rowEl.classList.remove("planner-row-dragging");
+            rowEl.classList.remove("planner-row-drop-target");
+        });
+    };
+
+    const getTouchDropRow = (x, y) => {
+        const target = document.elementFromPoint(x, y);
+        if (!target) return null;
+        return target.closest("#matchesBody tr");
+    };
+
+    $$("[data-drag-handle]").forEach(handle => {
+        handle.addEventListener("pointerdown", (e) => {
+            if (e.pointerType !== "touch") return;
+            const tr = handle.closest("tr");
+            if (!tr) return;
+            e.preventDefault();
+            plannerTouchDragState = {
+                pointerId: e.pointerId,
+                fromIndex: Number(tr.dataset.row),
+                overIndex: Number(tr.dataset.row),
+            };
+            clearTouchDragClasses();
+            tr.classList.add("planner-row-dragging");
+            handle.setPointerCapture(e.pointerId);
+        });
+
+        handle.addEventListener("pointermove", (e) => {
+            if (!plannerTouchDragState) return;
+            if (plannerTouchDragState.pointerId !== e.pointerId) return;
+            const overRow = getTouchDropRow(e.clientX, e.clientY);
+            if (!overRow) return;
+            const overIndex = Number(overRow.dataset.row);
+            if (!Number.isInteger(overIndex)) return;
+            plannerTouchDragState.overIndex = overIndex;
+            clearTouchDragClasses();
+            overRow.classList.add("planner-row-drop-target");
+            const sourceRow = $(`#matchesBody tr[data-row="${plannerTouchDragState.fromIndex}"]`);
+            sourceRow?.classList.add("planner-row-dragging");
+        });
+
+        const finishTouchDrag = (e) => {
+            if (!plannerTouchDragState) return;
+            if (plannerTouchDragState.pointerId !== e.pointerId) return;
+            const { fromIndex, overIndex } = plannerTouchDragState;
+            plannerTouchDragState = null;
+            clearTouchDragClasses();
+            if (!Number.isInteger(fromIndex) || !Number.isInteger(overIndex) || fromIndex === overIndex) return;
+            const ev2 = getEvent(plannerEventId);
+            if (!ev2) return;
+            const oldPositions = capturePlannerRowPositions();
+            const moved = movePlannerMatch(ev2.matches, fromIndex, overIndex);
+            if (!moved) return;
+            renumberPlannerMatches(ev2.matches);
+            upsertEvent(ev2);
+            renderPlanner(oldPositions);
+        };
+
+        handle.addEventListener("pointerup", finishTouchDrag);
+        handle.addEventListener("pointercancel", finishTouchDrag);
     });
 
     // One event listener for all row edits (event delegation)
@@ -2273,8 +2466,6 @@ function renderPlanner() {
             upsertEvent(ev2); // debounced via saveSoon
             renderPlanner();
             return;
-        } else if (field === "num") {
-            ev2.matches[row].num = Number(target.value) || (row + 1);
         } else if (field === "result") {
             ev2.matches[row].result = target.value;
             const isTeamBased = isTeamOrHandicapMatch(ev2.matches[row].matchType, (ev2.matches[row].participants || []).length);
@@ -2365,7 +2556,7 @@ function renderPlanner() {
             const ev2 = getEvent(plannerEventId);
             if (!ev2) return;
             ev2.matches.splice(idx, 1);
-            ev2.matches = ev2.matches.map((m, i) => ({ ...m, num: m.num ?? (i + 1) }));
+            renumberPlannerMatches(ev2.matches);
             upsertEvent(ev2);
             renderPlanner(); // re-render because rows changed
         });
@@ -2378,6 +2569,7 @@ function addMatchRow() {
     if (!ev) return;
 
     ev.matches.push({
+        id: uid("match"),
         num: ev.matches.length + 1,
         participants: [],
         participantTeams: {},

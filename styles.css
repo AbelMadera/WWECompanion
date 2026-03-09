@@ -1006,6 +1006,34 @@ textarea.cell-input {
     resize: vertical
 }
 
+.planner-drag-handle {
+    min-height: 36px;
+    border: 1px dashed rgba(255, 255, 255, .22);
+    background: rgba(255, 255, 255, .04);
+    color: var(--muted);
+    border-radius: 12px;
+    cursor: grab;
+    font-size: 16px;
+    line-height: 1;
+    font-weight: 900;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.planner-drag-handle:active {
+    cursor: grabbing;
+}
+
+#matchesBody tr.planner-row-dragging {
+    opacity: .55;
+}
+
+#matchesBody tr.planner-row-drop-target td {
+    background: rgba(87, 111, 255, .12);
+    transition: background 120ms ease;
+}
+
 /* Modal */
 .modal {
     position: fixed;
