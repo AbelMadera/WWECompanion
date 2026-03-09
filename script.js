@@ -1470,6 +1470,7 @@ function renderRoster() {
 }
 
 // -------------------- CALENDAR --------------------
+const CALENDAR_DAYS_PER_MONTH = 28;
 let calSelectedISO = getUniverseCurrentISO();
 let calCursor = parseISO(calSelectedISO); calCursor.setDate(1); calCursor.setHours(0, 0, 0, 0);
 
@@ -1488,19 +1489,10 @@ function renderCalendar() {
 
     const showFilter = $("#calShowFilter").value || "all";
 
-    const first = new Date(calCursor);
-    const dayOfWeek = first.getDay(); // 0 Sunday
-    const gridStart = new Date(first);
-    gridStart.setDate(first.getDate() - dayOfWeek);
-
     const cells = [];
-    for (let i = 0; i < 42; i++) {
-        const d = new Date(gridStart);
-        d.setDate(gridStart.getDate() + i);
+    for (let day = 1; day <= CALENDAR_DAYS_PER_MONTH; day++) {
+        const d = new Date(calCursor.getFullYear(), calCursor.getMonth(), day);
         const iso = toISODateLocal(d);
-
-        const inMonth = d.getMonth() === calCursor.getMonth();
-        const day = d.getDate();
         const done = doneDates.has(iso);
 
         const events = state.events
@@ -1521,7 +1513,7 @@ function renderCalendar() {
 
         cells.push(`
       <div class="cal-cell ${done ? "is-done" : ""}" data-date="${iso}"
-        style="opacity:${inMonth ? 1 : 0.45}; outline:${iso === calSelectedISO ? '2px solid rgba(255,255,255,.25)' : 'none'}">
+        style="outline:${iso === calSelectedISO ? '2px solid rgba(255,255,255,.25)' : 'none'}">
         <div class="cal-date">${day}${iso === startISO ? ` <span class="cal-day-state">START</span>` : ``}${iso === universeCurrentISO ? ` <span class="cal-day-state">NOW</span>` : ``}</div>
         <div class="cal-badges">${badges}${overflow}</div>
       </div>
