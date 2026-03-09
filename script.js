@@ -1584,7 +1584,7 @@ function renderEventsOnSelectedDate() {
     $$("[data-open-event]").forEach(el => {
         const open = () => {
             el.blur();
-            openCalendarEventDetails(el.dataset.openEvent);
+            openCalendarEventDetails(el.dataset.openEvent, { fromCalendar: true });
         };
         el.addEventListener("click", open);
         el.addEventListener("keydown", (e) => {
@@ -1620,7 +1620,88 @@ function participantInfo(participantRef) {
     return { name: ref || "TBD", photo: "", isChampion: false };
 }
 
-async function openCalendarEventDetails(eventId) {
+async function editPleDetailsFlow(eventId) {
+    const ev = getEvent(eventId);
+    if (!ev || ev.type !== "ppv") return false;
+
+    const selectedShowIds = new Set(eventShowIds(ev));
+    const bodyHTML = `
+      <div class="stack">
+        <label class="muted tiny" for="editPleName">PLE Name</label>
+        <input id="editPleName" class="input" value="${escapeAttr(ev.name || "")}" placeholder="Event name" />
+        <label class="muted tiny" for="editPleDate">Date</label>
+        <input id="editPleDate" class="input" type="date" value="${escapeAttr(ev.date || "")}" />
+        <div class="muted tiny">Host Shows</div>
+        <div id="editPleShows" class="show-tag-picker"></div>
+      </div>
+    `;
+
+    const modalPromise = openModal({ title: "Edit PLE", bodyHTML, okText: "Save" });
+    const showsEl = $("#editPleShows");
+    const renderShowPicker = () => {
+        if (!showsEl) return;
+        if (!state.shows.length) {
+            showsEl.innerHTML = `<div class="muted tiny">No shows created yet.</div>`;
+            return;
+        }
+        showsEl.innerHTML = state.shows.map(s => {
+            const active = selectedShowIds.has(s.id);
+            const bg = active ? `${s.color}33` : "rgba(255,255,255,.03)";
+            const border = active ? s.color : "var(--line)";
+            return `
+              <button type="button" class="show-tag-btn ${active ? "active" : ""}" data-edit-ple-show="${s.id}"
+                style="border-color:${border};background:${bg};">
+                <span class="dot" style="background:${s.color}"></span>
+                <span>${escapeHTML(s.name)}</span>
+              </button>
+            `;
+        }).join("");
+        $$("[data-edit-ple-show]", showsEl).forEach(btn => {
+            btn.addEventListener("click", () => {
+                const showId = btn.dataset.editPleShow;
+                if (!showId) return;
+                if (selectedShowIds.has(showId)) selectedShowIds.delete(showId);
+                else selectedShowIds.add(showId);
+                renderShowPicker();
+            });
+        });
+    };
+
+    renderShowPicker();
+    const ok = await modalPromise;
+    if (!ok.ok) return false;
+
+    const nextName = $("#editPleName").value.trim() || "PLE / PPV";
+    const nextDate = $("#editPleDate").value;
+    if (!isISODate(nextDate)) {
+        await openModal({
+            title: "Invalid date",
+            bodyHTML: `<div class="muted">Please choose a valid date for this PLE.</div>`,
+            okText: "OK",
+            cancelText: "Close"
+        });
+        return false;
+    }
+
+    const showIds = Array.from(selectedShowIds);
+    upsertEvent({
+        ...ev,
+        type: "ppv",
+        name: nextName,
+        date: nextDate,
+        showIds,
+        showId: showIds[0] ?? null,
+    });
+
+    calSelectedISO = nextDate;
+    calCursor = parseISO(nextDate);
+    calCursor.setDate(1);
+    calCursor.setHours(0, 0, 0, 0);
+    renderAll();
+    return true;
+}
+
+async function openCalendarEventDetails(eventId, { fromCalendar = false } = {}) {
     const ev = getEvent(eventId);
     if (!ev) return;
 
@@ -1703,15 +1784,27 @@ async function openCalendarEventDetails(eventId) {
     plannerBtn.className = "btn";
     plannerBtn.type = "button";
     plannerBtn.textContent = "Open Planner";
+    const shouldShowEditPleBtn = fromCalendar && ev.type === "ppv";
+    const editPleBtn = shouldShowEditPleBtn ? document.createElement("button") : null;
+    if (editPleBtn) {
+        editPleBtn.className = "btn secondary";
+        editPleBtn.type = "button";
+        editPleBtn.textContent = "Edit PLE";
+    }
     const deleteBtn = document.createElement("button");
     deleteBtn.className = "btn danger";
     deleteBtn.type = "button";
     deleteBtn.textContent = "Delete";
 
     modalCancelBtn.classList.add("hidden");
+    if (editPleBtn) modalActions.insertBefore(editPleBtn, modalOkBtn);
     modalActions.insertBefore(plannerBtn, modalOkBtn);
     modalActions.insertBefore(deleteBtn, modalOkBtn);
 
+    editPleBtn?.addEventListener("click", async () => {
+        closeModal({ ok: false });
+        await editPleDetailsFlow(eventId);
+    });
     plannerBtn.addEventListener("click", () => {
         closeModal({ ok: false });
         openPlanner(eventId);
@@ -1730,6 +1823,7 @@ async function openCalendarEventDetails(eventId) {
     });
 
     await modalPromise;
+    editPleBtn?.remove();
     plannerBtn.remove();
     deleteBtn.remove();
     modalCancelBtn.classList.remove("hidden");
