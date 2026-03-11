@@ -386,6 +386,10 @@ function isDrawRecordResult(resultValue) {
     const normalized = normalizeNameForCompare(resultValue);
     return normalized === "draw" || normalized === "tie";
 }
+function isPromoResult(resultValue) {
+    const normalized = normalizeNameForCompare(resultValue);
+    return normalized === "promo";
+}
 function computeSuperstarRecords() {
     const records = new Map();
     state.superstars.forEach(ss => {
@@ -413,6 +417,7 @@ function computeSuperstarRecords() {
                 return;
             }
             if (normalizeNameForCompare(resultValue) === "no result") return;
+            if (isPromoResult(resultValue)) return; // Promo does not affect W/L/D
             if (isDQResult(resultValue)) return; // DQ does not affect W/L/D
 
             if (isDrawRecordResult(resultValue)) {
@@ -469,6 +474,10 @@ function isTeamOrHandicapMatch(matchType, participantCount) {
     const t = String(matchType || "").toLowerCase();
     if (participantCount < 3) return false;
     return /tag|handicap/.test(t);
+}
+function isTagTeamMatchType(matchType) {
+    const t = String(matchType || "").toLowerCase();
+    return t.includes("tag");
 }
 function normalizedParticipantTeams(match) {
     const raw = match?.participantTeams;
@@ -945,62 +954,65 @@ function renderDashboard() {
     if (!upcoming) {
         el.innerHTML = `<div class="muted">No upcoming events after universe day <b>${universeToday}</b>. Add one from Calendar or Settings.</div>`;
     } else {
-        const typeTag = upcoming.type === "ppv" ? "PLE" : "WEEKLY";
-        const ppvShows = eventShowNames(upcoming).join(" + ");
         const matches = Array.isArray(upcoming.matches) ? upcoming.matches : [];
         const mainEvent = matches.length ? matches[matches.length - 1] : null;
-        const mainEventParticipants = Array.isArray(mainEvent?.participants) ? mainEvent.participants : [];
-        const mainEventLeft = participantInfo(mainEventParticipants[0] || "");
-        const mainEventRight = participantInfo(mainEventParticipants[1] || "");
+        const mainEventParticipants = Array.isArray(mainEvent?.participants) ? mainEvent.participants.filter(Boolean) : [];
+        const mainEventDisplayParticipants = mainEventParticipants.length >= 2
+            ? mainEventParticipants
+            : [mainEventParticipants[0] || "", ""];
+        const mainEventIsMultiPreview = mainEventDisplayParticipants.length > 2;
+        const hideVsForMatch = mainEventIsMultiPreview && !isTagTeamMatchType(mainEvent?.matchType);
         const mainEventType = String(mainEvent?.matchType || "").trim();
+        const mainEventTitle = mainEventType || `Match ${mainEvent?.num ?? (matches.length || 1)}`;
         const mainEventChampionshipName = championshipName(String(mainEvent?.championshipId || "").trim());
-        const mainEventTitleHint = `${mainEvent?.matchType || ""} ${mainEvent?.storyline || ""} ${mainEvent?.rivalryNotes || ""}`.toLowerCase();
-        const isChampionshipMainEvent = !!mainEventChampionshipName
-            || /title|championship|champ\b/.test(mainEventTitleHint);
-        const showTagText = upcoming.type === "ppv"
-            ? (ppvShows || "PLE")
-            : showName(upcoming.showId);
-        const showTagStyle = upcoming.type === "ppv"
-            ? "background:rgba(255,255,255,.14);border-color:rgba(255,255,255,.28);"
-            : `background:rgba(255,255,255,.08);border-color:${showColor(upcoming.showId)};`;
+        const mainEventFighterHTML = (participantRef) => {
+            const fighter = participantInfo(participantRef);
+            return `
+              <div class="event-fighter">
+                ${fighter.photo
+                    ? `<img class="event-fighter-photo event-fighter-photo-main" src="${escapeAttr(fighter.photo)}" alt="${escapeAttr(fighter.name)}" />`
+                    : `<div class="event-fighter-fallback event-fighter-photo-main">${fighter.name === "TBD" ? "?" : escapeHTML(superstarInitials(fighter.name))}</div>`
+                }
+                <div class="tiny event-fighter-name">${escapeHTML(fighter.name)}${fighter.isChampion ? ` <span class="event-champ">C</span>` : ``}</div>
+              </div>
+            `;
+        };
+        const mainEventFightRowHTML = mainEventDisplayParticipants.map((participantRef, idx) => {
+            const fighterHTML = mainEventFighterHTML(participantRef);
+            if (idx >= mainEventDisplayParticipants.length - 1) return fighterHTML;
+            if (hideVsForMatch) return fighterHTML;
+            return `${fighterHTML}<div class="event-vs event-fight-separator event-vs-main">VS</div>`;
+        }).join("");
+        const upcomingShowIds = eventShowIds(upcoming);
+        const showBadges = upcomingShowIds.length
+            ? upcomingShowIds.map(showId => `<span class="badge"><span class="dot" style="background:${showColor(showId)}"></span>${escapeHTML(showName(showId))}</span>`).join("")
+            : `<span class="badge"><span class="dot" style="background:${showColor(upcoming.showId)}"></span>${escapeHTML(showName(upcoming.showId))}</span>`;
+        const typeTag = upcoming.type === "ppv" ? "PLE" : "WEEKLY";
         el.innerHTML = `
-      <div class="stack" style="align-items:center;text-align:center;gap:8px;">
-      <div><b>${escapeHTML(upcoming.name || "(Unnamed Event)")}</b></div>
-      <div class="muted tiny">${upcoming.date}</div>
-      <div class="muted tiny">Universe day: ${universeToday}</div>
-      <div class="row gap wrap" style="margin-top:2px;justify-content:center;">
-        <span class="badge">${typeTag}</span>
-        <span class="badge" style="${showTagStyle}">${escapeHTML(showTagText)}</span>
-      </div>
-      <div style="margin-top:4px;">
-        ${mainEvent && isChampionshipMainEvent
-                ? `<div class="event-championship-label">${escapeHTML(mainEventChampionshipName || "Championship")}</div>`
-                : ``}
+      <div class="stack" style="gap:10px;">
+        <div class="h2" style="margin:0;text-align:center;">${escapeHTML(upcoming.name || "(Unnamed Event)")}</div>
+        <div class="row gap wrap" style="justify-content:center;">
+          ${showBadges}
+          <span class="badge">${typeTag}</span>
+          <span class="badge">${upcoming.date}</span>
+          <span class="badge">Rows: <b>${matches.length}</b></span>
+        </div>
         ${mainEvent ? `
-          <div class="event-fight-row" style="margin-top:6px;justify-content:center;">
-            <div class="event-fighter">
-              ${mainEventLeft.photo
-                ? `<img class="event-fighter-photo" src="${escapeAttr(mainEventLeft.photo)}" alt="${escapeAttr(mainEventLeft.name)}" />`
-                : `<div class="event-fighter-fallback">${mainEventLeft.name === "TBD" ? "?" : escapeHTML(superstarInitials(mainEventLeft.name))}</div>`
-            }
-              <div class="tiny event-fighter-name">${escapeHTML(mainEventLeft.name)}${mainEventLeft.isChampion ? ` <span class="event-champ">C</span>` : ``}</div>
-            </div>
-            <div class="event-vs">VS</div>
-            <div class="event-fighter">
-              ${mainEventRight.photo
-                ? `<img class="event-fighter-photo" src="${escapeAttr(mainEventRight.photo)}" alt="${escapeAttr(mainEventRight.name)}" />`
-                : `<div class="event-fighter-fallback">${mainEventRight.name === "TBD" ? "?" : escapeHTML(superstarInitials(mainEventRight.name))}</div>`
-            }
-              <div class="tiny event-fighter-name">${escapeHTML(mainEventRight.name)}${mainEventRight.isChampion ? ` <span class="event-champ">C</span>` : ``}</div>
+          <div class="event-match-list">
+            <div class="event-match-card main-event-card ${mainEventChampionshipName ? "has-championship-badge" : ""}">
+              ${mainEventChampionshipName ? `<div class="event-match-corner-title">${escapeHTML(mainEventChampionshipName)}</div>` : ""}
+              <div class="event-main-label">Main Event</div>
+              <div class="event-match-title">${escapeHTML(mainEventTitle)}</div>
+              <div class="event-fight-row">
+                ${mainEventFightRowHTML}
+              </div>
             </div>
           </div>
-          ${mainEventType ? `<div class="muted tiny" style="margin-top:6px;">${escapeHTML(mainEventType)}</div>` : ``}
-        ` : `<div class="muted tiny">Not planned yet</div>`}
-      </div>
-      <div class="item-actions" style="justify-content:center;">
-        <button class="btn secondary" data-view-event="${upcoming.id}">View</button>
-        <button class="btn" data-open-planner="${upcoming.id}">Open Planner</button>
-      </div>
+        ` : `<div class="muted tiny" style="text-align:center;">No matches scheduled yet for this event.</div>`}
+        <div class="item-actions" style="justify-content:center;">
+          <button class="btn secondary" data-view-event="${upcoming.id}">View</button>
+          <button class="btn" data-open-planner="${upcoming.id}">Open Planner</button>
+        </div>
       </div>
     `;
         el.querySelector('[data-view-event]')?.addEventListener("click", () => openCalendarEventDetails(upcoming.id));
@@ -1185,7 +1197,6 @@ async function editSuperstarFlow(id) {
           <input id="editSSManager" class="input" value="${escapeAttr(ss.manager || "")}" placeholder="Manager" />
         </div>
 
-        <div class="muted tiny">Tip: Champion status is automatic when at least one championship is selected.</div>
       </div>
     `;
 
@@ -1243,7 +1254,8 @@ async function openSuperstarDetails(id, { readOnly = false } = {}) {
         const normalized = normalizeNameForCompare(resultValue);
         return isDisqualificationResult(resultValue)
             || isDrawResult(resultValue)
-            || normalized === "no result";
+            || normalized === "no result"
+            || normalized === "promo";
     };
     const participantIdFromRef = (participantRef) => {
         const raw = String(participantRef ?? "").trim();
@@ -1318,6 +1330,7 @@ async function openSuperstarDetails(id, { readOnly = false } = {}) {
                 return normalizeNameForCompare(participantInfo(raw).name) === normalizeNameForCompare(ss.name);
             });
             if (!includesSelected) continue;
+            if (isPromoResult(match?.result)) continue;
 
             recentMatches.push({
                 matchup: participants.join(" vs "),
@@ -1713,19 +1726,37 @@ async function openCalendarEventDetails(eventId, { fromCalendar = false } = {}) 
         ? orderedMatches.map((m, renderIdx) => {
             const isMainEvent = renderIdx === 0;
             const participants = Array.isArray(m.participants) ? m.participants : [];
-            const left = participantInfo(participants[0]);
-            const right = participantInfo(participants[1]);
+            const displayParticipants = participants.length >= 2
+                ? participants
+                : [participants[0] || "", ""];
+            const hideVsForMatch = displayParticipants.length > 2 && !isTagTeamMatchType(m?.matchType);
             const championshipOnTheLine = championshipName(String(m?.championshipId || "").trim());
             const title = m.matchType?.trim() || `Match ${m.num ?? (m._idx + 1)}`;
             const winnerRef = String(m.result ?? "").trim();
+            const isPromo = normalizeNameForCompare(winnerRef) === "promo";
             const winnerName = winnerRef === "TEAM:A"
                 ? "Team A"
                 : winnerRef === "TEAM:B"
                     ? "Team B"
                     : superstarNameById(winnerRef);
             const pinByName = superstarNameById(String(m.pinBy ?? "").trim());
-            const resultText = winnerName || winnerRef;
+            const resultText = isPromo ? "" : (winnerName || winnerRef);
             const pinText = pinByName ? ` • Pin by: ${pinByName}` : "";
+            const fightRowHTML = displayParticipants.map((participantRef, idx) => {
+                const fighter = participantInfo(participantRef);
+                const fighterHTML = `
+                  <div class="event-fighter">
+                    ${fighter.photo
+                        ? `<img class="event-fighter-photo ${isMainEvent ? "event-fighter-photo-main" : ""}" src="${escapeAttr(fighter.photo)}" alt="${escapeAttr(fighter.name)}" />`
+                        : `<div class="event-fighter-fallback ${isMainEvent ? "event-fighter-photo-main" : ""}">${fighter.name === "TBD" ? "?" : escapeHTML(superstarInitials(fighter.name))}</div>`
+                    }
+                    <div class="tiny event-fighter-name">${escapeHTML(fighter.name)}${fighter.isChampion ? ` <span class="event-champ">C</span>` : ``}</div>
+                  </div>
+                `;
+                if (idx >= displayParticipants.length - 1) return fighterHTML;
+                if (hideVsForMatch) return fighterHTML;
+                return `${fighterHTML}<div class="event-vs event-fight-separator ${isMainEvent ? "event-vs-main" : ""}">VS</div>`;
+            }).join("");
 
             return `
               <div class="event-match-card ${isMainEvent ? "main-event-card" : ""} ${championshipOnTheLine ? "has-championship-badge" : ""}">
@@ -1733,21 +1764,7 @@ async function openCalendarEventDetails(eventId, { fromCalendar = false } = {}) 
                 ${isMainEvent ? `<div class="event-main-label">Main Event</div>` : ""}
                 <div class="event-match-title">${escapeHTML(title)}</div>
                 <div class="event-fight-row">
-                  <div class="event-fighter">
-                    ${left.photo
-                    ? `<img class="event-fighter-photo ${isMainEvent ? "event-fighter-photo-main" : ""}" src="${escapeAttr(left.photo)}" alt="${escapeAttr(left.name)}" />`
-                    : `<div class="event-fighter-fallback ${isMainEvent ? "event-fighter-photo-main" : ""}">${left.name === "TBD" ? "?" : escapeHTML(superstarInitials(left.name))}</div>`
-                }
-                    <div class="tiny event-fighter-name">${escapeHTML(left.name)}${left.isChampion ? ` <span class="event-champ">C</span>` : ``}</div>
-                  </div>
-                  <div class="event-vs ${isMainEvent ? "event-vs-main" : ""}">VS</div>
-                  <div class="event-fighter">
-                    ${right.photo
-                    ? `<img class="event-fighter-photo ${isMainEvent ? "event-fighter-photo-main" : ""}" src="${escapeAttr(right.photo)}" alt="${escapeAttr(right.name)}" />`
-                    : `<div class="event-fighter-fallback ${isMainEvent ? "event-fighter-photo-main" : ""}">${right.name === "TBD" ? "?" : escapeHTML(superstarInitials(right.name))}</div>`
-                }
-                    <div class="tiny event-fighter-name">${escapeHTML(right.name)}${right.isChampion ? ` <span class="event-champ">C</span>` : ``}</div>
-                  </div>
+                  ${fightRowHTML}
                 </div>
                 ${resultText ? `<div class="muted tiny">Result: ${escapeHTML(resultText)}${escapeHTML(pinText)}</div>` : ``}
               </div>
@@ -2051,6 +2068,77 @@ function plannerRosterOptions(ev) {
         .join("");
 }
 
+function plannerNoteSummary(noteValue, emptyText = "No notes") {
+    const normalized = String(noteValue ?? "").replace(/\s+/g, " ").trim();
+    if (!normalized) return emptyText;
+    return normalized.length > 80 ? `${normalized.slice(0, 80)}...` : normalized;
+}
+
+function plannerNoteDisplayHTML(noteValue, emptyText) {
+    const value = String(noteValue ?? "");
+    if (!value.trim()) return `<div class="muted tiny">${escapeHTML(emptyText)}</div>`;
+    return `<div class="planner-note-display">${escapeHTML(value).replace(/\n/g, "<br>")}</div>`;
+}
+
+async function openPlannerNoteModal({ row, field }) {
+    const ev = getEvent(plannerEventId);
+    if (!ev || !ev.matches[row]) return;
+    const isStoryline = field === "storyline";
+    const isRivalryNotes = field === "rivalryNotes";
+    if (!isStoryline && !isRivalryNotes) return;
+
+    const title = isStoryline ? "Storyline Notes" : "Rivalry Notes";
+    const emptyText = isStoryline ? "No storyline notes yet." : "No rivalry notes yet.";
+    const placeholder = isStoryline ? "Write storyline notes..." : "Write rivalry notes...";
+    const currentValue = String(ev.matches[row]?.[field] ?? "");
+    const bodyHTML = `
+      <div class="stack" style="gap:10px;">
+        <div id="plannerNoteRead">${plannerNoteDisplayHTML(currentValue, emptyText)}</div>
+        <textarea id="plannerNoteEdit" class="cell-input hidden" style="min-height:180px;" placeholder="${escapeAttr(placeholder)}">${escapeHTML(currentValue)}</textarea>
+      </div>
+    `;
+    const modalPromise = openModal({
+        title: `Match ${row + 1} • ${title}`,
+        bodyHTML,
+        okText: "Done",
+        cancelText: "Close",
+    });
+
+    const modalActions = $(".modal-actions");
+    const modalCancelBtn = $("#modalCancel");
+    const modalOkBtn = $("#modalOk");
+    const editBtn = document.createElement("button");
+    editBtn.className = "btn secondary";
+    editBtn.type = "button";
+    editBtn.textContent = "Edit";
+
+    modalCancelBtn.classList.add("hidden");
+    modalActions.insertBefore(editBtn, modalOkBtn);
+
+    const readEl = $("#plannerNoteRead");
+    const editEl = $("#plannerNoteEdit");
+    editBtn.addEventListener("click", () => {
+        if (!readEl || !editEl) return;
+        readEl.classList.add("hidden");
+        editEl.classList.remove("hidden");
+        editEl.focus();
+        editEl.setSelectionRange(editEl.value.length, editEl.value.length);
+    });
+
+    const modalResult = await modalPromise;
+
+    editBtn.remove();
+    modalCancelBtn.classList.remove("hidden");
+
+    if (!modalResult?.ok) return;
+
+    const ev2 = getEvent(plannerEventId);
+    if (!ev2 || !ev2.matches[row]) return;
+    ev2.matches[row][field] = String(editEl?.value ?? "");
+    upsertEvent(ev2);
+    renderPlanner();
+}
+
 function renderPlanner(fromPositions = null) {
     renderPlannerEventSelect();
     const meta = $("#plannerMeta");
@@ -2103,6 +2191,7 @@ function renderPlanner(fromPositions = null) {
         const winningTeam = m.result === "TEAM:A" ? teamA : m.result === "TEAM:B" ? teamB : [];
         const specialResultOptions = `
             <option value="DQ">DQ</option>
+            <option value="Promo">Promo</option>
         `;
         const winnerOptions = isTeamBased
             ? [
@@ -2119,6 +2208,8 @@ function renderPlanner(fromPositions = null) {
             ].join("");
         const showPinBy = isTeamOrHandicapMatch(m.matchType, participants.length);
         const pinPool = showPinBy ? (winningTeam.length ? winningTeam : participants) : participants;
+        const storylineSummary = plannerNoteSummary(m.storyline, "No storyline notes");
+        const rivalrySummary = plannerNoteSummary(m.rivalryNotes, "No rivalry notes");
         const pinByOptions = pinPool.map(pid => {
             const name = superstarNameById(pid) || pid;
             return `<option value="${escapeAttr(pid)}">${escapeHTML(name)}</option>`;
@@ -2168,7 +2259,10 @@ function renderPlanner(fromPositions = null) {
           <input class="cell-input small" data-field="matchType" value="${escapeAttr(m.matchType || "")}" placeholder="1v1 / tag / promo…" />
         </td>
         <td>
-          <textarea class="cell-input" data-field="storyline" placeholder="Storyline notes…">${escapeHTML(m.storyline || "")}</textarea>
+          <div class="planner-note-cell">
+            <button type="button" class="btn secondary planner-note-btn" data-open-note="storyline">View</button>
+            <div class="tiny muted planner-note-preview">${escapeHTML(storylineSummary)}</div>
+          </div>
         </td>
         <td>
           <select class="cell-input small" data-field="championshipId">
@@ -2190,7 +2284,10 @@ function renderPlanner(fromPositions = null) {
           </div>
         </td>
         <td>
-          <textarea class="cell-input" data-field="rivalryNotes" placeholder="Rivalry notes…">${escapeHTML(m.rivalryNotes || "")}</textarea>
+          <div class="planner-note-cell">
+            <button type="button" class="btn secondary planner-note-btn" data-open-note="rivalryNotes">View</button>
+            <div class="tiny muted planner-note-preview">${escapeHTML(rivalrySummary)}</div>
+          </div>
         </td>
         <td>
           <button class="btn danger" data-del-row="${idx}">X</button>
@@ -2422,7 +2519,8 @@ function renderPlanner(fromPositions = null) {
                         || normalizedResult === "tie"
                         || normalizedResult === "no contest"
                         || normalizedResult === "nc"
-                        || normalizedResult === "no result";
+                        || normalizedResult === "no result"
+                        || normalizedResult === "promo";
                     if (!isSpecial) ev2.matches[row].result = "";
                 }
                 if (ev2.matches[row].result === "TEAM:A" && !teamA.length) ev2.matches[row].result = "";
@@ -2505,7 +2603,8 @@ function renderPlanner(fromPositions = null) {
                         || normalizedResult === "tie"
                         || normalizedResult === "no contest"
                         || normalizedResult === "nc"
-                        || normalizedResult === "no result";
+                        || normalizedResult === "no result"
+                        || normalizedResult === "promo";
                     if (!isSpecial) ev2.matches[row].result = "";
                 }
                 upsertEvent(ev2); // debounced via saveSoon
@@ -2519,6 +2618,17 @@ function renderPlanner(fromPositions = null) {
     };
     body.oninput = handlePlannerRowEdit;
     body.onchange = handlePlannerRowEdit;
+
+    // Note editor buttons
+    $$("[data-open-note]").forEach(btn => {
+        btn.addEventListener("click", async () => {
+            const tr = btn.closest("tr");
+            if (!tr) return;
+            const row = Number(tr.dataset.row);
+            const field = String(btn.dataset.openNote || "");
+            await openPlannerNoteModal({ row, field });
+        });
+    });
 
     // Add participant slot button
     $$("[data-add-participant]").forEach(btn => {
