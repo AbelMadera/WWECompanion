@@ -2068,12 +2068,6 @@ function plannerRosterOptions(ev) {
         .join("");
 }
 
-function plannerNoteSummary(noteValue, emptyText = "No notes") {
-    const normalized = String(noteValue ?? "").replace(/\s+/g, " ").trim();
-    if (!normalized) return emptyText;
-    return normalized.length > 80 ? `${normalized.slice(0, 80)}...` : normalized;
-}
-
 function plannerNoteDisplayHTML(noteValue, emptyText) {
     const value = String(noteValue ?? "");
     if (!value.trim()) return `<div class="muted tiny">${escapeHTML(emptyText)}</div>`;
@@ -2208,8 +2202,6 @@ function renderPlanner(fromPositions = null) {
             ].join("");
         const showPinBy = isTeamOrHandicapMatch(m.matchType, participants.length);
         const pinPool = showPinBy ? (winningTeam.length ? winningTeam : participants) : participants;
-        const storylineSummary = plannerNoteSummary(m.storyline, "No storyline notes");
-        const rivalrySummary = plannerNoteSummary(m.rivalryNotes, "No rivalry notes");
         const pinByOptions = pinPool.map(pid => {
             const name = superstarNameById(pid) || pid;
             return `<option value="${escapeAttr(pid)}">${escapeHTML(name)}</option>`;
@@ -2261,7 +2253,6 @@ function renderPlanner(fromPositions = null) {
         <td>
           <div class="planner-note-cell">
             <button type="button" class="btn secondary planner-note-btn" data-open-note="storyline">View</button>
-            <div class="tiny muted planner-note-preview">${escapeHTML(storylineSummary)}</div>
           </div>
         </td>
         <td>
@@ -2286,7 +2277,6 @@ function renderPlanner(fromPositions = null) {
         <td>
           <div class="planner-note-cell">
             <button type="button" class="btn secondary planner-note-btn" data-open-note="rivalryNotes">View</button>
-            <div class="tiny muted planner-note-preview">${escapeHTML(rivalrySummary)}</div>
           </div>
         </td>
         <td>

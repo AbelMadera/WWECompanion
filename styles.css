@@ -1081,11 +1081,6 @@ textarea.cell-input {
     min-height: 34px;
 }
 
-.planner-note-preview {
-    line-height: 1.3;
-    word-break: break-word;
-}
-
 .planner-note-display {
     white-space: pre-wrap;
     line-height: 1.45;
