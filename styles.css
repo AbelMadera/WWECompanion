@@ -757,6 +757,12 @@ h1 {
     text-align: center;
 }
 
+.event-match-result {
+    text-align: center;
+    margin-top: -2px;
+    margin-bottom: 8px;
+}
+
 .event-fight-row {
     display: flex;
     flex-wrap: wrap;
@@ -785,6 +791,19 @@ h1 {
     line-height: 1.2;
     max-width: 100%;
     word-break: break-word;
+}
+
+.event-team-block {
+    max-width: 220px;
+}
+
+.event-team-members {
+    line-height: 1.2;
+    text-align: center;
+}
+
+.event-fighter-with {
+    line-height: 1.2;
 }
 
 .event-champ {

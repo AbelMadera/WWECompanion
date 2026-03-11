@@ -492,6 +492,72 @@ function normalizedParticipantTeams(match) {
     });
     return out;
 }
+function normalizedTeamNames(match) {
+    const raw = match?.teamNames;
+    if (!raw || typeof raw !== "object") return { A: "", B: "" };
+    const teamA = String(raw.A ?? "").trim();
+    const teamB = String(raw.B ?? "").trim();
+    return { A: teamA, B: teamB };
+}
+function normalizedParticipantEscorts(match) {
+    const raw = match?.participantEscorts;
+    if (!raw || typeof raw !== "object") return {};
+    const out = {};
+    Object.entries(raw).forEach(([participantId, escortRef]) => {
+        const pid = String(participantId || "").trim();
+        const ref = String(escortRef || "").trim();
+        if (!pid || !ref) return;
+        out[pid] = ref;
+    });
+    return out;
+}
+function escortRefForSuperstar(superstarId) {
+    return `SS:${String(superstarId || "").trim()}`;
+}
+function escortRefForManager(managerName) {
+    return `MGR:${String(managerName || "").trim()}`;
+}
+function escortDisplayNameFromRef(escortRef) {
+    const raw = String(escortRef || "").trim();
+    if (!raw) return "";
+    if (raw.startsWith("SS:")) {
+        const superstarId = raw.slice(3).trim();
+        return superstarNameById(superstarId) || "";
+    }
+    if (raw.startsWith("MGR:")) {
+        return raw.slice(4).trim();
+    }
+    // Legacy fallback: raw might be stored as superstar id
+    return superstarNameById(raw) || raw;
+}
+function participantEscortName(match, participantRef) {
+    const participantId = resolveSuperstarIdFromRef(participantRef);
+    if (!participantId) return "";
+    const escorts = normalizedParticipantEscorts(match);
+    return escortDisplayNameFromRef(escorts[participantId] || "");
+}
+function factionOptionsForParticipants(participantRefs = []) {
+    const options = new Set();
+    participantRefs.forEach(ref => {
+        const superstarId = resolveSuperstarIdFromRef(ref);
+        if (!superstarId) return;
+        const superstar = state.superstars.find(ss => ss.id === superstarId);
+        const faction = String(superstar?.faction ?? "").trim();
+        if (faction) options.add(faction);
+    });
+    return Array.from(options).sort((a, b) => a.localeCompare(b));
+}
+function teamDisplayName(match, side, participantRefs = []) {
+    const names = normalizedTeamNames(match);
+    const custom = String(names?.[side] ?? "").trim();
+    if (custom) return custom;
+    return side === "A" ? "Team A" : "Team B";
+}
+function teamNameInitial(name, fallback = "?") {
+    const value = String(name ?? "").trim();
+    if (!value) return fallback;
+    return value[0].toUpperCase();
+}
 function inferMatchTeams(matchType, participantIds, participantTeams = {}) {
     const ids = Array.isArray(participantIds) ? participantIds.filter(Boolean) : [];
     if (ids.length < 3) return null;
@@ -965,8 +1031,13 @@ function renderDashboard() {
         const mainEventType = String(mainEvent?.matchType || "").trim();
         const mainEventTitle = mainEventType || `Match ${mainEvent?.num ?? (matches.length || 1)}`;
         const mainEventChampionshipName = championshipName(String(mainEvent?.championshipId || "").trim());
+        const mainEventTeams = inferMatchTeams(mainEvent?.matchType, mainEventDisplayParticipants, normalizedParticipantTeams(mainEvent));
+        const mainEventUseTeamFormat = isTagTeamMatchType(mainEvent?.matchType) && Array.isArray(mainEventTeams?.[0]) && Array.isArray(mainEventTeams?.[1]) && mainEventTeams[0].length && mainEventTeams[1].length;
+        const mainEventTeamALabel = mainEventUseTeamFormat ? teamDisplayName(mainEvent, "A", mainEventTeams[0]) : "Team A";
+        const mainEventTeamBLabel = mainEventUseTeamFormat ? teamDisplayName(mainEvent, "B", mainEventTeams[1]) : "Team B";
         const mainEventFighterHTML = (participantRef) => {
             const fighter = participantInfo(participantRef);
+            const escortName = participantEscortName(mainEvent, participantRef);
             return `
               <div class="event-fighter">
                 ${fighter.photo
@@ -974,15 +1045,33 @@ function renderDashboard() {
                     : `<div class="event-fighter-fallback event-fighter-photo-main">${fighter.name === "TBD" ? "?" : escapeHTML(superstarInitials(fighter.name))}</div>`
                 }
                 <div class="tiny event-fighter-name">${escapeHTML(fighter.name)}${fighter.isChampion ? ` <span class="event-champ">C</span>` : ``}</div>
+                ${escortName ? `<div class="tiny muted event-fighter-with">With ${escapeHTML(escortName)}</div>` : ""}
               </div>
             `;
         };
-        const mainEventFightRowHTML = mainEventDisplayParticipants.map((participantRef, idx) => {
-            const fighterHTML = mainEventFighterHTML(participantRef);
-            if (idx >= mainEventDisplayParticipants.length - 1) return fighterHTML;
-            if (hideVsForMatch) return fighterHTML;
-            return `${fighterHTML}<div class="event-vs event-fight-separator event-vs-main">VS</div>`;
-        }).join("");
+        const teamBlockHTML = (label, participantRefs) => {
+            const memberNames = participantRefs.map(ref => {
+                const name = participantInfo(ref).name;
+                const escortName = participantEscortName(mainEvent, ref);
+                if (!name) return "";
+                return escortName ? `${name} (With ${escortName})` : name;
+            }).filter(Boolean);
+            return `
+              <div class="event-fighter event-team-block">
+                <div class="event-fighter-fallback event-fighter-photo-main">${escapeHTML(teamNameInitial(label, "?"))}</div>
+                <div class="tiny event-fighter-name">${label}</div>
+                ${memberNames.length ? `<div class="tiny muted event-team-members">${escapeHTML(memberNames.join(", "))}</div>` : ""}
+              </div>
+            `;
+        };
+        const mainEventFightRowHTML = mainEventUseTeamFormat
+            ? `${teamBlockHTML(mainEventTeamALabel, mainEventTeams[0])}<div class="event-vs event-fight-separator event-vs-main">VS</div>${teamBlockHTML(mainEventTeamBLabel, mainEventTeams[1])}`
+            : mainEventDisplayParticipants.map((participantRef, idx) => {
+                const fighterHTML = mainEventFighterHTML(participantRef);
+                if (idx >= mainEventDisplayParticipants.length - 1) return fighterHTML;
+                if (hideVsForMatch) return fighterHTML;
+                return `${fighterHTML}<div class="event-vs event-fight-separator event-vs-main">VS</div>`;
+            }).join("");
         const upcomingShowIds = eventShowIds(upcoming);
         const showBadges = upcomingShowIds.length
             ? upcomingShowIds.map(showId => `<span class="badge"><span class="dot" style="background:${showColor(showId)}"></span>${escapeHTML(showName(showId))}</span>`).join("")
@@ -1730,43 +1819,69 @@ async function openCalendarEventDetails(eventId, { fromCalendar = false } = {}) 
                 ? participants
                 : [participants[0] || "", ""];
             const hideVsForMatch = displayParticipants.length > 2 && !isTagTeamMatchType(m?.matchType);
+            const matchTeams = inferMatchTeams(m?.matchType, displayParticipants, normalizedParticipantTeams(m));
+            const useTeamFormat = isTagTeamMatchType(m?.matchType) && Array.isArray(matchTeams?.[0]) && Array.isArray(matchTeams?.[1]) && matchTeams[0].length && matchTeams[1].length;
+            const teamALabel = useTeamFormat ? teamDisplayName(m, "A", matchTeams[0]) : "Team A";
+            const teamBLabel = useTeamFormat ? teamDisplayName(m, "B", matchTeams[1]) : "Team B";
             const championshipOnTheLine = championshipName(String(m?.championshipId || "").trim());
             const title = m.matchType?.trim() || `Match ${m.num ?? (m._idx + 1)}`;
             const winnerRef = String(m.result ?? "").trim();
             const isPromo = normalizeNameForCompare(winnerRef) === "promo";
             const winnerName = winnerRef === "TEAM:A"
-                ? "Team A"
+                ? teamALabel
                 : winnerRef === "TEAM:B"
-                    ? "Team B"
+                    ? teamBLabel
                     : superstarNameById(winnerRef);
             const pinByName = superstarNameById(String(m.pinBy ?? "").trim());
             const resultText = isPromo ? "" : (winnerName || winnerRef);
             const pinText = pinByName ? ` • Pin by: ${pinByName}` : "";
-            const fightRowHTML = displayParticipants.map((participantRef, idx) => {
+            const fighterBlockHTML = (participantRef) => {
                 const fighter = participantInfo(participantRef);
-                const fighterHTML = `
+                const escortName = participantEscortName(m, participantRef);
+                return `
                   <div class="event-fighter">
                     ${fighter.photo
                         ? `<img class="event-fighter-photo ${isMainEvent ? "event-fighter-photo-main" : ""}" src="${escapeAttr(fighter.photo)}" alt="${escapeAttr(fighter.name)}" />`
                         : `<div class="event-fighter-fallback ${isMainEvent ? "event-fighter-photo-main" : ""}">${fighter.name === "TBD" ? "?" : escapeHTML(superstarInitials(fighter.name))}</div>`
                     }
                     <div class="tiny event-fighter-name">${escapeHTML(fighter.name)}${fighter.isChampion ? ` <span class="event-champ">C</span>` : ``}</div>
+                    ${escortName ? `<div class="tiny muted event-fighter-with">With ${escapeHTML(escortName)}</div>` : ""}
                   </div>
                 `;
-                if (idx >= displayParticipants.length - 1) return fighterHTML;
-                if (hideVsForMatch) return fighterHTML;
-                return `${fighterHTML}<div class="event-vs event-fight-separator ${isMainEvent ? "event-vs-main" : ""}">VS</div>`;
-            }).join("");
+            };
+            const teamBlockHTML = (label, participantRefs) => {
+                const memberNames = participantRefs.map(ref => {
+                    const name = participantInfo(ref).name;
+                    const escortName = participantEscortName(m, ref);
+                    if (!name) return "";
+                    return escortName ? `${name} (With ${escortName})` : name;
+                }).filter(Boolean);
+                return `
+                  <div class="event-fighter event-team-block">
+                    <div class="event-fighter-fallback ${isMainEvent ? "event-fighter-photo-main" : ""}">${escapeHTML(teamNameInitial(label, "?"))}</div>
+                    <div class="tiny event-fighter-name">${label}</div>
+                    ${memberNames.length ? `<div class="tiny muted event-team-members">${escapeHTML(memberNames.join(", "))}</div>` : ""}
+                  </div>
+                `;
+            };
+            const fightRowHTML = useTeamFormat
+                ? `${teamBlockHTML(teamALabel, matchTeams[0])}<div class="event-vs event-fight-separator ${isMainEvent ? "event-vs-main" : ""}">VS</div>${teamBlockHTML(teamBLabel, matchTeams[1])}`
+                : displayParticipants.map((participantRef, idx) => {
+                    const fighterHTML = fighterBlockHTML(participantRef);
+                    if (idx >= displayParticipants.length - 1) return fighterHTML;
+                    if (hideVsForMatch) return fighterHTML;
+                    return `${fighterHTML}<div class="event-vs event-fight-separator ${isMainEvent ? "event-vs-main" : ""}">VS</div>`;
+                }).join("");
 
             return `
               <div class="event-match-card ${isMainEvent ? "main-event-card" : ""} ${championshipOnTheLine ? "has-championship-badge" : ""}">
                 ${championshipOnTheLine ? `<div class="event-match-corner-title">${escapeHTML(championshipOnTheLine)}</div>` : ""}
                 ${isMainEvent ? `<div class="event-main-label">Main Event</div>` : ""}
                 <div class="event-match-title">${escapeHTML(title)}</div>
+                ${resultText ? `<div class="muted tiny event-match-result">Result: ${escapeHTML(resultText)}${escapeHTML(pinText)}</div>` : ``}
                 <div class="event-fight-row">
                   ${fightRowHTML}
                 </div>
-                ${resultText ? `<div class="muted tiny">Result: ${escapeHTML(resultText)}${escapeHTML(pinText)}</div>` : ``}
               </div>
             `;
         }).join("")
@@ -2133,6 +2248,65 @@ async function openPlannerNoteModal({ row, field }) {
     renderPlanner();
 }
 
+async function openPlannerEscortModal({ row, slot }) {
+    const ev = getEvent(plannerEventId);
+    if (!ev || !ev.matches[row]) return;
+    const match = ev.matches[row];
+    const participants = Array.isArray(match?.participants) ? match.participants : [];
+    const participantId = String(participants[slot] || "").trim();
+    if (!participantId) return;
+
+    const participant = participantInfo(participantId);
+    const managers = Array.from(new Set(
+        state.superstars
+            .map(ss => String(ss?.manager || "").trim())
+            .filter(Boolean)
+    )).sort((a, b) => a.localeCompare(b));
+    const superstarOptions = state.superstars
+        .slice()
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map(ss => `<option value="${escapeAttr(escortRefForSuperstar(ss.id))}">Superstar: ${escapeHTML(ss.name)}</option>`)
+        .join("");
+    const managerOptions = managers
+        .map(name => `<option value="${escapeAttr(escortRefForManager(name))}">Manager: ${escapeHTML(name)}</option>`)
+        .join("");
+    const currentEscorts = normalizedParticipantEscorts(match);
+    const currentValue = String(currentEscorts[participantId] || "");
+
+    const bodyHTML = `
+      <div class="stack" style="gap:10px;">
+        <div class="muted">Set ringside accompaniment for <b>${escapeHTML(participant.name)}</b>.</div>
+        <select id="plannerEscortSelect" class="input">
+          <option value="">None</option>
+          ${superstarOptions}
+          ${managerOptions}
+        </select>
+      </div>
+    `;
+    const modalPromise = openModal({
+        title: `Match ${row + 1} • Accompaniment`,
+        bodyHTML,
+        okText: "Save",
+    });
+    const escortSelect = $("#plannerEscortSelect");
+    if (escortSelect) {
+        const options = Array.from(escortSelect.options).map(opt => opt.value);
+        escortSelect.value = options.includes(currentValue) ? currentValue : "";
+    }
+    const ok = await modalPromise;
+    if (!ok?.ok) return;
+
+    const selected = String($("#plannerEscortSelect")?.value || "").trim();
+    const ev2 = getEvent(plannerEventId);
+    if (!ev2 || !ev2.matches[row]) return;
+    const escorts = normalizedParticipantEscorts(ev2.matches[row]);
+    if (!selected) delete escorts[participantId];
+    else escorts[participantId] = selected;
+    ev2.matches[row].participantEscorts = escorts;
+    upsertEvent(ev2);
+    renderPlanner();
+}
+
 function renderPlanner(fromPositions = null) {
     renderPlannerEventSelect();
     const meta = $("#plannerMeta");
@@ -2182,6 +2356,17 @@ function renderPlanner(fromPositions = null) {
         const teamA = teams?.[0] || [];
         const teamB = teams?.[1] || [];
         const isTeamBased = isTeamOrHandicapMatch(m.matchType, participants.length);
+        const isTagTeam = isTagTeamMatchType(m.matchType);
+        const teamALabel = isTagTeam ? teamDisplayName(m, "A", teamA) : "Team A";
+        const teamBLabel = isTagTeam ? teamDisplayName(m, "B", teamB) : "Team B";
+        const teamAFactionOptions = factionOptionsForParticipants(teamA);
+        const teamBFactionOptions = factionOptionsForParticipants(teamB);
+        const teamNameAValue = String(normalizedTeamNames(m).A || "");
+        const teamNameBValue = String(normalizedTeamNames(m).B || "");
+        const teamAOptionValues = new Set(teamAFactionOptions);
+        const teamBOptionValues = new Set(teamBFactionOptions);
+        if (teamNameAValue && !teamAOptionValues.has(teamNameAValue)) teamAFactionOptions.push(teamNameAValue);
+        if (teamNameBValue && !teamBOptionValues.has(teamNameBValue)) teamBFactionOptions.push(teamNameBValue);
         const winningTeam = m.result === "TEAM:A" ? teamA : m.result === "TEAM:B" ? teamB : [];
         const specialResultOptions = `
             <option value="DQ">DQ</option>
@@ -2189,8 +2374,8 @@ function renderPlanner(fromPositions = null) {
         `;
         const winnerOptions = isTeamBased
             ? [
-                teamA.length ? `<option value="TEAM:A">Team A</option>` : "",
-                teamB.length ? `<option value="TEAM:B">Team B</option>` : "",
+                teamA.length ? `<option value="TEAM:A">${escapeHTML(teamALabel)}</option>` : "",
+                teamB.length ? `<option value="TEAM:B">${escapeHTML(teamBLabel)}</option>` : "",
                 specialResultOptions,
             ].join("")
             : [
@@ -2212,6 +2397,13 @@ function renderPlanner(fromPositions = null) {
               <option value="">${slotIdx < 2 ? "(select)" : "(optional)"}</option>
               ${optionsHTML}
             </select>
+            <button
+              type="button"
+              class="btn secondary participant-add-btn"
+              data-open-escort="${slotIdx}"
+              title="Add ringside accompaniment"
+              aria-label="Add ringside accompaniment"
+            >+</button>
             ${isTeamBased ? `
               <select class="cell-input small" data-field="participantTeam" data-slot="${slotIdx}" style="max-width:110px;">
                 <option value="">(team)</option>
@@ -2262,6 +2454,18 @@ function renderPlanner(fromPositions = null) {
         </td>
         <td>
           <div class="stack" style="gap:6px;">
+            ${isTagTeam ? `
+              <div class="row gap wrap">
+                <select class="cell-input small" data-field="teamNameA">
+                  <option value="">Team A</option>
+                  ${teamAFactionOptions.map(name => `<option value="${escapeAttr(name)}">${escapeHTML(name)}</option>`).join("")}
+                </select>
+                <select class="cell-input small" data-field="teamNameB">
+                  <option value="">Team B</option>
+                  ${teamBFactionOptions.map(name => `<option value="${escapeAttr(name)}">${escapeHTML(name)}</option>`).join("")}
+                </select>
+              </div>
+            ` : ``}
             <select class="cell-input small" data-field="result">
               <option value="">(winner)</option>
               ${winnerOptions}
@@ -2320,6 +2524,25 @@ function renderPlanner(fromPositions = null) {
                 }
             }
         }
+        const teamNameASelect = tr.querySelector('[data-field="teamNameA"]');
+        if (teamNameASelect) {
+            const teamNameAValue = String(normalizedTeamNames(match).A || "");
+            const options = Array.from(teamNameASelect.options).map(opt => opt.value);
+            const nextValue = options.includes(teamNameAValue) ? teamNameAValue : "";
+            teamNameASelect.value = nextValue;
+        }
+        const teamNameBSelect = tr.querySelector('[data-field="teamNameB"]');
+        if (teamNameBSelect) {
+            const teamNameBValue = String(normalizedTeamNames(match).B || "");
+            const options = Array.from(teamNameBSelect.options).map(opt => opt.value);
+            const nextValue = options.includes(teamNameBValue) ? teamNameBValue : "";
+            teamNameBSelect.value = nextValue;
+        }
+        $$('[data-open-escort]', tr).forEach((btn, slotIdx) => {
+            const participantId = p[slotIdx] || "";
+            btn.disabled = !participantId;
+            btn.title = participantId ? "Add ringside accompaniment" : "Select a superstar first";
+        });
         const pinBySelect = tr.querySelector('[data-field="pinBy"]');
         if (pinBySelect) {
             const pinByValue = String(match.pinBy || "");
@@ -2484,6 +2707,12 @@ function renderPlanner(fromPositions = null) {
                 input.value = deduped[slotIdx] || "";
             });
             ev2.matches[row].participants = deduped.filter(Boolean);
+            const prevEscorts = normalizedParticipantEscorts(ev2.matches[row]);
+            const nextEscorts = {};
+            ev2.matches[row].participants.forEach(participantId => {
+                if (prevEscorts[participantId]) nextEscorts[participantId] = prevEscorts[participantId];
+            });
+            ev2.matches[row].participantEscorts = nextEscorts;
             const prevTeams = normalizedParticipantTeams(ev2.matches[row]);
             const nextTeams = {};
             deduped.forEach((participantId, slotIdx) => {
@@ -2571,6 +2800,14 @@ function renderPlanner(fromPositions = null) {
             upsertEvent(ev2); // debounced via saveSoon
             renderPlanner();
             return;
+        } else if (field === "teamNameA" || field === "teamNameB") {
+            const names = normalizedTeamNames(ev2.matches[row]);
+            const key = field === "teamNameA" ? "A" : "B";
+            names[key] = String(target.value || "").trim();
+            ev2.matches[row].teamNames = names;
+            upsertEvent(ev2);
+            renderPlanner();
+            return;
         } else if (field === "pinBy") {
             ev2.matches[row].pinBy = target.value;
         } else {
@@ -2619,6 +2856,15 @@ function renderPlanner(fromPositions = null) {
             await openPlannerNoteModal({ row, field });
         });
     });
+    $$("[data-open-escort]").forEach(btn => {
+        btn.addEventListener("click", async () => {
+            const tr = btn.closest("tr");
+            if (!tr) return;
+            const row = Number(tr.dataset.row);
+            const slot = Number(btn.dataset.openEscort);
+            await openPlannerEscortModal({ row, slot });
+        });
+    });
 
     // Add participant slot button
     $$("[data-add-participant]").forEach(btn => {
@@ -2644,6 +2890,13 @@ function renderPlanner(fromPositions = null) {
             const nextCount = currentCount - 1;
             ev2.matches[idx].participantSlots = nextCount;
             ev2.matches[idx].participants = (ev2.matches[idx].participants || []).slice(0, nextCount);
+            const remaining = new Set(ev2.matches[idx].participants || []);
+            const nextEscorts = {};
+            Object.entries(normalizedParticipantEscorts(ev2.matches[idx])).forEach(([participantId, escortRef]) => {
+                if (!remaining.has(participantId)) return;
+                nextEscorts[participantId] = escortRef;
+            });
+            ev2.matches[idx].participantEscorts = nextEscorts;
             upsertEvent(ev2);
             renderPlanner();
         });
@@ -2673,6 +2926,8 @@ function addMatchRow() {
         num: ev.matches.length + 1,
         participants: [],
         participantTeams: {},
+        participantEscorts: {},
+        teamNames: {},
         participantSlots: MIN_PARTICIPANT_SLOTS,
         matchType: "",
         storyline: "",
@@ -3220,6 +3475,8 @@ function generateWeeklyEvents({ startISO, months, rules, defaultRows = 6 }) {
                     num: i + 1,
                     participants: [],
                     participantTeams: {},
+                    participantEscorts: {},
+                    teamNames: {},
                     participantSlots: MIN_PARTICIPANT_SLOTS,
                     matchType: "",
                     storyline: "",
@@ -3280,7 +3537,7 @@ function seedStarterUniverse() {
         showId: raw.id,
         name: `RAW • ${iso}`,
         matches: Array.from({ length: 6 }).map((_, i) => ({
-            num: i + 1, participants: [], participantTeams: {}, participantSlots: MIN_PARTICIPANT_SLOTS, matchType: "", storyline: "", championshipId: "", result: "", pinBy: "", rivalryNotes: ""
+            num: i + 1, participants: [], participantTeams: {}, participantEscorts: {}, teamNames: {}, participantSlots: MIN_PARTICIPANT_SLOTS, matchType: "", storyline: "", championshipId: "", result: "", pinBy: "", rivalryNotes: ""
         }))
     });
 
