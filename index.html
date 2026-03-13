@@ -52,12 +52,12 @@
             <section id="view-dashboard" class="view">
                 <div class="grid">
                     <div class="card">
-                        <div class="card-title">Next Event</div>
+                        <div class="card-title dashboard-card-title">Next Event</div>
                         <div id="nextEvent" class="card-body"></div>
                     </div>
 
                     <div class="card">
-                        <div class="card-title">Weekly Rankings</div>
+                        <div class="card-title dashboard-card-title">Weekly Rankings</div>
                         <div id="weeklyRankings" class="card-body"></div>
                     </div>
                 </div>
@@ -108,13 +108,12 @@
             <section id="view-planner" class="view hidden">
                 <div class="card">
                     <div class="card-body row space gap wrap">
-                        <div class="row gap wrap">
+                        <div class="planner-toolbar">
                             <select id="plannerEventSelect" class="input"></select>
-                            <button id="plannerNewEvent" class="btn secondary">New Event</button>
-                        </div>
-                        <div class="row gap wrap">
-                            <button id="addMatchRow" class="btn">Add Row</button>
-                            <span id="saveState" class="pill muted">Saved</span>
+                            <div class="row gap wrap planner-toolbar-actions">
+                                <button id="addMatchRow" class="btn">Add Row</button>
+                                <span id="saveState" class="pill muted">Saved</span>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -160,28 +159,14 @@
             <!-- ROSTER -->
             <section id="view-roster" class="view hidden">
                 <div class="card">
-                    <div class="card-title">Add Superstar</div>
-                    <div class="card-body roster-add-form">
-                        <input id="ssName" class="input grow" placeholder="Superstar name" />
-                        <input id="ssPhoto" class="input grow" placeholder="Photo URL (optional)" />
-                        <div id="ssShows" class="show-tag-picker grow" aria-label="Assign one or more shows"></div>
-                        <select id="ssDivision" class="input">
-                            <option value="World">World</option>
-                            <option value="Midcard">Midcard</option>
-                            <option value="Tag">Tag</option>
-                            <option value="Women">Women</option>
-                            <option value="Other">Other</option>
-                        </select>
-                        <button id="addSS" class="btn">Add</button>
-                    </div>
-                </div>
-
-                <div class="card">
                     <div class="card-title row space gap wrap">
                         <span>Roster</span>
-                        <div class="row gap wrap roster-filters">
-                            <select id="rosterFilter" class="input"></select>
-                            <input id="rosterSearch" class="input" placeholder="Search…" />
+                        <div class="row gap wrap roster-header-actions">
+                            <div class="row gap wrap roster-filters">
+                                <select id="rosterFilter" class="input"></select>
+                                <input id="rosterSearch" class="input" placeholder="Search…" />
+                            </div>
+                            <button id="openAddSSModal" class="btn">Add Superstar</button>
                         </div>
                     </div>
                     <div id="rosterList" class="card-body"></div>
@@ -213,7 +198,7 @@
                 </div>
             </div>
 
-            <footer class="footer muted">HTML/CSS/JS • LocalStorage • v4.5.2</footer>
+            <footer class="footer muted">HTML/CSS/JS • LocalStorage • v4.5.3</footer>
 
             <!-- Bottom nav (mobile) -->
             <nav class="bottom-nav" aria-label="Bottom navigation">

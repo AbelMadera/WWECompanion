@@ -84,6 +84,16 @@ h1 {
     margin: 10px 0
 }
 
+#calendarTitle,
+#nextEvent {
+    text-align: center;
+}
+
+#weeklyRankings>.muted,
+#weeklyRankings>.tiny {
+    text-align: center;
+}
+
 .h3 {
     font-size: 14px;
     font-weight: 900;
@@ -225,6 +235,10 @@ h1 {
     padding: 12px 14px;
     border-bottom: 1px solid var(--line);
     font-weight: 900;
+}
+
+.dashboard-card-title {
+    text-align: center;
 }
 
 .card-body {
@@ -495,6 +509,12 @@ h1 {
     padding: 10px;
 }
 
+.rankings-show-title {
+    display: flex;
+    justify-content: center;
+    text-align: center;
+}
+
 .rankings-list {
     display: flex;
     flex-direction: column;
@@ -640,25 +660,46 @@ h1 {
 .roster-add-form>#ssName,
 .roster-add-form>#ssPhoto,
 .roster-add-form>#ssShows,
-.roster-add-form>#ssDivision,
-.roster-add-form>#addSS {
+.roster-add-form>#ssDivision {
     width: 100%;
     max-width: 100%;
-}
-
-.roster-add-form>#addSS {
-    justify-self: start;
-    min-width: 120px;
 }
 
 .roster-filters {
     width: min(520px, 100%);
 }
 
+.roster-header-actions {
+    margin-left: auto;
+    justify-content: flex-end;
+    width: min(680px, 100%);
+}
+
 .roster-filters>#rosterFilter,
 .roster-filters>#rosterSearch {
     width: 100%;
     max-width: 100%;
+}
+
+.planner-toolbar {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+}
+
+.planner-toolbar>#plannerEventSelect {
+    width: 100%;
+}
+
+.planner-toolbar-actions {
+    align-items: center;
+}
+
+.planner-toolbar>#saveState,
+.planner-toolbar-actions>#saveState {
+    align-self: center;
 }
 
 .event-match-list {
@@ -1178,6 +1219,7 @@ textarea.cell-input {
     padding: 14px 16px;
     border-bottom: 1px solid var(--line);
     font-weight: 900;
+    text-align: center;
 }
 
 .modal-body {
@@ -1821,12 +1863,6 @@ textarea.cell-input {
 
     .roster-add-form>#ssDivision {
         grid-column: 1 / 2;
-    }
-
-    .roster-add-form>#addSS {
-        grid-column: 2 / 3;
-        align-self: end;
-        justify-self: start;
     }
 }
 

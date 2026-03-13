@@ -1576,6 +1576,71 @@ function renderRoster() {
     });
 }
 
+async function openAddSuperstarFlow(draft = null) {
+    const nextDraft = {
+        name: String(draft?.name ?? "").trim(),
+        photo: String(draft?.photo ?? "").trim(),
+        division: String(draft?.division ?? "World").trim() || "World",
+        error: String(draft?.error ?? "").trim(),
+    };
+
+    const bodyHTML = `
+      <div class="stack roster-add-form">
+        ${nextDraft.error ? `<div class="settings-status danger">${escapeHTML(nextDraft.error)}</div>` : ""}
+        <input id="ssName" class="input" placeholder="Superstar name" value="${escapeAttr(nextDraft.name)}" />
+        <input id="ssPhoto" class="input" placeholder="Photo URL (optional)" value="${escapeAttr(nextDraft.photo)}" />
+        <div id="ssShows" class="show-tag-picker" aria-label="Assign one or more shows"></div>
+        <select id="ssDivision" class="input">
+          ${["World", "Midcard", "Tag", "Women", "Other"].map(div => `<option value="${div}" ${div === nextDraft.division ? "selected" : ""}>${div}</option>`).join("")}
+        </select>
+      </div>
+    `;
+
+    const modalPromise = openModal({
+        title: "Add Superstar",
+        bodyHTML,
+        okText: "Add Superstar",
+        cancelText: "Cancel",
+    });
+
+    populateShowSelects();
+    $("#ssName")?.focus();
+
+    const result = await modalPromise;
+    if (!result?.ok) {
+        addSuperstarShowIds = new Set();
+        return false;
+    }
+
+    const name = $("#ssName")?.value.trim() || "";
+    const photo = $("#ssPhoto")?.value.trim() || "";
+    const showIds = Array.from(addSuperstarShowIds);
+    const division = $("#ssDivision")?.value || "World";
+
+    if (!name) {
+        return openAddSuperstarFlow({
+            name,
+            photo,
+            division,
+            error: "Enter a superstar name before saving.",
+        });
+    }
+
+    state.superstars.push(enrichSuperstar({
+        id: uid("ss"),
+        name,
+        photo,
+        showIds,
+        showId: showIds[0] ?? null,
+        division,
+    }));
+    saveSoon();
+    addSuperstarShowIds = new Set();
+    populateShowSelects();
+    renderRoster();
+    return true;
+}
+
 // -------------------- CALENDAR --------------------
 const CALENDAR_DAYS_PER_MONTH = 28;
 let calSelectedISO = getUniverseCurrentISO();
@@ -3969,7 +4034,7 @@ function seedStarterUniverse() {
 
 // -------------------- SELECT POPULATION --------------------
 function populateShowSelects() {
-    // roster form show select
+    // add-superstar show picker
     const ssShows = $("#ssShows");
     if (ssShows) {
         const validIds = new Set(state.shows.map(s => s.id));
@@ -4054,20 +4119,9 @@ $("#addShow").addEventListener("click", () => {
     renderAll();
 });
 
-$("#addSS").addEventListener("click", () => {
-    const name = $("#ssName").value.trim();
-    const photo = $("#ssPhoto").value.trim();
-    const showIds = Array.from(addSuperstarShowIds);
-    const division = $("#ssDivision").value;
-    if (!name) return;
-
-    state.superstars.push(enrichSuperstar({ id: uid("ss"), name, photo, showIds, showId: showIds[0] ?? null, division }));
-    saveSoon();
-    $("#ssName").value = "";
-    $("#ssPhoto").value = "";
+$("#openAddSSModal").addEventListener("click", () => {
     addSuperstarShowIds = new Set();
-    populateShowSelects();
-    renderRoster();
+    openAddSuperstarFlow();
 });
 
 $("#rosterSearch").addEventListener("input", () => renderRoster());
@@ -4127,7 +4181,6 @@ $("#calProgressDay")?.addEventListener("click", () => {
 $("#addEventBtn").addEventListener("click", () => addEventFlow(calSelectedISO));
 
 $("#addMatchRow").addEventListener("click", addMatchRow);
-$("#plannerNewEvent").addEventListener("click", newEventFromPlanner);
 
 $("#quickAddEvent")?.addEventListener("click", () => addEventFlow(getUniverseCurrentISO()));
 $("#quickOpenToday")?.addEventListener("click", () => {
