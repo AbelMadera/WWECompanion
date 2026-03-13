@@ -2959,45 +2959,206 @@ function openPlanner(eventId) {
 }
 
 // -------------------- SETTINGS: POPULATE / GENERATE --------------------
-function renderSettingsTools() {
-    const weeklyList = $("#settingsWeeklyScheduleList");
-    const weeklyStartDate = $("#settingsWeeklyStartDate");
-    const weeklyMonths = $("#settingsWeeklyMonths");
-    const weeklyRows = $("#settingsWeeklyRows");
-    const generateWeeklyBtn = $("#settingsGenerateWeeklyBtn");
-    const showsList = $("#settingsShowsList");
-    const list = $("#championshipsList");
-    if (!weeklyList || !weeklyStartDate || !weeklyMonths || !weeklyRows || !generateWeeklyBtn || !showsList || !list) return;
+const SETTINGS_JSON_EXAMPLE = `{
+  "championships": [
+    { "name": "World Heavyweight Championship" },
+    { "name": "Intercontinental Championship" }
+  ],
+  "shows": [
+    { "name": "RAW", "color": "#d00000" },
+    { "name": "SmackDown", "color": "#1b5cff" }
+  ],
+  "roster": [
+    { "name": "Gunther", "show": "RAW", "division": "World", "championships": ["World Heavyweight Championship"] },
+    { "name": "Becky Lynch", "show": "RAW", "division": "Women" }
+  ],
+  "ples": [
+    { "name": "Backlash", "date": "2026-05-10", "show": "RAW" },
+    { "name": "SummerSlam", "date": "2026-08-09" }
+  ]
+}`;
 
-    const weeklyMap = new Map((state.weeklySchedule || []).map(row => [row.showId, row.weekday]));
-    if (!state.shows.length) {
-        weeklyList.innerHTML = `<div class="muted tiny">Add shows first, then set their weekly day here.</div>`;
-    } else {
-        weeklyList.innerHTML = `
-          <div class="list">
-            ${state.shows.map(s => {
-            const selected = weeklyMap.has(s.id) ? String(weeklyMap.get(s.id)) : "-1";
-            return `
-                <div class="item">
-                  <div class="row space gap wrap">
-                    <span class="badge"><span class="dot" style="background:${s.color}"></span>${escapeHTML(s.name)}</span>
-                    <select class="input" data-weekly-show="${s.id}" style="max-width:220px;">
-                      <option value="-1" ${selected === "-1" ? "selected" : ""}>Not scheduled</option>
-                      ${WEEKDAY_OPTIONS.map(day => `<option value="${day.value}" ${selected === String(day.value) ? "selected" : ""}>${day.label}</option>`).join("")}
-                    </select>
-                  </div>
-                </div>
-              `;
-        }).join("")}
-          </div>
-        `;
+const settingsUiState = {
+    weekly: {
+        message: null,
+        startDate: "",
+        months: "3",
+        rows: "6",
+    },
+    shows: {
+        message: null,
+        editingId: null,
+        deletingId: null,
+    },
+    championships: {
+        message: null,
+        editingId: null,
+        deletingId: null,
+    },
+};
+
+function settingsStatusHTML(id, message) {
+    if (!message?.text) return `<div id="${id}" class="settings-status hidden"></div>`;
+    const toneClass = message.tone ? ` ${message.tone}` : "";
+    return `<div id="${id}" class="settings-status${toneClass}">${escapeHTML(message.text)}</div>`;
+}
+
+function setSettingsStatus(el, text, tone = "info") {
+    if (!el) return;
+    el.className = `settings-status${tone ? ` ${tone}` : ""}`;
+    el.textContent = text;
+}
+
+function resetSettingsPanelState(panelKey) {
+    if (panelKey === "weekly") {
+        settingsUiState.weekly.message = null;
+        settingsUiState.weekly.startDate = settingsUiState.weekly.startDate || getUniverseStartISO();
+        settingsUiState.weekly.months = settingsUiState.weekly.months || "3";
+        settingsUiState.weekly.rows = settingsUiState.weekly.rows || "6";
+        return;
     }
 
-    if (!weeklyStartDate.value) weeklyStartDate.value = getUniverseStartISO();
-    if (!weeklyMonths.value) weeklyMonths.value = "3";
-    if (!weeklyRows.value) weeklyRows.value = "6";
+    if (panelKey === "shows") {
+        settingsUiState.shows.message = null;
+        settingsUiState.shows.editingId = null;
+        settingsUiState.shows.deletingId = null;
+        return;
+    }
 
-    $$("[data-weekly-show]").forEach(sel => {
+    if (panelKey === "championships") {
+        settingsUiState.championships.message = null;
+        settingsUiState.championships.editingId = null;
+        settingsUiState.championships.deletingId = null;
+    }
+}
+
+async function openSettingsPanel(panelKey) {
+    const panels = {
+        weekly: { title: "Weekly Calendar Setup", render: renderWeeklySettingsPanel },
+        shows: { title: "Manage Shows", render: renderShowsSettingsPanel },
+        championships: { title: "Manage Championships", render: renderChampionshipSettingsPanel },
+        data: { title: "Import, Export, and Reset", render: renderDataSettingsPanel },
+    };
+    const panel = panels[panelKey];
+    if (!panel) return;
+
+    resetSettingsPanelState(panelKey);
+    const modalPromise = openModal({
+        title: panel.title,
+        bodyHTML: "",
+        okText: "Close",
+        cancelText: "Close",
+    });
+    $("#modalCancel").classList.add("hidden");
+    panel.render();
+    await modalPromise;
+    $("#modalCancel").classList.remove("hidden");
+}
+
+function renderSettingsTools() {
+    const panels = $("#settingsPanels");
+    if (!panels) return;
+
+    const weeklyCount = (state.weeklySchedule || []).filter(row =>
+        state.shows.some(s => s.id === row.showId) &&
+        Number.isInteger(Number(row.weekday))
+    ).length;
+    const pleCount = state.events.filter(ev => String(ev?.type || "").toLowerCase() === "ppv").length;
+
+    panels.innerHTML = `
+      <button class="settings-launch" data-settings-open="weekly">
+        <span class="settings-launch-title">Weekly Calendar</span>
+        <span class="settings-launch-copy">Assign weekdays to shows and bulk-generate upcoming weekly events.</span>
+        <span class="settings-launch-meta">
+          <span class="pill">${weeklyCount} scheduled</span>
+          <span class="pill">${state.events.length} total events</span>
+        </span>
+      </button>
+      <button class="settings-launch" data-settings-open="shows">
+        <span class="settings-launch-title">Shows</span>
+        <span class="settings-launch-copy">Add, edit, and remove brands without keeping the full list expanded.</span>
+        <span class="settings-launch-meta">
+          <span class="pill">${state.shows.length} shows</span>
+        </span>
+      </button>
+      <button class="settings-launch" data-settings-open="championships">
+        <span class="settings-launch-title">Championships</span>
+        <span class="settings-launch-copy">Manage your active titles in a dedicated panel.</span>
+        <span class="settings-launch-meta">
+          <span class="pill">${state.championships.length} championships</span>
+        </span>
+      </button>
+      <button class="settings-launch" data-settings-open="data">
+        <span class="settings-launch-title">Data Tools</span>
+        <span class="settings-launch-copy">Import JSON, export backups, and reset the universe when needed.</span>
+        <span class="settings-launch-meta">
+          <span class="pill">${state.superstars.length} roster</span>
+          <span class="pill">${pleCount} PLEs</span>
+        </span>
+      </button>
+    `;
+
+    $$("[data-settings-open]", panels).forEach(btn => {
+        btn.onclick = () => {
+            openSettingsPanel(btn.dataset.settingsOpen);
+        };
+    });
+}
+
+function renderWeeklySettingsPanel() {
+    const root = $("#modalBody");
+    if (!root) return;
+
+    settingsUiState.weekly.startDate = settingsUiState.weekly.startDate || getUniverseStartISO();
+    settingsUiState.weekly.months = settingsUiState.weekly.months || "3";
+    settingsUiState.weekly.rows = settingsUiState.weekly.rows || "6";
+
+    const weeklyMap = new Map((state.weeklySchedule || []).map(row => [row.showId, row.weekday]));
+    const weeklyListHTML = !state.shows.length
+        ? `<div class="item"><div class="muted tiny">Add shows first, then assign each show to a weekday here.</div></div>`
+        : `
+            <div class="list">
+              ${state.shows.map(s => {
+                const selected = weeklyMap.has(s.id) ? String(weeklyMap.get(s.id)) : "-1";
+                return `
+                  <div class="item">
+                    <div class="row space gap wrap">
+                      <span class="badge"><span class="dot" style="background:${s.color}"></span>${escapeHTML(s.name)}</span>
+                      <select class="input" data-weekly-show="${s.id}" style="max-width:220px;">
+                        <option value="-1" ${selected === "-1" ? "selected" : ""}>Not scheduled</option>
+                        ${WEEKDAY_OPTIONS.map(day => `<option value="${day.value}" ${selected === String(day.value) ? "selected" : ""}>${day.label}</option>`).join("")}
+                      </select>
+                    </div>
+                  </div>
+                `;
+              }).join("")}
+            </div>
+        `;
+
+    root.innerHTML = `
+      <div class="stack">
+        <div class="muted tiny">Pick a weekday for each show, then generate weekly events onto the calendar.</div>
+        ${settingsStatusHTML("settingsWeeklyStatus", settingsUiState.weekly.message)}
+        ${weeklyListHTML}
+        <div class="weekly-controls">
+          <label class="stack weekly-control weekly-control-date">
+            <span class="muted tiny">Start date</span>
+            <input id="settingsWeeklyStartDate" class="input" type="date" value="${escapeAttr(settingsUiState.weekly.startDate)}" />
+          </label>
+          <label class="stack weekly-control weekly-control-months">
+            <span class="muted tiny">Months</span>
+            <input id="settingsWeeklyMonths" class="input" type="number" min="1" max="24" value="${escapeAttr(settingsUiState.weekly.months)}" />
+          </label>
+          <label class="stack weekly-control weekly-control-rows">
+            <span class="muted tiny">Rows per show</span>
+            <input id="settingsWeeklyRows" class="input" type="number" min="0" max="20" value="${escapeAttr(settingsUiState.weekly.rows)}" />
+          </label>
+          <button class="btn weekly-generate-btn" id="settingsGenerateWeeklyBtn">Populate Calendar</button>
+        </div>
+      </div>
+    `;
+
+    $$("[data-weekly-show]", root).forEach(sel => {
         sel.onchange = () => {
             const showId = sel.dataset.weeklyShow;
             const weekday = Number(sel.value);
@@ -3006,10 +3167,30 @@ function renderSettingsTools() {
                 state.weeklySchedule.push({ showId, weekday });
             }
             saveSoon();
+            renderSettingsTools();
         };
     });
 
-    generateWeeklyBtn.onclick = async () => {
+    const weeklyStartDate = $("#settingsWeeklyStartDate", root);
+    const weeklyMonths = $("#settingsWeeklyMonths", root);
+    const weeklyRows = $("#settingsWeeklyRows", root);
+    const generateWeeklyBtn = $("#settingsGenerateWeeklyBtn", root);
+
+    weeklyStartDate.oninput = () => {
+        settingsUiState.weekly.startDate = weeklyStartDate.value || getUniverseStartISO();
+    };
+    weeklyMonths.oninput = () => {
+        settingsUiState.weekly.months = weeklyMonths.value || "3";
+    };
+    weeklyRows.oninput = () => {
+        settingsUiState.weekly.rows = weeklyRows.value || "6";
+    };
+
+    generateWeeklyBtn.onclick = () => {
+        settingsUiState.weekly.startDate = weeklyStartDate.value || getUniverseStartISO();
+        settingsUiState.weekly.months = weeklyMonths.value || "3";
+        settingsUiState.weekly.rows = weeklyRows.value || "6";
+
         const rules = (state.weeklySchedule || []).filter(row =>
             state.shows.some(s => s.id === row.showId) &&
             Number.isInteger(Number(row.weekday)) &&
@@ -3018,190 +3199,434 @@ function renderSettingsTools() {
         ).map(row => ({ showId: row.showId, weekday: Number(row.weekday) }));
 
         if (!rules.length) {
-            await openModal({
-                title: "No weekly shows set",
-                bodyHTML: `<div class="muted">Set at least one show to a weekday first.</div>`,
-                okText: "OK",
-                cancelText: "Close"
-            });
+            settingsUiState.weekly.message = {
+                tone: "danger",
+                text: "Set at least one show to a weekday first.",
+            };
+            renderWeeklySettingsPanel();
             return;
         }
 
-        const startISO = weeklyStartDate.value || getUniverseStartISO();
-        const months = Math.max(1, Math.min(24, Number(weeklyMonths.value) || 3));
-        const defaultRows = Math.max(0, Math.min(20, Number(weeklyRows.value) || 6));
+        const startISO = settingsUiState.weekly.startDate || getUniverseStartISO();
+        const months = Math.max(1, Math.min(24, Number(settingsUiState.weekly.months) || 3));
+        const defaultRows = Math.max(0, Math.min(20, Number(settingsUiState.weekly.rows) || 6));
         const beforeCount = state.events.length;
 
         generateWeeklyEvents({ startISO, months, rules, defaultRows });
         const added = state.events.length - beforeCount;
+        settingsUiState.weekly.message = {
+            tone: "success",
+            text: `Added ${added} weekly events from ${startISO} for ${months} month(s).`,
+        };
         renderAll();
+        renderWeeklySettingsPanel();
+    };
+}
 
-        await openModal({
-            title: "Calendar populated",
-            bodyHTML: `<div class="muted">Added ${added} weekly events from ${startISO} for ${months} month(s).</div>`,
-            okText: "Done",
-            cancelText: "Close"
-        });
+function renderShowsSettingsPanel() {
+    const root = $("#modalBody");
+    if (!root) return;
+
+    root.innerHTML = `
+      <div class="stack">
+        <div class="row gap wrap">
+          <input id="settingsShowNameInput" class="input grow" placeholder="Show name (RAW, SmackDown, NXT…)" />
+          <input id="settingsShowColorInput" class="input" type="color" value="#d00000" title="Show Color" />
+          <button class="btn" id="settingsAddShowBtn">Add Show</button>
+        </div>
+        ${settingsStatusHTML("settingsShowsStatus", settingsUiState.shows.message)}
+        <div id="settingsShowsList" class="stack">
+          ${!state.shows.length ? `<div class="item"><div class="muted tiny">No shows yet. Add one above.</div></div>` : `
+            <div class="list">
+              ${state.shows.map(show => {
+                const isEditing = settingsUiState.shows.editingId === show.id;
+                const isDeleting = settingsUiState.shows.deletingId === show.id;
+                return `
+                  <div class="item">
+                    <div class="item-title">
+                      <span class="badge"><span class="dot" style="background:${show.color}"></span>${escapeHTML(show.name)}</span>
+                    </div>
+                    <div class="item-sub">Color: ${escapeHTML(show.color)}</div>
+                    <div class="item-actions">
+                      <button class="btn secondary" data-settings-edit-show="${show.id}">${isEditing ? "Cancel" : "Edit"}</button>
+                      <button class="btn danger" data-settings-del-show="${show.id}">${isDeleting ? "Cancel Delete" : "Delete"}</button>
+                    </div>
+                    ${isEditing ? `
+                      <div class="settings-inline-edit">
+                        <div class="row gap wrap">
+                          <input class="input grow" data-settings-show-name="${show.id}" value="${escapeAttr(show.name)}" />
+                          <input class="input" type="color" data-settings-show-color="${show.id}" value="${escapeAttr(show.color || "#d00000")}" />
+                          <button class="btn" data-settings-save-show="${show.id}">Save</button>
+                        </div>
+                      </div>
+                    ` : ""}
+                    ${isDeleting ? `
+                      <div class="settings-confirm-row">
+                        <div class="muted tiny">Delete ${escapeHTML(show.name)}? Superstars become unassigned and old events keep the show reference.</div>
+                        <div class="row gap wrap">
+                          <button class="btn danger" data-settings-confirm-del-show="${show.id}">Confirm Delete</button>
+                          <button class="btn secondary" data-settings-cancel-del-show="${show.id}">Keep Show</button>
+                        </div>
+                      </div>
+                    ` : ""}
+                  </div>
+                `;
+              }).join("")}
+            </div>
+          `}
+        </div>
+      </div>
+    `;
+
+    const status = $("#settingsShowsStatus", root);
+    $("#settingsAddShowBtn", root).onclick = () => {
+        const nameInput = $("#settingsShowNameInput", root);
+        const colorInput = $("#settingsShowColorInput", root);
+        const name = nameInput.value.trim();
+        const color = colorInput.value || "#d00000";
+
+        const result = addShowByNameColor(name, color);
+        if (!result.ok) {
+            if (result.reason === "duplicate_name") {
+                setSettingsStatus(status, "A show with that name already exists.", "danger");
+            } else if (!name) {
+                setSettingsStatus(status, "Enter a show name before adding it.", "danger");
+            }
+            return;
+        }
+
+        settingsUiState.shows.message = { tone: "success", text: `${name} added.` };
+        settingsUiState.shows.editingId = null;
+        settingsUiState.shows.deletingId = null;
+        saveSoon();
+        renderAll();
+        renderShowsSettingsPanel();
     };
 
-    if (!state.shows.length) {
-        showsList.innerHTML = `<div class="muted tiny">No shows yet. Add one above.</div>`;
-    } else {
-        showsList.innerHTML = `
-          <div class="list">
-            ${state.shows.map(s => `
-              <div class="item">
-                <div class="item-title">
-                  <span class="badge"><span class="dot" style="background:${s.color}"></span>${escapeHTML(s.name)}</span>
-                </div>
-                <div class="item-sub">Color: ${escapeHTML(s.color)}</div>
-                <div class="item-actions">
-                  <button class="btn secondary" data-settings-edit-show="${s.id}">Edit</button>
-                  <button class="btn danger" data-settings-del-show="${s.id}">Delete</button>
-                </div>
-              </div>
-            `).join("")}
-          </div>
-        `;
-    }
-
-    $$("[data-settings-edit-show]").forEach(btn => {
-        btn.addEventListener("click", async () => {
+    $$("[data-settings-edit-show]", root).forEach(btn => {
+        btn.onclick = () => {
             const id = btn.dataset.settingsEditShow;
+            settingsUiState.shows.editingId = settingsUiState.shows.editingId === id ? null : id;
+            settingsUiState.shows.deletingId = null;
+            settingsUiState.shows.message = null;
+            renderShowsSettingsPanel();
+        };
+    });
+
+    $$("[data-settings-save-show]", root).forEach(btn => {
+        btn.onclick = () => {
+            const id = btn.dataset.settingsSaveShow;
             const show = getShow(id);
             if (!show) return;
 
-            const ok = await openModal({
-                title: "Edit show",
-                bodyHTML: `
-                  <div class="stack">
-                    <input id="editShowName" class="input" value="${escapeAttr(show.name)}" />
-                    <input id="editShowColor" class="input" type="color" value="${escapeAttr(show.color || "#d00000")}" />
-                  </div>
-                `,
-                okText: "Save"
-            });
-            if (!ok.ok) return;
+            const nameInput = $(`[data-settings-show-name="${id}"]`, root);
+            const colorInput = $(`[data-settings-show-color="${id}"]`, root);
+            const nextName = nameInput.value.trim();
+            const nextColor = normalizeHexColor(colorInput.value) || "#d00000";
 
-            const nextName = $("#editShowName").value.trim();
-            const nextColor = normalizeHexColor($("#editShowColor").value) || "#d00000";
-            if (!nextName) return;
+            if (!nextName) {
+                setSettingsStatus(status, "Show name cannot be empty.", "danger");
+                return;
+            }
 
             const duplicate = state.shows.find(s => s.id !== id && s.name.toLowerCase() === nextName.toLowerCase());
             if (duplicate) {
-                await openModal({
-                    title: "Duplicate show name",
-                    bodyHTML: `<div class="muted">A show with that name already exists.</div>`,
-                    okText: "OK",
-                    cancelText: "Close"
-                });
+                setSettingsStatus(status, "A show with that name already exists.", "danger");
                 return;
             }
 
             state.shows = state.shows.map(s => s.id === id ? { ...s, name: nextName, color: nextColor } : s);
+            settingsUiState.shows.message = { tone: "success", text: `${nextName} updated.` };
+            settingsUiState.shows.editingId = null;
             saveSoon();
             renderAll();
-        });
+            renderShowsSettingsPanel();
+        };
     });
 
-    $$("[data-settings-del-show]").forEach(btn => {
-        btn.addEventListener("click", async () => {
+    $$("[data-settings-del-show]", root).forEach(btn => {
+        btn.onclick = () => {
             const id = btn.dataset.settingsDelShow;
-            const s = getShow(id);
-            if (!s) return;
+            settingsUiState.shows.deletingId = settingsUiState.shows.deletingId === id ? null : id;
+            settingsUiState.shows.editingId = null;
+            settingsUiState.shows.message = null;
+            renderShowsSettingsPanel();
+        };
+    });
 
-            const ok = await openModal({
-                title: "Delete show?",
-                bodyHTML: `
-                  <div>Delete <b>${escapeHTML(s.name)}</b>?</div>
-                  <div class="muted tiny">Superstars assigned to it become unassigned. Existing events keep their showId but will display as “Unknown”.</div>
-                `,
-                okText: "Delete"
-            });
-            if (!ok.ok) return;
+    $$("[data-settings-cancel-del-show]", root).forEach(btn => {
+        btn.onclick = () => {
+            settingsUiState.shows.deletingId = null;
+            renderShowsSettingsPanel();
+        };
+    });
+
+    $$("[data-settings-confirm-del-show]", root).forEach(btn => {
+        btn.onclick = () => {
+            const id = btn.dataset.settingsConfirmDelShow;
+            const show = getShow(id);
+            if (!show) return;
 
             deleteShowAndUnassign(id);
+            settingsUiState.shows.message = { tone: "success", text: `${show.name} deleted.` };
+            settingsUiState.shows.deletingId = null;
             saveSoon();
             renderAll();
-        });
+            renderShowsSettingsPanel();
+        };
+    });
+}
+
+function renderChampionshipSettingsPanel() {
+    const root = $("#modalBody");
+    if (!root) return;
+
+    root.innerHTML = `
+      <div class="stack">
+        <div class="row gap wrap">
+          <input id="championshipNameInput" class="input grow" placeholder="Championship name (e.g., Intercontinental Championship)" />
+          <button class="btn" id="addChampionshipBtn">Add Championship</button>
+        </div>
+        ${settingsStatusHTML("settingsChampionshipStatus", settingsUiState.championships.message)}
+        <div id="championshipsList" class="stack">
+          ${!state.championships.length ? `<div class="item"><div class="muted tiny">No championships yet. Add one above.</div></div>` : `
+            <div class="list">
+              ${state.championships.map(championship => {
+                const isEditing = settingsUiState.championships.editingId === championship.id;
+                const isDeleting = settingsUiState.championships.deletingId === championship.id;
+                return `
+                  <div class="item">
+                    <div class="item-title">${escapeHTML(championship.name)}</div>
+                    <div class="item-actions">
+                      <button class="btn secondary" data-edit-title="${championship.id}">${isEditing ? "Cancel" : "Edit"}</button>
+                      <button class="btn danger" data-del-title="${championship.id}">${isDeleting ? "Cancel Delete" : "Delete"}</button>
+                    </div>
+                    ${isEditing ? `
+                      <div class="settings-inline-edit">
+                        <div class="row gap wrap">
+                          <input class="input grow" data-settings-title-name="${championship.id}" value="${escapeAttr(championship.name)}" />
+                          <button class="btn" data-settings-save-title="${championship.id}">Save</button>
+                        </div>
+                      </div>
+                    ` : ""}
+                    ${isDeleting ? `
+                      <div class="settings-confirm-row">
+                        <div class="muted tiny">Delete ${escapeHTML(championship.name)}? This removes it from every superstar.</div>
+                        <div class="row gap wrap">
+                          <button class="btn danger" data-settings-confirm-del-title="${championship.id}">Confirm Delete</button>
+                          <button class="btn secondary" data-settings-cancel-del-title="${championship.id}">Keep Championship</button>
+                        </div>
+                      </div>
+                    ` : ""}
+                  </div>
+                `;
+              }).join("")}
+            </div>
+          `}
+        </div>
+      </div>
+    `;
+
+    const status = $("#settingsChampionshipStatus", root);
+    $("#addChampionshipBtn", root).onclick = () => {
+        const input = $("#championshipNameInput", root);
+        const name = input.value.trim();
+        if (!name) {
+            setSettingsStatus(status, "Enter a championship name before adding it.", "danger");
+            return;
+        }
+
+        const added = addChampionshipByName(name);
+        if (!added) {
+            setSettingsStatus(status, "A championship with that name already exists.", "danger");
+            return;
+        }
+
+        settingsUiState.championships.message = { tone: "success", text: `${name} added.` };
+        settingsUiState.championships.editingId = null;
+        settingsUiState.championships.deletingId = null;
+        saveSoon();
+        renderAll();
+        renderChampionshipSettingsPanel();
+    };
+
+    $$("[data-edit-title]", root).forEach(btn => {
+        btn.onclick = () => {
+            const id = btn.dataset.editTitle;
+            settingsUiState.championships.editingId = settingsUiState.championships.editingId === id ? null : id;
+            settingsUiState.championships.deletingId = null;
+            settingsUiState.championships.message = null;
+            renderChampionshipSettingsPanel();
+        };
     });
 
-    if (!state.championships.length) {
-        list.innerHTML = `<div class="muted tiny">No championships yet. Add one above.</div>`;
-    } else {
-        list.innerHTML = `
-          <div class="list">
-            ${state.championships.map(c => `
-              <div class="item">
-                <div class="item-title">${escapeHTML(c.name)}</div>
-                <div class="item-actions">
-                  <button class="btn secondary" data-edit-title="${c.id}">Edit</button>
-                  <button class="btn danger" data-del-title="${c.id}">Delete</button>
-                </div>
-              </div>
-            `).join("")}
-          </div>
-        `;
-    }
-
-    $$("[data-edit-title]").forEach(btn => {
-        btn.addEventListener("click", async () => {
-            const id = btn.dataset.editTitle;
+    $$("[data-settings-save-title]", root).forEach(btn => {
+        btn.onclick = () => {
+            const id = btn.dataset.settingsSaveTitle;
             const championship = getChampionship(id);
             if (!championship) return;
 
-            const ok = await openModal({
-                title: "Edit championship",
-                bodyHTML: `<input id="editChampionshipName" class="input" value="${escapeAttr(championship.name)}" />`,
-                okText: "Save"
-            });
-            if (!ok.ok) return;
-
-            const nextName = $("#editChampionshipName").value.trim();
-            if (!nextName) return;
+            const nameInput = $(`[data-settings-title-name="${id}"]`, root);
+            const nextName = nameInput.value.trim();
+            if (!nextName) {
+                setSettingsStatus(status, "Championship name cannot be empty.", "danger");
+                return;
+            }
 
             const duplicate = state.championships.find(c => c.id !== id && c.name.toLowerCase() === nextName.toLowerCase());
             if (duplicate) {
-                await openModal({
-                    title: "Duplicate championship",
-                    bodyHTML: `<div class="muted">A championship with that name already exists.</div>`,
-                    okText: "OK",
-                    cancelText: "Close"
-                });
+                setSettingsStatus(status, "A championship with that name already exists.", "danger");
                 return;
             }
 
             state.championships = state.championships.map(c => c.id === id ? { ...c, name: nextName } : c);
+            settingsUiState.championships.message = { tone: "success", text: `${nextName} updated.` };
+            settingsUiState.championships.editingId = null;
             saveSoon();
-            renderSettingsTools();
-            renderRoster();
-        });
+            renderAll();
+            renderChampionshipSettingsPanel();
+        };
     });
 
-    $$("[data-del-title]").forEach(btn => {
-        btn.addEventListener("click", async () => {
+    $$("[data-del-title]", root).forEach(btn => {
+        btn.onclick = () => {
             const id = btn.dataset.delTitle;
+            settingsUiState.championships.deletingId = settingsUiState.championships.deletingId === id ? null : id;
+            settingsUiState.championships.editingId = null;
+            settingsUiState.championships.message = null;
+            renderChampionshipSettingsPanel();
+        };
+    });
+
+    $$("[data-settings-cancel-del-title]", root).forEach(btn => {
+        btn.onclick = () => {
+            settingsUiState.championships.deletingId = null;
+            renderChampionshipSettingsPanel();
+        };
+    });
+
+    $$("[data-settings-confirm-del-title]", root).forEach(btn => {
+        btn.onclick = () => {
+            const id = btn.dataset.settingsConfirmDelTitle;
             const championship = getChampionship(id);
             if (!championship) return;
-
-            const ok = await openModal({
-                title: "Delete championship?",
-                bodyHTML: `<div>Delete <b>${escapeHTML(championship.name)}</b>?</div>
-                <div class="muted tiny">This removes it from every superstar.</div>`,
-                okText: "Delete"
-            });
-            if (!ok.ok) return;
 
             state.championships = state.championships.filter(c => c.id !== id);
             state.superstars = state.superstars.map(ss => {
                 const nextChamps = parseChampionships(ss.championships).filter(chId => chId !== id);
                 return { ...ss, championships: nextChamps, isChampion: nextChamps.length > 0 };
             });
+            settingsUiState.championships.message = { tone: "success", text: `${championship.name} deleted.` };
+            settingsUiState.championships.deletingId = null;
             saveSoon();
-            renderSettingsTools();
-            renderRoster();
-        });
+            renderAll();
+            renderChampionshipSettingsPanel();
+        };
     });
+}
+
+function renderDataSettingsPanel() {
+    const root = $("#modalBody");
+    if (!root) return;
+
+    root.innerHTML = `
+      <div class="stack">
+        <div class="muted">Import one JSON file to populate championships, shows, roster, and PLEs.</div>
+        <div id="settingsDataStatus" class="settings-status hidden"></div>
+        <div class="row gap wrap">
+          <label class="btn secondary file-btn">
+            Choose JSON
+            <input id="settingsImportInput" type="file" accept="application/json" />
+          </label>
+          <button class="btn" id="settingsImportBtn">Import Data</button>
+          <button class="btn secondary" id="settingsClearFileBtn">Clear Selected File</button>
+        </div>
+        <label class="row gap settings-checkbox-row">
+          <input id="settingsReplaceData" type="checkbox" checked />
+          <span class="muted tiny">Replace existing data before import</span>
+        </label>
+        <div class="h3">Expected JSON</div>
+        <pre class="json-example">${escapeHTML(SETTINGS_JSON_EXAMPLE)}</pre>
+        <div class="hr"></div>
+        <div class="h3">Backup and Reset</div>
+        <div class="row gap wrap">
+          <button class="btn" id="settingsExportBtn">Export Current Universe JSON</button>
+        </div>
+        <div class="settings-danger-box stack">
+          <label class="row gap settings-checkbox-row">
+            <input id="settingsWipeConfirm" type="checkbox" />
+            <span class="muted tiny">I understand this deletes all shows, roster data, and events.</span>
+          </label>
+          <button class="btn danger" id="wipeBtn">Wipe Everything</button>
+        </div>
+      </div>
+    `;
+
+    const status = $("#settingsDataStatus", root);
+    const fileInput = $("#settingsImportInput", root);
+    const replaceInput = $("#settingsReplaceData", root);
+    const wipeConfirm = $("#settingsWipeConfirm", root);
+
+    fileInput.onchange = () => {
+        const file = fileInput.files?.[0];
+        if (!file) {
+            setSettingsStatus(status, "No file selected.", "info");
+            return;
+        }
+        setSettingsStatus(status, `${file.name} selected.`, "info");
+    };
+
+    $("#settingsClearFileBtn", root).onclick = () => {
+        fileInput.value = "";
+        setSettingsStatus(status, "Selected file cleared.", "info");
+    };
+
+    $("#settingsExportBtn", root).onclick = () => {
+        exportUniverseJSON();
+        setSettingsStatus(status, "Current universe exported.", "success");
+    };
+
+    $("#settingsImportBtn", root).onclick = async () => {
+        const file = fileInput.files?.[0];
+        if (!file) {
+            setSettingsStatus(status, "Choose a JSON file first.", "danger");
+            return;
+        }
+
+        const text = await file.text();
+        const payload = safeJSONParse(text);
+        if (!payload) {
+            setSettingsStatus(status, "The selected file is not valid JSON.", "danger");
+            return;
+        }
+
+        try {
+            const result = importPopulateJSON(payload, { replace: replaceInput.checked });
+            fileInput.value = "";
+            renderAll();
+            setSettingsStatus(
+                status,
+                `Added ${result.championships} championships, ${result.shows} shows, ${result.roster} roster entries, and ${result.ples} PLEs.`,
+                "success"
+            );
+        } catch (err) {
+            setSettingsStatus(status, err?.message || "Could not import this file.", "danger");
+        }
+    };
+
+    $("#wipeBtn", root).onclick = () => {
+        if (!wipeConfirm.checked) {
+            setSettingsStatus(status, "Check the confirmation box before wiping everything.", "danger");
+            return;
+        }
+
+        store.wipe();
+        state = normalizeStateData(store.load());
+        plannerEventId = null;
+        renderAll();
+        wipeConfirm.checked = false;
+        setSettingsStatus(status, "All local universe data was cleared.", "success");
+    };
 }
 
 function createShowsFromBulk(text) {
@@ -3722,125 +4147,6 @@ function exportUniverseJSON() {
     a.click();
     URL.revokeObjectURL(url);
 }
-
-$("#settingsExportBtn").addEventListener("click", exportUniverseJSON);
-
-// Settings: Populate / Generate
-$("#addChampionshipBtn").addEventListener("click", async () => {
-    const input = $("#championshipNameInput");
-    const name = input.value.trim();
-    if (!name) return;
-
-    const added = addChampionshipByName(name);
-    if (!added) {
-        await openModal({
-            title: "Duplicate championship",
-            bodyHTML: `<div class="muted">A championship with that name already exists.</div>`,
-            okText: "OK",
-            cancelText: "Close"
-        });
-        return;
-    }
-
-    input.value = "";
-    saveSoon();
-    renderSettingsTools();
-});
-
-$("#settingsAddShowBtn").addEventListener("click", async () => {
-    const nameInput = $("#settingsShowNameInput");
-    const colorInput = $("#settingsShowColorInput");
-    const name = nameInput.value.trim();
-    const color = colorInput.value || "#d00000";
-
-    const result = addShowByNameColor(name, color);
-    if (!result.ok) {
-        if (result.reason === "duplicate_name") {
-            await openModal({
-                title: "Duplicate show name",
-                bodyHTML: `<div class="muted">A show with that name already exists.</div>`,
-                okText: "OK",
-                cancelText: "Close"
-            });
-        }
-        return;
-    }
-
-    nameInput.value = "";
-    saveSoon();
-    renderAll();
-});
-
-$("#wipeBtn").addEventListener("click", async () => {
-    const ok = await openModal({
-        title: "Wipe everything?",
-        bodyHTML: `<div>This deletes all shows, roster, and events.</div>`,
-        okText: "Wipe"
-    });
-    if (!ok.ok) return;
-    store.wipe();
-    state = normalizeStateData(store.load());
-    plannerEventId = null;
-    renderAll();
-});
-
-$("#settingsClearFileBtn").addEventListener("click", () => {
-    $("#settingsImportInput").value = "";
-});
-
-$("#settingsImportBtn").addEventListener("click", async () => {
-    const input = $("#settingsImportInput");
-    const file = input.files?.[0];
-    if (!file) {
-        await openModal({
-            title: "No file selected",
-            bodyHTML: `<div class="muted">Choose a JSON file first.</div>`,
-            okText: "OK",
-            cancelText: "Close"
-        });
-        return;
-    }
-
-    const text = await file.text();
-    const payload = safeJSONParse(text);
-    if (!payload) {
-        await openModal({
-            title: "Invalid JSON",
-            bodyHTML: `<div class="muted">The selected file is not valid JSON.</div>`,
-            okText: "OK",
-            cancelText: "Close"
-        });
-        return;
-    }
-
-    const replace = $("#settingsReplaceData").checked;
-    const ok = await openModal({
-        title: "Import populate file?",
-        bodyHTML: `<div>This will import shows, roster, and PLEs from <b>${escapeHTML(file.name)}</b>.</div>
-        <div class="muted tiny">${replace ? "Existing data will be replaced." : "Existing data will be kept and new rows will be added."}</div>`,
-        okText: "Import"
-    });
-    if (!ok.ok) return;
-
-    try {
-        const result = importPopulateJSON(payload, { replace });
-        renderAll();
-        input.value = "";
-        await openModal({
-            title: "Import complete",
-            bodyHTML: `<div class="muted">Added ${result.championships} championships, ${result.shows} shows, ${result.roster} roster entries, and ${result.ples} PLEs.</div>`,
-            okText: "Done",
-            cancelText: "Close"
-        });
-    } catch (err) {
-        await openModal({
-            title: "Import failed",
-            bodyHTML: `<div class="muted">${escapeHTML(err?.message || "Could not import this file.")}</div>`,
-            okText: "OK",
-            cancelText: "Close"
-        });
-    }
-});
 
 // -------------------- INIT --------------------
 (function init() {
