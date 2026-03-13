@@ -62,9 +62,9 @@ body {
     display: flex;
     justify-content: center;
     align-items: center;
-    gap: 10px;
-    margin-bottom: 12px;
-    min-height: 44px;
+    gap: 4px;
+    margin-bottom: 8px;
+    min-height: 30px;
     text-align: center;
 }
 
@@ -74,7 +74,7 @@ body {
 
 h1 {
     margin: 0;
-    font-size: clamp(20px, 4.8vw, 28px);
+    font-size: clamp(18px, 4.2vw, 24px);
     line-height: 1.1
 }
 
@@ -1286,21 +1286,26 @@ textarea.cell-input {
 
 @media (max-width: 720px) {
     .main {
-        padding: calc(8px + var(--safe-top)) 10px calc(100px + var(--safe-bottom));
+        padding: calc(6px + var(--safe-top)) 10px calc(100px + var(--safe-bottom));
     }
 
     .topbar {
         flex-direction: column;
-        align-items: stretch;
-        gap: 8px;
+        justify-content: center;
+        align-items: center;
+        gap: 2px;
+        min-height: 42px;
+        padding: 6px 0;
+        margin-bottom: 6px;
     }
 
     .topbar-actions {
-        justify-content: flex-start;
+        justify-content: center;
+        width: 100%;
     }
 
     h1 {
-        font-size: clamp(18px, 6.2vw, 21px);
+        font-size: clamp(17px, 5.6vw, 19px);
     }
 
     .card {
