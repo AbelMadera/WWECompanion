@@ -2168,14 +2168,12 @@ function renderPlannerEventSelect() {
 
 function plannerRosterOptions(ev) {
     const eventShows = eventShowIds(ev);
-    const managers = managerNameSet();
     const roster = eventShows.length
         ? state.superstars.filter(ss => {
-            if (managers.has(ss.name.toLowerCase())) return false;
             const ids = Array.isArray(ss?.showIds) ? ss.showIds : (ss?.showId ? [ss.showId] : []);
             return ids.some(showId => eventShows.includes(showId));
         })
-        : state.superstars.filter(ss => !managers.has(ss.name.toLowerCase()));
+        : state.superstars;
     return roster
         .slice()
         .sort((a, b) => a.name.localeCompare(b.name))
