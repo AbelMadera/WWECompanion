@@ -696,6 +696,7 @@ function computeWeeklyRankings(topN = 3) {
         if (!bonusPoints.has(superstarId)) return;
         bonusPoints.set(superstarId, (bonusPoints.get(superstarId) || 0) + points);
     };
+    const scaledBonus = (points, multiplier = 1) => points * multiplier;
     const addEloDelta = (superstarId, delta) => {
         if (!eloRatings.has(superstarId)) return;
         eloRatings.set(superstarId, (eloRatings.get(superstarId) ?? rules.baseScore) + delta);
@@ -769,9 +770,10 @@ function computeWeeklyRankings(topN = 3) {
         };
     };
 
+    const universeCurrentISO = getUniverseCurrentISO();
     const processedEvents = state.events
         .filter(e => /^\d{4}-\d{2}-\d{2}$/.test(String(e?.date || "")))
-        .filter(e => e.date <= todayISO())
+        .filter(e => e.date < universeCurrentISO || isUniverseDateCompleted(e.date))
         .slice()
         .sort((a, b) => a.date.localeCompare(b.date));
 
@@ -791,7 +793,7 @@ function computeWeeklyRankings(topN = 3) {
             if (isPromoResult(resultValue)) {
                 if (!participantIds.length) return;
                 noteAppearance(participantIds);
-                participantIds.forEach(id => addBonusPoints(id, rules.promoPoints));
+                participantIds.forEach(id => addBonusPoints(id, scaledBonus(rules.promoPoints, matchMultiplier)));
                 return;
             }
 
@@ -805,7 +807,7 @@ function computeWeeklyRankings(topN = 3) {
             if (isDrawLikeResult) {
                 noteAppearance(participantIds);
                 participantIds.forEach(id => {
-                    addBonusPoints(id, rules.drawPoints);
+                    addBonusPoints(id, scaledBonus(rules.drawPoints, matchMultiplier));
                     winStreaks.set(id, 0);
                 });
                 if (hasTeams) {
@@ -827,7 +829,7 @@ function computeWeeklyRankings(topN = 3) {
             if (isDQResult(resultValue)) {
                 noteAppearance(participantIds);
                 participantIds.forEach(id => {
-                    addBonusPoints(id, rules.dqPoints);
+                    addBonusPoints(id, scaledBonus(rules.dqPoints, matchMultiplier));
                     winStreaks.set(id, 0);
                 });
                 return;
@@ -859,16 +861,16 @@ function computeWeeklyRankings(topN = 3) {
                 const bonuses = defeatedOpponentBonuses(losingTeam, rankContext);
                 noteAppearance(participantIds);
                 winningTeam.forEach(id => {
-                    addBonusPoints(id, rules.winPoints + bonuses.rankBonus + bonuses.streakBonus);
+                    addBonusPoints(id, scaledBonus(rules.winPoints + bonuses.rankBonus + bonuses.streakBonus, matchMultiplier));
                     wins.set(id, (wins.get(id) || 0) + 1);
                     winStreaks.set(id, (winStreaks.get(id) || 0) + 1);
                 });
                 losingTeam.forEach(id => {
-                    addBonusPoints(id, rules.lossPoints);
+                    addBonusPoints(id, scaledBonus(rules.lossPoints, matchMultiplier));
                     winStreaks.set(id, 0);
                 });
                 if (pinById && winningTeam.includes(pinById)) {
-                    addBonusPoints(pinById, rules.pinBonus);
+                    addBonusPoints(pinById, scaledBonus(rules.pinBonus, matchMultiplier));
                 }
                 for (const a of teamA) {
                     for (const b of teamB) {
@@ -888,13 +890,16 @@ function computeWeeklyRankings(topN = 3) {
             const losers = participantIds.filter(id => id !== winnerId);
             const bonuses = defeatedOpponentBonuses(losers, rankContext);
             noteAppearance(participantIds);
-            addBonusPoints(winnerId, rules.winPoints + bonuses.rankBonus + bonuses.streakBonus);
+            addBonusPoints(winnerId, scaledBonus(rules.winPoints + bonuses.rankBonus + bonuses.streakBonus, matchMultiplier));
             wins.set(winnerId, (wins.get(winnerId) || 0) + 1);
             winStreaks.set(winnerId, (winStreaks.get(winnerId) || 0) + 1);
             losers.forEach(id => {
-                addBonusPoints(id, rules.lossPoints);
+                addBonusPoints(id, scaledBonus(rules.lossPoints, matchMultiplier));
                 winStreaks.set(id, 0);
             });
+            if (pinById && pinById === winnerId) {
+                addBonusPoints(winnerId, scaledBonus(rules.pinBonus, matchMultiplier));
+            }
             for (let i = 0; i < participantIds.length; i++) {
                 for (let j = i + 1; j < participantIds.length; j++) {
                     const a = participantIds[i];
