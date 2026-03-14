@@ -598,6 +598,20 @@ function toISODateDaysAgo(daysAgo) {
     d.setDate(d.getDate() - daysAgo);
     return toISODateLocal(d);
 }
+const WEEKLY_RANKING_POINTS = {
+    baseScore: 1000,
+    championStartBonus: 15,
+    winPoints: 12,
+    drawPoints: 5,
+    dqPoints: 3,
+    promoPoints: 4,
+    lossPoints: 1,
+    pinBonus: 3,
+    top10WinBonus: 4,
+    top5WinBonus: 7,
+    streakBonusPerWin: 2,
+    maxStreakBonus: 8,
+};
 function resolveMatchParticipantIds(match, superstarNameToId) {
     const ids = [];
     const participants = Array.isArray(match?.participants) ? match.participants : [];
@@ -639,9 +653,7 @@ function matchImportanceMultiplier(event, matchIndex, matchesLength, match) {
     return 1.0;
 }
 function computeWeeklyRankings(topN = 3) {
-    const baseRating = 1500;
-    const kBase = 24;
-    const weekStartISO = toISODateDaysAgo(6);
+    const rules = WEEKLY_RANKING_POINTS;
     const records = computeSuperstarRecords();
 
     const superstarNameToId = new Map(
@@ -650,17 +662,91 @@ function computeWeeklyRankings(topN = 3) {
     const superstarNameById = new Map(
         state.superstars.map(ss => [ss.id, ss.name])
     );
-    const ratings = new Map();
-    const recentForm = new Map();
+    const showIdsBySuperstar = new Map(
+        state.superstars.map(ss => {
+            const ids = Array.isArray(ss?.showIds) && ss.showIds.length
+                ? ss.showIds.map(id => String(id ?? "").trim()).filter(Boolean)
+                : (ss?.showId ? [String(ss.showId).trim()] : []);
+            return [ss.id, Array.from(new Set(ids))];
+        })
+    );
+    const scores = new Map();
+    const wins = new Map();
+    const appearances = new Map();
+    const winStreaks = new Map();
 
     state.superstars.forEach(ss => {
-        const record = superstarRecordById(ss.id, records);
-        const winLossBonus = (toNonNegativeInt(record.wins) - toNonNegativeInt(record.losses)) * 8;
-        const championBonus = ss.isChampion ? 35 : 0;
-        const titleDepthBonus = parseChampionships(ss.championships).length * 10;
-        ratings.set(ss.id, baseRating + winLossBonus + championBonus + titleDepthBonus);
-        recentForm.set(ss.id, 0);
+        scores.set(
+            ss.id,
+            rules.baseScore + (ss.isChampion ? rules.championStartBonus : 0)
+        );
+        wins.set(ss.id, 0);
+        appearances.set(ss.id, 0);
+        winStreaks.set(ss.id, 0);
     });
+
+    const addScore = (superstarId, points) => {
+        if (!scores.has(superstarId)) return;
+        scores.set(superstarId, (scores.get(superstarId) ?? rules.baseScore) + points);
+    };
+    const noteAppearance = (participantIds) => {
+        participantIds.forEach(id => {
+            appearances.set(id, (appearances.get(id) || 0) + 1);
+        });
+    };
+    const buildShowRankContext = () => {
+        const byShow = new Map();
+        state.shows.forEach(show => {
+            const rows = state.superstars
+                .filter(ss => superstarOnShow(ss, show.id))
+                .slice()
+                .sort((a, b) => {
+                    const scoreDiff = (scores.get(b.id) ?? rules.baseScore) - (scores.get(a.id) ?? rules.baseScore);
+                    if (scoreDiff !== 0) return scoreDiff;
+                    const winDiff = (wins.get(b.id) ?? 0) - (wins.get(a.id) ?? 0);
+                    if (winDiff !== 0) return winDiff;
+                    return a.name.localeCompare(b.name);
+                });
+
+            const positions = new Map();
+            rows.forEach((ss, idx) => positions.set(ss.id, idx + 1));
+            byShow.set(show.id, { positions, size: rows.length });
+        });
+        return byShow;
+    };
+    const defeatedOpponentBonuses = (defeatedIds, rankContext) => {
+        let bestRankBonus = 0;
+        let bestStreakBonus = 0;
+
+        defeatedIds.forEach(defeatedId => {
+            if ((appearances.get(defeatedId) || 0) > 0) {
+                const showIds = showIdsBySuperstar.get(defeatedId) || [];
+                showIds.forEach(showId => {
+                    const context = rankContext.get(showId);
+                    const rank = context?.positions.get(defeatedId);
+                    if (!rank || !context) return;
+                    if (context.size >= 5 && rank <= 5) {
+                        bestRankBonus = Math.max(bestRankBonus, rules.top5WinBonus);
+                    } else if (context.size >= 10 && rank <= 10) {
+                        bestRankBonus = Math.max(bestRankBonus, rules.top10WinBonus);
+                    }
+                });
+            }
+
+            const streak = winStreaks.get(defeatedId) || 0;
+            if (streak >= 2) {
+                bestStreakBonus = Math.max(
+                    bestStreakBonus,
+                    Math.min(rules.maxStreakBonus, streak * rules.streakBonusPerWin)
+                );
+            }
+        });
+
+        return {
+            rankBonus: bestRankBonus,
+            streakBonus: bestStreakBonus,
+        };
+    };
 
     const processedEvents = state.events
         .filter(e => /^\d{4}-\d{2}-\d{2}$/.test(String(e?.date || "")))
@@ -670,20 +756,52 @@ function computeWeeklyRankings(topN = 3) {
 
     for (const ev of processedEvents) {
         const matches = Array.isArray(ev.matches) ? ev.matches : [];
-        matches.forEach((match, idx) => {
+        matches.forEach(match => {
             const participantIds = resolveMatchParticipantIds(match, superstarNameToId);
+            const winnerId = resolveMatchWinnerId(match, participantIds, superstarNameById);
+            const pinById = resolveSuperstarIdFromRef(String(match?.pinBy ?? "").trim());
+            const resultValue = String(match?.result ?? "").trim();
+            const normalizedResult = normalizeNameForCompare(resultValue);
+            const isDrawLikeResult = isDrawRecordResult(resultValue)
+                || normalizedResult === "no contest"
+                || normalizedResult === "nc";
+
+            if (isPromoResult(resultValue)) {
+                if (!participantIds.length) return;
+                noteAppearance(participantIds);
+                participantIds.forEach(id => addScore(id, rules.promoPoints));
+                return;
+            }
+
             if (participantIds.length < 2) return;
 
-            const winnerId = resolveMatchWinnerId(match, participantIds, superstarNameById);
-            const pinById = String(match?.pinBy ?? "").trim();
-            const m = matchImportanceMultiplier(ev, idx, matches.length, match);
-            const kEff = kBase * m;
+            if (isDrawLikeResult) {
+                noteAppearance(participantIds);
+                participantIds.forEach(id => {
+                    addScore(id, rules.drawPoints);
+                    winStreaks.set(id, 0);
+                });
+                return;
+            }
 
-            const deltas = new Map();
-            participantIds.forEach(id => deltas.set(id, 0));
+            if (isDQResult(resultValue)) {
+                noteAppearance(participantIds);
+                participantIds.forEach(id => {
+                    addScore(id, rules.dqPoints);
+                    winStreaks.set(id, 0);
+                });
+                return;
+            }
+
+            if (!resultValue || normalizedResult === "no result") {
+                noteAppearance(participantIds);
+                participantIds.forEach(id => winStreaks.set(id, 0));
+                return;
+            }
 
             const participantTeams = normalizedParticipantTeams(match);
             const teams = inferMatchTeams(match?.matchType, participantIds, participantTeams);
+            const rankContext = buildShowRankContext();
             if (teams && teams[0].length && teams[1].length) {
                 const winningTeam = winnerId === "TEAM:A"
                     ? teams[0]
@@ -694,87 +812,48 @@ function computeWeeklyRankings(topN = 3) {
                             : [];
                 const teamA = teams[0];
                 const teamB = teams[1];
-
-                for (const a of teamA) {
-                    for (const b of teamB) {
-                        const ra = ratings.get(a) ?? baseRating;
-                        const rb = ratings.get(b) ?? baseRating;
-                        const ea = 1 / (1 + Math.pow(10, (rb - ra) / 400));
-                        const eb = 1 - ea;
-                        let sa = 0.5;
-                        let sb = 0.5;
-                        if (winningTeam.length) {
-                            if (winningTeam.includes(a)) {
-                                sa = 1;
-                                sb = 0;
-                            } else if (winningTeam.includes(b)) {
-                                sa = 0;
-                                sb = 1;
-                            }
-                        }
-                        deltas.set(a, (deltas.get(a) || 0) + (kEff * (sa - ea)));
-                        deltas.set(b, (deltas.get(b) || 0) + (kEff * (sb - eb)));
-                    }
+                const losingTeam = winningTeam === teamA ? teamB : teamA;
+                if (!winningTeam.length || !losingTeam.length) {
+                    noteAppearance(participantIds);
+                    participantIds.forEach(id => winStreaks.set(id, 0));
+                    return;
                 }
 
-                // Slight extra reward for the pinfall scorer in tag/handicap matches
-                if (pinById && winningTeam.includes(pinById)) {
-                    deltas.set(pinById, (deltas.get(pinById) || 0) + (4 * m));
-                }
-
-                participantIds.forEach(id => {
-                    ratings.set(id, (ratings.get(id) ?? baseRating) + (deltas.get(id) || 0));
+                const bonuses = defeatedOpponentBonuses(losingTeam, rankContext);
+                noteAppearance(participantIds);
+                winningTeam.forEach(id => {
+                    addScore(id, rules.winPoints + bonuses.rankBonus + bonuses.streakBonus);
+                    wins.set(id, (wins.get(id) || 0) + 1);
+                    winStreaks.set(id, (winStreaks.get(id) || 0) + 1);
                 });
-
-                if (ev.date >= weekStartISO) {
-                    participantIds.forEach(id => {
-                        let formDelta = 1.5 * m;
-                        if (winningTeam.length) {
-                            if (winningTeam.includes(id)) formDelta += 8 * m;
-                            else formDelta -= 4 * m;
-                        }
-                        if (pinById && id === pinById && winningTeam.includes(id)) {
-                            formDelta += 2 * m;
-                        }
-                        recentForm.set(id, (recentForm.get(id) || 0) + formDelta);
-                    });
+                losingTeam.forEach(id => {
+                    addScore(id, rules.lossPoints);
+                    winStreaks.set(id, 0);
+                });
+                if (pinById && winningTeam.includes(pinById)) {
+                    addScore(pinById, rules.pinBonus);
                 }
                 return;
             }
 
-            for (let i = 0; i < participantIds.length; i++) {
-                for (let j = i + 1; j < participantIds.length; j++) {
-                    const a = participantIds[i];
-                    const b = participantIds[j];
-                    const ra = ratings.get(a) ?? baseRating;
-                    const rb = ratings.get(b) ?? baseRating;
-                    const ea = 1 / (1 + Math.pow(10, (rb - ra) / 400));
-                    const eb = 1 - ea;
-                    let sa = 0.5;
-                    let sb = 0.5;
-                    if (winnerId === a) {
-                        sa = 1;
-                        sb = 0;
-                    } else if (winnerId === b) {
-                        sa = 0;
-                        sb = 1;
-                    }
-                    deltas.set(a, (deltas.get(a) || 0) + (kEff * (sa - ea)));
-                    deltas.set(b, (deltas.get(b) || 0) + (kEff * (sb - eb)));
-                }
+            if (!winnerId || !participantIds.includes(winnerId)) {
+                noteAppearance(participantIds);
+                participantIds.forEach(id => winStreaks.set(id, 0));
+                return;
             }
 
-            participantIds.forEach(id => {
-                ratings.set(id, (ratings.get(id) ?? baseRating) + (deltas.get(id) || 0));
+            const losers = participantIds.filter(id => id !== winnerId);
+            const bonuses = defeatedOpponentBonuses(losers, rankContext);
+            noteAppearance(participantIds);
+            addScore(winnerId, rules.winPoints + bonuses.rankBonus + bonuses.streakBonus);
+            wins.set(winnerId, (wins.get(winnerId) || 0) + 1);
+            winStreaks.set(winnerId, (winStreaks.get(winnerId) || 0) + 1);
+            losers.forEach(id => {
+                addScore(id, rules.lossPoints);
+                winStreaks.set(id, 0);
             });
-
-            if (ev.date >= weekStartISO) {
-                participantIds.forEach(id => {
-                    let formDelta = 1.5 * m;
-                    if (winnerId === id) formDelta += 8 * m;
-                    else if (winnerId) formDelta -= 4 * m;
-                    recentForm.set(id, (recentForm.get(id) || 0) + formDelta);
-                });
+            if (pinById && pinById === winnerId) {
+                addScore(winnerId, rules.pinBonus);
             }
         });
     }
@@ -785,12 +864,12 @@ function computeWeeklyRankings(topN = 3) {
             .filter(ss => superstarOnShow(ss, show.id))
             .map(ss => ({
                 superstar: ss,
-                score: (ratings.get(ss.id) ?? baseRating) + (recentForm.get(ss.id) ?? 0),
+                score: scores.get(ss.id) ?? rules.baseScore,
             }))
             .sort((a, b) => {
                 if (b.score !== a.score) return b.score - a.score;
-                const bWins = toNonNegativeInt(superstarRecordById(b.superstar.id, records).wins);
-                const aWins = toNonNegativeInt(superstarRecordById(a.superstar.id, records).wins);
+                const bWins = wins.get(b.superstar.id) ?? toNonNegativeInt(superstarRecordById(b.superstar.id, records).wins);
+                const aWins = wins.get(a.superstar.id) ?? toNonNegativeInt(superstarRecordById(a.superstar.id, records).wins);
                 if (bWins !== aWins) {
                     return bWins - aWins;
                 }
