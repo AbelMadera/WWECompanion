@@ -601,6 +601,7 @@ function toISODateDaysAgo(daysAgo) {
 const WEEKLY_RANKING_POINTS = {
     baseScore: 1000,
     championStartBonus: 15,
+    eloK: 20,
     winPoints: 12,
     drawPoints: 5,
     dqPoints: 3,
@@ -670,24 +671,44 @@ function computeWeeklyRankings(topN = 3) {
             return [ss.id, Array.from(new Set(ids))];
         })
     );
-    const scores = new Map();
+    const eloRatings = new Map();
+    const bonusPoints = new Map();
     const wins = new Map();
     const appearances = new Map();
     const winStreaks = new Map();
 
     state.superstars.forEach(ss => {
-        scores.set(
+        eloRatings.set(
             ss.id,
             rules.baseScore + (ss.isChampion ? rules.championStartBonus : 0)
         );
+        bonusPoints.set(ss.id, 0);
         wins.set(ss.id, 0);
         appearances.set(ss.id, 0);
         winStreaks.set(ss.id, 0);
     });
 
-    const addScore = (superstarId, points) => {
-        if (!scores.has(superstarId)) return;
-        scores.set(superstarId, (scores.get(superstarId) ?? rules.baseScore) + points);
+    const compositeScore = (superstarId) => {
+        if (!eloRatings.has(superstarId)) return rules.baseScore;
+        return (eloRatings.get(superstarId) ?? rules.baseScore) + (bonusPoints.get(superstarId) ?? 0);
+    };
+    const addBonusPoints = (superstarId, points) => {
+        if (!bonusPoints.has(superstarId)) return;
+        bonusPoints.set(superstarId, (bonusPoints.get(superstarId) || 0) + points);
+    };
+    const addEloDelta = (superstarId, delta) => {
+        if (!eloRatings.has(superstarId)) return;
+        eloRatings.set(superstarId, (eloRatings.get(superstarId) ?? rules.baseScore) + delta);
+    };
+    const applyHeadToHeadElo = (a, b, scoreA, scoreB, multiplier = 1) => {
+        if (!eloRatings.has(a) || !eloRatings.has(b)) return;
+        const ra = eloRatings.get(a) ?? rules.baseScore;
+        const rb = eloRatings.get(b) ?? rules.baseScore;
+        const ea = 1 / (1 + Math.pow(10, (rb - ra) / 400));
+        const eb = 1 - ea;
+        const kEff = rules.eloK * multiplier;
+        addEloDelta(a, kEff * (scoreA - ea));
+        addEloDelta(b, kEff * (scoreB - eb));
     };
     const noteAppearance = (participantIds) => {
         participantIds.forEach(id => {
@@ -701,7 +722,7 @@ function computeWeeklyRankings(topN = 3) {
                 .filter(ss => superstarOnShow(ss, show.id))
                 .slice()
                 .sort((a, b) => {
-                    const scoreDiff = (scores.get(b.id) ?? rules.baseScore) - (scores.get(a.id) ?? rules.baseScore);
+                    const scoreDiff = compositeScore(b.id) - compositeScore(a.id);
                     if (scoreDiff !== 0) return scoreDiff;
                     const winDiff = (wins.get(b.id) ?? 0) - (wins.get(a.id) ?? 0);
                     if (winDiff !== 0) return winDiff;
@@ -756,7 +777,7 @@ function computeWeeklyRankings(topN = 3) {
 
     for (const ev of processedEvents) {
         const matches = Array.isArray(ev.matches) ? ev.matches : [];
-        matches.forEach(match => {
+        matches.forEach((match, idx) => {
             const participantIds = resolveMatchParticipantIds(match, superstarNameToId);
             const winnerId = resolveMatchWinnerId(match, participantIds, superstarNameById);
             const pinById = resolveSuperstarIdFromRef(String(match?.pinBy ?? "").trim());
@@ -765,29 +786,48 @@ function computeWeeklyRankings(topN = 3) {
             const isDrawLikeResult = isDrawRecordResult(resultValue)
                 || normalizedResult === "no contest"
                 || normalizedResult === "nc";
+            const matchMultiplier = matchImportanceMultiplier(ev, idx, matches.length, match);
 
             if (isPromoResult(resultValue)) {
                 if (!participantIds.length) return;
                 noteAppearance(participantIds);
-                participantIds.forEach(id => addScore(id, rules.promoPoints));
+                participantIds.forEach(id => addBonusPoints(id, rules.promoPoints));
                 return;
             }
 
             if (participantIds.length < 2) return;
 
+            const participantTeams = normalizedParticipantTeams(match);
+            const teams = inferMatchTeams(match?.matchType, participantIds, participantTeams);
+            const hasTeams = Boolean(teams && teams[0].length && teams[1].length);
+            const rankContext = buildShowRankContext();
+
             if (isDrawLikeResult) {
                 noteAppearance(participantIds);
                 participantIds.forEach(id => {
-                    addScore(id, rules.drawPoints);
+                    addBonusPoints(id, rules.drawPoints);
                     winStreaks.set(id, 0);
                 });
+                if (hasTeams) {
+                    for (const a of teams[0]) {
+                        for (const b of teams[1]) {
+                            applyHeadToHeadElo(a, b, 0.5, 0.5, matchMultiplier);
+                        }
+                    }
+                } else {
+                    for (let i = 0; i < participantIds.length; i++) {
+                        for (let j = i + 1; j < participantIds.length; j++) {
+                            applyHeadToHeadElo(participantIds[i], participantIds[j], 0.5, 0.5, matchMultiplier);
+                        }
+                    }
+                }
                 return;
             }
 
             if (isDQResult(resultValue)) {
                 noteAppearance(participantIds);
                 participantIds.forEach(id => {
-                    addScore(id, rules.dqPoints);
+                    addBonusPoints(id, rules.dqPoints);
                     winStreaks.set(id, 0);
                 });
                 return;
@@ -799,10 +839,7 @@ function computeWeeklyRankings(topN = 3) {
                 return;
             }
 
-            const participantTeams = normalizedParticipantTeams(match);
-            const teams = inferMatchTeams(match?.matchType, participantIds, participantTeams);
-            const rankContext = buildShowRankContext();
-            if (teams && teams[0].length && teams[1].length) {
+            if (hasTeams) {
                 const winningTeam = winnerId === "TEAM:A"
                     ? teams[0]
                     : winnerId === "TEAM:B"
@@ -822,16 +859,22 @@ function computeWeeklyRankings(topN = 3) {
                 const bonuses = defeatedOpponentBonuses(losingTeam, rankContext);
                 noteAppearance(participantIds);
                 winningTeam.forEach(id => {
-                    addScore(id, rules.winPoints + bonuses.rankBonus + bonuses.streakBonus);
+                    addBonusPoints(id, rules.winPoints + bonuses.rankBonus + bonuses.streakBonus);
                     wins.set(id, (wins.get(id) || 0) + 1);
                     winStreaks.set(id, (winStreaks.get(id) || 0) + 1);
                 });
                 losingTeam.forEach(id => {
-                    addScore(id, rules.lossPoints);
+                    addBonusPoints(id, rules.lossPoints);
                     winStreaks.set(id, 0);
                 });
                 if (pinById && winningTeam.includes(pinById)) {
-                    addScore(pinById, rules.pinBonus);
+                    addBonusPoints(pinById, rules.pinBonus);
+                }
+                for (const a of teamA) {
+                    for (const b of teamB) {
+                        const teamAWon = winningTeam === teamA;
+                        applyHeadToHeadElo(a, b, teamAWon ? 1 : 0, teamAWon ? 0 : 1, matchMultiplier);
+                    }
                 }
                 return;
             }
@@ -845,15 +888,25 @@ function computeWeeklyRankings(topN = 3) {
             const losers = participantIds.filter(id => id !== winnerId);
             const bonuses = defeatedOpponentBonuses(losers, rankContext);
             noteAppearance(participantIds);
-            addScore(winnerId, rules.winPoints + bonuses.rankBonus + bonuses.streakBonus);
+            addBonusPoints(winnerId, rules.winPoints + bonuses.rankBonus + bonuses.streakBonus);
             wins.set(winnerId, (wins.get(winnerId) || 0) + 1);
             winStreaks.set(winnerId, (winStreaks.get(winnerId) || 0) + 1);
             losers.forEach(id => {
-                addScore(id, rules.lossPoints);
+                addBonusPoints(id, rules.lossPoints);
                 winStreaks.set(id, 0);
             });
-            if (pinById && pinById === winnerId) {
-                addScore(winnerId, rules.pinBonus);
+            for (let i = 0; i < participantIds.length; i++) {
+                for (let j = i + 1; j < participantIds.length; j++) {
+                    const a = participantIds[i];
+                    const b = participantIds[j];
+                    if (winnerId === a) {
+                        applyHeadToHeadElo(a, b, 1, 0, matchMultiplier);
+                    } else if (winnerId === b) {
+                        applyHeadToHeadElo(a, b, 0, 1, matchMultiplier);
+                    } else {
+                        applyHeadToHeadElo(a, b, 0.5, 0.5, matchMultiplier);
+                    }
+                }
             }
         });
     }
@@ -864,7 +917,7 @@ function computeWeeklyRankings(topN = 3) {
             .filter(ss => superstarOnShow(ss, show.id))
             .map(ss => ({
                 superstar: ss,
-                score: scores.get(ss.id) ?? rules.baseScore,
+                score: compositeScore(ss.id),
             }))
             .sort((a, b) => {
                 if (b.score !== a.score) return b.score - a.score;
