@@ -1811,9 +1811,11 @@ function renderCalendar() {
         const visibleEvents = events.slice(0, 2);
         const badges = visibleEvents.map(e => {
             const shortType = e.type === "ppv" ? "PLE" : "WK";
-            const pillStyle = e.type === "ppv"
-                ? "background:#ffffff;color:#111111;border-color:#ffffff;"
-                : `background:${showColor(e.showId)};color:#ffffff;border-color:${showColor(e.showId)};`;
+            const pillStyle = done
+                ? "background:rgba(159,159,170,.18);color:#c8c8d3;border-color:rgba(159,159,170,.32);"
+                : e.type === "ppv"
+                    ? "background:#ffffff;color:#111111;border-color:#ffffff;"
+                    : `background:${showColor(e.showId)};color:#ffffff;border-color:${showColor(e.showId)};`;
             return `<span class="cal-pill" style="${pillStyle}" title="${escapeAttr(e.name || "(Unnamed Event)")}">${shortType}</span>`;
         }).join("");
         const overflow = events.length > visibleEvents.length
