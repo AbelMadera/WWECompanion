@@ -3182,6 +3182,27 @@ const SETTINGS_JSON_EXAMPLE = `{
   ]
 }`;
 
+function looksLikeUniverseSnapshot(payload) {
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false;
+    const hasCoreStateArrays = Array.isArray(payload.shows)
+        && Array.isArray(payload.superstars)
+        && Array.isArray(payload.events);
+    const hasUniverseProgress = Array.isArray(payload.completedDates)
+        || Array.isArray(payload.weeklySchedule)
+        || isISODate(payload.universeStartDate);
+    return Boolean(payload.version) && hasCoreStateArrays && hasUniverseProgress;
+}
+
+function syncUniverseUiState() {
+    const universeCurrentISO = getUniverseCurrentISO();
+    calSelectedISO = universeCurrentISO;
+    calCursor = parseISO(universeCurrentISO);
+    calCursor.setDate(1);
+    calCursor.setHours(0, 0, 0, 0);
+    const sortedEvents = [...state.events].sort((a, b) => a.date.localeCompare(b.date));
+    plannerEventId = sortedEvents[0]?.id || null;
+}
+
 const settingsUiState = {
     weekly: {
         message: null,
@@ -3735,7 +3756,7 @@ function renderDataSettingsPanel() {
 
     root.innerHTML = `
       <div class="stack">
-        <div class="muted">Import one JSON file to populate championships, shows, roster, and PLEs.</div>
+        <div class="muted">Import a full exported backup to restore your universe exactly where you left it, or use a smaller JSON file to populate championships, shows, roster, and PLEs.</div>
         <div id="settingsDataStatus" class="settings-status hidden"></div>
         <div class="row gap wrap">
           <label class="btn secondary file-btn">
@@ -3749,12 +3770,12 @@ function renderDataSettingsPanel() {
           <input id="settingsReplaceData" type="checkbox" checked />
           <span class="muted tiny">Replace existing data before import</span>
         </label>
-        <div class="h3">Expected JSON</div>
+        <div class="h3">Populate JSON Example</div>
         <pre class="json-example">${escapeHTML(SETTINGS_JSON_EXAMPLE)}</pre>
         <div class="hr"></div>
         <div class="h3">Backup and Reset</div>
         <div class="row gap wrap">
-          <button class="btn" id="settingsExportBtn">Export Current Universe JSON</button>
+          <button class="btn" id="settingsExportBtn">Export Full Universe Backup</button>
         </div>
         <div class="settings-danger-box stack">
           <label class="row gap settings-checkbox-row">
@@ -3787,7 +3808,7 @@ function renderDataSettingsPanel() {
 
     $("#settingsExportBtn", root).onclick = () => {
         exportUniverseJSON();
-        setSettingsStatus(status, "Current universe exported.", "success");
+        setSettingsStatus(status, "Full universe backup exported.", "success");
     };
 
     $("#settingsImportBtn", root).onclick = async () => {
@@ -3810,7 +3831,9 @@ function renderDataSettingsPanel() {
             renderAll();
             setSettingsStatus(
                 status,
-                `Added ${result.championships} championships, ${result.shows} shows, ${result.roster} roster entries, and ${result.ples} PLEs.`,
+                result.mode === "snapshot"
+                    ? `Universe restored: ${result.roster} roster entries, ${result.championships} championships, ${result.shows} shows, ${result.events} events, ${result.weeklySchedule} weekly rules, and ${result.completedDates} completed days loaded.`
+                    : `Added ${result.championships} championships, ${result.shows} shows, ${result.roster} roster entries, and ${result.ples} PLEs.`,
                 "success"
             );
         } catch (err) {
@@ -3927,6 +3950,26 @@ function addChampionshipByName(rawName) {
 function importPopulateJSON(payload, { replace = true } = {}) {
     if (!payload || typeof payload !== "object") {
         throw new Error("Invalid JSON root. Expected an object.");
+    }
+
+    if (looksLikeUniverseSnapshot(payload)) {
+        if (!replace) {
+            throw new Error("Full universe backups restore the entire save. Leave replace enabled to import this file.");
+        }
+        state = normalizeStateData(payload);
+        addSuperstarShowIds = new Set();
+        syncUniverseUiState();
+        saveSoon();
+        return {
+            mode: "snapshot",
+            championships: state.championships.length,
+            shows: state.shows.length,
+            roster: state.superstars.length,
+            ples: state.events.filter(event => event.type === "ppv").length,
+            events: state.events.length,
+            completedDates: state.completedDates.length,
+            weeklySchedule: state.weeklySchedule.length,
+        };
     }
 
     if (replace) {
@@ -4335,7 +4378,7 @@ function exportUniverseJSON() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `universe-booker-export-${todayISO()}.json`;
+    a.download = `universe-booker-backup-${todayISO()}.json`;
     a.click();
     URL.revokeObjectURL(url);
 }
