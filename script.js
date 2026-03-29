@@ -725,15 +725,22 @@ const WEEKLY_RANKING_POINTS = {
     championStartBonus: 15,
     eloK: 20,
     winPoints: 12,
-    drawPoints: 5,
-    dqPoints: 3,
-    promoPoints: 4,
-    lossPoints: 1,
-    pinBonus: 3,
+    appearancePoints: 1.5,
+    drawPoints: 4,
+    dqPoints: 2,
+    promoPoints: 3,
+    lossPoints: 0.75,
+    pinBonus: 2,
     top10WinBonus: 4,
     top5WinBonus: 7,
     streakBonusPerWin: 2,
     maxStreakBonus: 8,
+    mainEventBonus: 0.25,
+    ppvMultiplier: 1.3,
+    titleMultiplier: 1.55,
+    titlePpvMultiplier: 1.75,
+    teamMatchPointMultiplier: 0.72,
+    teamMatchEloMultiplier: 0.42,
 };
 function resolveMatchParticipantIds(match, superstarNameToId) {
     const ids = [];
@@ -792,11 +799,12 @@ function matchImportanceMultiplier(event, matchIndex, matchesLength, match) {
     const isPpv = event.type === "ppv";
     const titleHint = `${match?.matchType || ""} ${match?.storyline || ""}`.toLowerCase();
     const isTitle = /title|championship|champ\b/.test(titleHint);
-    if (isTitle && isPpv) return 1.85;
-    if (isTitle) return 1.6;
-    if (isPpv) return 1.35;
-    if (isMainEvent) return 1.15;
-    return 1.0;
+    let multiplier = 1.0;
+    if (isTitle && isPpv) multiplier = WEEKLY_RANKING_POINTS.titlePpvMultiplier;
+    else if (isTitle) multiplier = WEEKLY_RANKING_POINTS.titleMultiplier;
+    else if (isPpv) multiplier = WEEKLY_RANKING_POINTS.ppvMultiplier;
+    if (isMainEvent) multiplier += WEEKLY_RANKING_POINTS.mainEventBonus;
+    return multiplier;
 }
 function computeWeeklyRankings(topN = 3) {
     const rules = WEEKLY_RANKING_POINTS;
@@ -860,6 +868,18 @@ function computeWeeklyRankings(topN = 3) {
         participantIds.forEach(id => {
             appearances.set(id, (appearances.get(id) || 0) + 1);
         });
+    };
+    const teamScoreMultiplier = (teamGroups, matchMultiplier) => {
+        if (!(Array.isArray(teamGroups) && teamGroups.length >= 2)) return matchMultiplier;
+        return matchMultiplier * rules.teamMatchPointMultiplier;
+    };
+    const teamEloMultiplier = (teamGroups, matchMultiplier) => {
+        if (!(Array.isArray(teamGroups) && teamGroups.length >= 2)) return matchMultiplier;
+        return matchMultiplier * rules.teamMatchEloMultiplier / Math.max(1, teamGroups.length - 1);
+    };
+    const awardParticipationPoints = (participantIds, matchMultiplier, teamGroups = []) => {
+        const effectiveMultiplier = teamScoreMultiplier(teamGroups, matchMultiplier);
+        participantIds.forEach(id => addBonusPoints(id, scaledBonus(rules.appearancePoints, effectiveMultiplier)));
     };
     const buildShowRankContext = () => {
         const byShow = new Map();
@@ -948,25 +968,28 @@ function computeWeeklyRankings(topN = 3) {
             const teams = inferMatchTeams(match?.matchType, participantIds, participantTeams);
             const hasTeams = teams.length >= 2 && teams.every(group => group.participants.length);
             const rankContext = buildShowRankContext();
+            const scoreMultiplier = hasTeams ? teamScoreMultiplier(teams, matchMultiplier) : matchMultiplier;
+            const eloMultiplier = hasTeams ? teamEloMultiplier(teams, matchMultiplier) : matchMultiplier;
 
             if (isDrawLikeResult) {
                 noteAppearance(participantIds);
+                awardParticipationPoints(participantIds, matchMultiplier, hasTeams ? teams : []);
                 participantIds.forEach(id => {
-                    addBonusPoints(id, scaledBonus(rules.drawPoints, matchMultiplier));
+                    addBonusPoints(id, scaledBonus(rules.drawPoints, scoreMultiplier));
                     winStreaks.set(id, 0);
                 });
                 if (hasTeams) {
                     forEachTeamPairing(teams, (teamA, teamB) => {
                         for (const a of teamA.participants) {
                             for (const b of teamB.participants) {
-                                applyHeadToHeadElo(a, b, 0.5, 0.5, matchMultiplier);
+                                applyHeadToHeadElo(a, b, 0.5, 0.5, eloMultiplier);
                             }
                         }
                     });
                 } else {
                     for (let i = 0; i < participantIds.length; i++) {
                         for (let j = i + 1; j < participantIds.length; j++) {
-                            applyHeadToHeadElo(participantIds[i], participantIds[j], 0.5, 0.5, matchMultiplier);
+                            applyHeadToHeadElo(participantIds[i], participantIds[j], 0.5, 0.5, eloMultiplier);
                         }
                     }
                 }
@@ -975,8 +998,9 @@ function computeWeeklyRankings(topN = 3) {
 
             if (isDQResult(resultValue)) {
                 noteAppearance(participantIds);
+                awardParticipationPoints(participantIds, matchMultiplier, hasTeams ? teams : []);
                 participantIds.forEach(id => {
-                    addBonusPoints(id, scaledBonus(rules.dqPoints, matchMultiplier));
+                    addBonusPoints(id, scaledBonus(rules.dqPoints, scoreMultiplier));
                     winStreaks.set(id, 0);
                 });
                 return;
@@ -984,6 +1008,7 @@ function computeWeeklyRankings(topN = 3) {
 
             if (!resultValue || normalizedResult === "no result") {
                 noteAppearance(participantIds);
+                awardParticipationPoints(participantIds, matchMultiplier, hasTeams ? teams : []);
                 participantIds.forEach(id => winStreaks.set(id, 0));
                 return;
             }
@@ -1000,21 +1025,22 @@ function computeWeeklyRankings(topN = 3) {
 
                 const bonuses = defeatedOpponentBonuses(losers, rankContext);
                 noteAppearance(participantIds);
+                awardParticipationPoints(participantIds, matchMultiplier, teams);
                 winners.forEach(id => {
-                    addBonusPoints(id, scaledBonus(rules.winPoints + bonuses.rankBonus + bonuses.streakBonus, matchMultiplier));
+                    addBonusPoints(id, scaledBonus(rules.winPoints + bonuses.rankBonus + bonuses.streakBonus, scoreMultiplier));
                     wins.set(id, (wins.get(id) || 0) + 1);
                     winStreaks.set(id, (winStreaks.get(id) || 0) + 1);
                 });
                 losers.forEach(id => {
-                    addBonusPoints(id, scaledBonus(rules.lossPoints, matchMultiplier));
+                    addBonusPoints(id, scaledBonus(rules.lossPoints, scoreMultiplier));
                     winStreaks.set(id, 0);
                 });
                 if (pinById && winners.includes(pinById)) {
-                    addBonusPoints(pinById, scaledBonus(rules.pinBonus, matchMultiplier));
+                    addBonusPoints(pinById, scaledBonus(rules.pinBonus, scoreMultiplier));
                 }
                 winners.forEach(a => {
                     losers.forEach(b => {
-                        applyHeadToHeadElo(a, b, 1, 0, matchMultiplier);
+                        applyHeadToHeadElo(a, b, 1, 0, eloMultiplier);
                     });
                 });
                 return;
@@ -1029,26 +1055,27 @@ function computeWeeklyRankings(topN = 3) {
             const losers = participantIds.filter(id => id !== winnerId);
             const bonuses = defeatedOpponentBonuses(losers, rankContext);
             noteAppearance(participantIds);
-            addBonusPoints(winnerId, scaledBonus(rules.winPoints + bonuses.rankBonus + bonuses.streakBonus, matchMultiplier));
+            awardParticipationPoints(participantIds, matchMultiplier);
+            addBonusPoints(winnerId, scaledBonus(rules.winPoints + bonuses.rankBonus + bonuses.streakBonus, scoreMultiplier));
             wins.set(winnerId, (wins.get(winnerId) || 0) + 1);
             winStreaks.set(winnerId, (winStreaks.get(winnerId) || 0) + 1);
             losers.forEach(id => {
-                addBonusPoints(id, scaledBonus(rules.lossPoints, matchMultiplier));
+                addBonusPoints(id, scaledBonus(rules.lossPoints, scoreMultiplier));
                 winStreaks.set(id, 0);
             });
             if (pinById && pinById === winnerId) {
-                addBonusPoints(winnerId, scaledBonus(rules.pinBonus, matchMultiplier));
+                addBonusPoints(winnerId, scaledBonus(rules.pinBonus, scoreMultiplier));
             }
             for (let i = 0; i < participantIds.length; i++) {
                 for (let j = i + 1; j < participantIds.length; j++) {
                     const a = participantIds[i];
                     const b = participantIds[j];
                     if (winnerId === a) {
-                        applyHeadToHeadElo(a, b, 1, 0, matchMultiplier);
+                        applyHeadToHeadElo(a, b, 1, 0, eloMultiplier);
                     } else if (winnerId === b) {
-                        applyHeadToHeadElo(a, b, 0, 1, matchMultiplier);
+                        applyHeadToHeadElo(a, b, 0, 1, eloMultiplier);
                     } else {
-                        applyHeadToHeadElo(a, b, 0.5, 0.5, matchMultiplier);
+                        applyHeadToHeadElo(a, b, 0.5, 0.5, eloMultiplier);
                     }
                 }
             }
