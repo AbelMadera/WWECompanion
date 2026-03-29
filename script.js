@@ -620,6 +620,21 @@ function teamNameInitial(name, fallback = "?") {
     if (!value) return fallback;
     return value[0].toUpperCase();
 }
+function multiTeamFightHTML(teamGroups, renderTeamBlockHTML, extraVsClass = "") {
+    const count = Array.isArray(teamGroups) ? teamGroups.length : 0;
+    if (count <= 2) return "";
+    const vsClass = ["event-vs", "event-fight-cluster-vs", extraVsClass].filter(Boolean).join(" ");
+    return `
+      <div class="event-fight-cluster team-count-${count}">
+        ${teamGroups.map((group, idx) => `
+          <div class="event-fight-cluster-team team-index-${idx + 1}">
+            ${renderTeamBlockHTML(group)}
+          </div>
+        `).join("")}
+        <div class="${vsClass}">VS</div>
+      </div>
+    `;
+}
 function inferTagTeamCount(matchType, participantCount) {
     const t = String(matchType || "").toLowerCase();
     if (!t.includes("tag")) return 0;
@@ -1324,11 +1339,17 @@ function renderDashboard() {
             `;
         };
         const mainEventFightRowHTML = mainEventUseTeamFormat
-            ? mainEventTeams.map((group, idx) => {
-                const blockHTML = teamBlockHTML(teamDisplayName(mainEvent, group.key, group.participants), group.participants);
-                if (idx >= mainEventTeams.length - 1) return blockHTML;
-                return `${blockHTML}<div class="event-vs event-fight-separator event-vs-main">VS</div>`;
-            }).join("")
+            ? mainEventTeams.length > 2
+                ? multiTeamFightHTML(
+                    mainEventTeams,
+                    (group) => teamBlockHTML(teamDisplayName(mainEvent, group.key, group.participants), group.participants),
+                    "event-vs-main"
+                )
+                : mainEventTeams.map((group, idx) => {
+                    const blockHTML = teamBlockHTML(teamDisplayName(mainEvent, group.key, group.participants), group.participants);
+                    if (idx >= mainEventTeams.length - 1) return blockHTML;
+                    return `${blockHTML}<div class="event-vs event-fight-separator event-vs-main">VS</div>`;
+                }).join("")
             : mainEventDisplayParticipants.map((participantRef, idx) => {
                 const fighterHTML = mainEventFighterHTML(participantRef);
                 if (idx >= mainEventDisplayParticipants.length - 1) return fighterHTML;
@@ -2193,11 +2214,17 @@ async function openCalendarEventDetails(eventId, { fromCalendar = false } = {}) 
                 `;
             };
             const fightRowHTML = useTeamFormat
-                ? matchTeams.map((group, idx) => {
-                    const blockHTML = teamBlockHTML(teamDisplayName(m, group.key, group.participants), group.participants);
-                    if (idx >= matchTeams.length - 1) return blockHTML;
-                    return `${blockHTML}<div class="event-vs event-fight-separator ${isMainEvent ? "event-vs-main" : ""}">VS</div>`;
-                }).join("")
+                ? matchTeams.length > 2
+                    ? multiTeamFightHTML(
+                        matchTeams,
+                        (group) => teamBlockHTML(teamDisplayName(m, group.key, group.participants), group.participants),
+                        isMainEvent ? "event-vs-main" : ""
+                    )
+                    : matchTeams.map((group, idx) => {
+                        const blockHTML = teamBlockHTML(teamDisplayName(m, group.key, group.participants), group.participants);
+                        if (idx >= matchTeams.length - 1) return blockHTML;
+                        return `${blockHTML}<div class="event-vs event-fight-separator ${isMainEvent ? "event-vs-main" : ""}">VS</div>`;
+                    }).join("")
                 : displayParticipants.map((participantRef, idx) => {
                     const fighterHTML = fighterBlockHTML(participantRef);
                     if (idx >= displayParticipants.length - 1) return fighterHTML;

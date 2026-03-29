@@ -817,6 +817,79 @@ h1 {
     align-items: center;
 }
 
+.event-fight-cluster {
+    position: relative;
+    width: min(420px, 100%);
+    margin-inline: auto;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    grid-template-rows: repeat(3, minmax(0, 1fr));
+    align-items: center;
+    justify-items: center;
+    column-gap: 14px;
+    row-gap: 18px;
+    min-height: 230px;
+    grid-template-areas:
+        "team-1 . team-2"
+        ". . ."
+        ". team-3 .";
+}
+
+.event-fight-cluster.team-count-4 {
+    min-height: 230px;
+    grid-template-areas:
+        "team-1 . team-2"
+        ". . ."
+        "team-3 . team-4";
+}
+
+.event-fight-cluster.team-count-5 {
+    min-height: 300px;
+    grid-template-areas:
+        "team-1 . team-2"
+        "team-3 . team-4"
+        ". team-5 .";
+}
+
+.event-fight-cluster.team-count-6 {
+    min-height: 320px;
+    grid-template-areas:
+        "team-1 . team-2"
+        "team-3 . team-4"
+        "team-5 . team-6";
+}
+
+.event-fight-cluster-team {
+    width: min(170px, 100%);
+    min-width: 0;
+    display: flex;
+    justify-content: center;
+}
+
+.event-fight-cluster-team.team-index-1 {
+    grid-area: team-1;
+}
+
+.event-fight-cluster-team.team-index-2 {
+    grid-area: team-2;
+}
+
+.event-fight-cluster-team.team-index-3 {
+    grid-area: team-3;
+}
+
+.event-fight-cluster-team.team-index-4 {
+    grid-area: team-4;
+}
+
+.event-fight-cluster-team.team-index-5 {
+    grid-area: team-5;
+}
+
+.event-fight-cluster-team.team-index-6 {
+    grid-area: team-6;
+}
+
 .event-fighter {
     display: flex;
     flex-direction: column;
@@ -840,6 +913,7 @@ h1 {
 }
 
 .event-team-block {
+    width: 100%;
     max-width: 220px;
 }
 
@@ -912,6 +986,49 @@ h1 {
 .event-fight-separator {
     align-self: center;
     flex: 0 0 auto;
+}
+
+.event-fight-cluster-vs {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    padding: 0;
+    border: 0;
+    background: transparent;
+    z-index: 1;
+}
+
+.event-fight-cluster .event-team-block {
+    max-width: 170px;
+}
+
+@media (max-width: 480px) {
+    .event-fight-cluster {
+        column-gap: 10px;
+        row-gap: 12px;
+        min-height: 212px;
+    }
+
+    .event-fight-cluster.team-count-4 {
+        min-height: 212px;
+    }
+
+    .event-fight-cluster.team-count-5 {
+        min-height: 268px;
+    }
+
+    .event-fight-cluster.team-count-6 {
+        min-height: 286px;
+    }
+
+    .event-fight-cluster-team {
+        width: min(136px, 100%);
+    }
+
+    .event-fight-cluster .event-team-block {
+        max-width: 136px;
+    }
 }
 
 .next-event-fight-row {
