@@ -58,11 +58,52 @@ function parseShowRefs(value) {
     }
     return [];
 }
+const CHAMPIONSHIP_GENDER_OPTIONS = ["Male", "Female", "Intergender"];
+const CHAMPIONSHIP_DIVISION_OPTIONS = ["World", "Women", "Midcard", "Tag"];
+function normalizeChampionshipGender(value) {
+    const normalized = normalizeNameForCompare(value);
+    if (!normalized) return "Intergender";
+    if (normalized === "male" || normalized === "men" || normalized === "mens") return "Male";
+    if (normalized === "female" || normalized === "women" || normalized === "womens") return "Female";
+    if (normalized === "intergender" || normalized === "mixed" || normalized === "open" || normalized === "any") return "Intergender";
+    return "Intergender";
+}
+function normalizeSuperstarDivision(value) {
+    const normalized = normalizeNameForCompare(value);
+    if (!normalized) return "World";
+    if (normalized === "women" || normalized === "womens" || normalized === "female") return "Women";
+    if (normalized === "midcard") return "Midcard";
+    if (normalized === "tag" || normalized === "tagteam" || normalized === "team") return "Tag";
+    if (normalized === "world" || normalized === "main" || normalized === "mainevent") return "World";
+    return "Other";
+}
+function championshipDivisionLabel(value) {
+    return value === "Women" ? "Women's" : value;
+}
+function inferChampionshipDivisionFromName(name, gender = "Intergender") {
+    const normalizedName = normalizeNameForCompare(name);
+    if (/tag|team/.test(normalizedName)) return "Tag";
+    if (/women|womens|divas/.test(normalizedName)) return "Women";
+    if (/intercontinental|unitedstates|northamerican|television|heritagecup|cruiserweight|european|continental|national/.test(normalizedName)) {
+        return "Midcard";
+    }
+    if (normalizeChampionshipGender(gender) === "Female") return "Women";
+    return "World";
+}
+function normalizeChampionshipDivision(value, name = "", gender = "Intergender") {
+    const normalized = normalizeNameForCompare(value);
+    if (normalized === "women" || normalized === "womens" || normalized === "female") return "Women";
+    if (normalized === "midcard") return "Midcard";
+    if (normalized === "tag" || normalized === "tagteam" || normalized === "team") return "Tag";
+    if (normalized === "world" || normalized === "main" || normalized === "mainevent") return "World";
+    return inferChampionshipDivisionFromName(name, gender);
+}
 function enrichChampionship(championship) {
     const name = typeof championship === "string"
         ? championship.trim()
         : String(championship?.name ?? "").trim();
     if (!name) return null;
+    const gender = normalizeChampionshipGender(championship?.gender);
     const rawShowRefs = Array.from(new Set([
         ...parseShowRefs(championship?.showIds),
         ...parseShowRefs(championship?.shows),
@@ -73,7 +114,8 @@ function enrichChampionship(championship) {
     return {
         id: championship?.id || uid("title"),
         name,
-        gender: String(championship?.gender ?? "").trim(),
+        gender,
+        division: normalizeChampionshipDivision(championship?.division, name, gender),
         showIds: rawShowRefs,
         showId: rawShowRefs[0] ?? null, // legacy compatibility
     };
@@ -169,7 +211,11 @@ function normalizeStateData(sourceState) {
                 .filter(Boolean)
                 .filter(championshipId => {
                     const championship = byId.get(championshipId);
-                    return championshipAvailableForShowIds(championship, validShowIds);
+                    return championshipEligibleForSuperstar(championship, {
+                        ...ss,
+                        showIds: validShowIds,
+                        showId: validShowIds[0] ?? null,
+                    });
                 });
             return {
                 ...ss,
@@ -231,7 +277,7 @@ function defaultState() {
     return {
         version: 2,
         shows: [],        // {id, name, color}
-        championships: [], // {id, name, gender?, showIds:[], showId(legacy)}
+        championships: [], // {id, name, division?, gender?, showIds:[], showId(legacy)}
         superstars: [],   // {id, name, showIds:[], showId(legacy), division}
         weeklySchedule: [], // [{showId, weekday}] where weekday is 0-6
         events: [],       // {id, date, type:"weekly"|"ppv", showId|null, name, matches:[...], defaultRows?}
@@ -343,6 +389,21 @@ function getChampionship(championshipId) {
 function championshipName(championshipId) {
     return getChampionship(championshipId)?.name || "";
 }
+function superstarGender(superstar) {
+    const division = normalizeNameForCompare(superstar?.division);
+    return division === "women" || division === "female" ? "Female" : "Male";
+}
+function championshipEligibleForGenders(championship, genders) {
+    const requiredGenders = Array.from(new Set(
+        (Array.isArray(genders) ? genders : [genders])
+            .map(gender => normalizeChampionshipGender(gender))
+            .filter(Boolean)
+    ));
+    if (!requiredGenders.length) return true;
+    const titleGender = normalizeChampionshipGender(championship?.gender);
+    if (titleGender === "Intergender") return true;
+    return requiredGenders.length === 1 && requiredGenders[0] === titleGender;
+}
 function championshipAvailableForShowIds(championship, showIds) {
     const eventOrRosterShowIds = Array.isArray(showIds) ? showIds.filter(Boolean) : [];
     if (!eventOrRosterShowIds.length) return true;
@@ -350,8 +411,54 @@ function championshipAvailableForShowIds(championship, showIds) {
     if (!champShowIds.length) return true;
     return champShowIds.some(showId => eventOrRosterShowIds.includes(showId));
 }
-function eligibleChampionshipsForShowIds(showIds) {
-    return state.championships.filter(c => championshipAvailableForShowIds(c, showIds));
+function championshipEligibleForDivision(championship, division) {
+    if (!division) return true;
+    const titleDivision = normalizeChampionshipDivision(championship?.division, championship?.name, championship?.gender);
+    const superstarDivision = normalizeSuperstarDivision(division);
+    if (titleDivision !== superstarDivision) return false;
+    return championshipEligibleForGenders(championship, superstarGender({ division }));
+}
+function championshipEligibleForSuperstar(championship, superstar) {
+    if (!championship || !superstar) return true;
+    const showIds = Array.isArray(superstar?.showIds) && superstar.showIds.length
+        ? superstar.showIds
+        : (superstar?.showId ? [superstar.showId] : []);
+    return championshipAvailableForShowIds(championship, showIds)
+        && championshipEligibleForGenders(championship, superstarGender(superstar));
+}
+function championshipEligibleForParticipantIds(championship, participantIds) {
+    const participants = (Array.isArray(participantIds) ? participantIds : [])
+        .map(id => state.superstars.find(ss => ss.id === id))
+        .filter(Boolean);
+    if (!participants.length) return true;
+    return participants.every(superstar => championshipEligibleForDivision(championship, superstar.division))
+        && championshipEligibleForGenders(championship, participants.map(superstarGender));
+}
+function championshipEligibleForMatch(championship, match, showIds) {
+    if (!championshipAvailableForShowIds(championship, showIds)) return false;
+    const participantIds = Array.isArray(match?.participants) ? match.participants.filter(Boolean) : [];
+    return championshipEligibleForParticipantIds(championship, participantIds);
+}
+function eligibleChampionshipsForShowIds(showIds, options = {}) {
+    const participantIds = Array.isArray(options?.participantIds) ? options.participantIds.filter(Boolean) : [];
+    const superstar = options?.superstar || null;
+    const division = String(options?.division ?? "").trim();
+    return state.championships.filter(c => {
+        if (!championshipAvailableForShowIds(c, showIds)) return false;
+        if (participantIds.length && !championshipEligibleForParticipantIds(c, participantIds)) return false;
+        if (superstar && !championshipEligibleForSuperstar(c, superstar)) return false;
+        if (!superstar && division && !championshipEligibleForDivision(c, division)) return false;
+        return true;
+    });
+}
+function championshipShowNames(championship) {
+    const showIds = Array.isArray(championship?.showIds) ? championship.showIds : [];
+    return showIds.map(showName).filter(name => name && name !== "Unknown show" && name !== "No show");
+}
+function championshipScopeSummary(championship) {
+    const shows = championshipShowNames(championship);
+    const showSummary = shows.length ? shows.join(", ") : "Any show";
+    return `${championshipDivisionLabel(normalizeChampionshipDivision(championship?.division, championship?.name, championship?.gender))} • ${normalizeChampionshipGender(championship?.gender)} • ${showSummary}`;
 }
 function superstarChampionshipNames(superstar) {
     return parseChampionships(superstar?.championships)
@@ -1163,6 +1270,236 @@ async function openShowTopTenModal(showId) {
         await openSuperstarDetails(selectedSuperstarId, { readOnly: true });
     }
 }
+function championshipHolderSuperstars(championshipId, showId = "") {
+    return state.superstars
+        .filter(ss => parseChampionships(ss.championships).includes(championshipId))
+        .sort((a, b) => {
+            const aOnShow = showId ? Number(superstarOnShow(a, showId)) : 0;
+            const bOnShow = showId ? Number(superstarOnShow(b, showId)) : 0;
+            if (aOnShow !== bOnShow) return bOnShow - aOnShow;
+            return a.name.localeCompare(b.name);
+        });
+}
+function championshipDashboardCategory(championship) {
+    const division = normalizeChampionshipDivision(championship?.division, championship?.name, championship?.gender);
+    if (division === "World") {
+        const gender = normalizeChampionshipGender(championship?.gender);
+        if (gender === "Female") return "Women's World Championship";
+        if (gender === "Male") return "Men's World Championship";
+        return "World Championship";
+    }
+    if (division === "Women") return "Women's World Championship";
+    if (division === "Midcard") return "Midcard Championship";
+    if (division === "Tag") return "Tag Team Championship";
+    return "Championship";
+}
+function sortChampionshipsForDashboard(a, b) {
+    const divisionOrder = { World: 0, Women: 1, Midcard: 2, Tag: 3, Other: 4 };
+    const aDivision = normalizeChampionshipDivision(a?.division, a?.name, a?.gender);
+    const bDivision = normalizeChampionshipDivision(b?.division, b?.name, b?.gender);
+    const divisionDelta = (divisionOrder[aDivision] ?? 9) - (divisionOrder[bDivision] ?? 9);
+    if (divisionDelta !== 0) return divisionDelta;
+    const genderOrder = { Male: 0, Female: 1, Intergender: 2 };
+    const genderDelta = (genderOrder[normalizeChampionshipGender(a?.gender)] ?? 9) - (genderOrder[normalizeChampionshipGender(b?.gender)] ?? 9);
+    if (genderDelta !== 0) return genderDelta;
+    return String(a?.name || "").localeCompare(String(b?.name || ""));
+}
+async function openShowChampionsModal(showId) {
+    const show = getShow(showId);
+    if (!show) return;
+
+    const championships = state.championships
+        .filter(championship => championshipAvailableForShowIds(championship, [showId]))
+        .sort(sortChampionshipsForDashboard);
+    const usedChampionshipIds = new Set();
+    const takeChampionship = (predicate) => {
+        const championship = championships.find(championship => !usedChampionshipIds.has(championship.id) && predicate(championship));
+        if (championship) usedChampionshipIds.add(championship.id);
+        return championship || null;
+    };
+    const tagTeamLabelForHolders = (holders) => {
+        const factions = Array.from(new Set(holders.map(holder => String(holder?.faction || "").trim()).filter(Boolean)));
+        if (factions.length === 1) return factions[0];
+        return holders.map(holder => holder.name).join(" / ");
+    };
+    const holderVisualHTML = (holder, { featured = false, compact = false } = {}) => {
+        const classSuffix = featured ? "featured" : (compact ? "compact" : "");
+        return holder?.photo
+            ? `<img class="show-board-holder-photo ${classSuffix}" src="${escapeAttr(holder.photo)}" alt="${escapeAttr(holder.name)}" />`
+            : `<div class="show-board-holder-fallback ${classSuffix}">${escapeHTML(superstarInitials(holder?.name || "?"))}</div>`;
+    };
+    const buildFeaturedChampionshipHTML = (championship, emptyLabel) => {
+        const holders = championship ? championshipHolderSuperstars(championship.id, showId) : [];
+        const primaryHolder = holders[0] || null;
+        const championName = primaryHolder?.name || "Vacant";
+        const beltName = championship?.name || emptyLabel;
+        return `
+          <div class="show-board-featured-card">
+            <div class="show-board-featured-nameplate">${escapeHTML(championName)}</div>
+            <div class="show-board-featured-belt">${escapeHTML(beltName)}</div>
+            ${primaryHolder ? `
+              <button type="button" class="show-board-featured-champion" data-open-ss="${primaryHolder.id}">
+                ${holderVisualHTML(primaryHolder, { featured: true })}
+              </button>
+            ` : `
+              <div class="show-board-vacant featured">Vacant</div>
+            `}
+          </div>
+        `;
+    };
+    const buildSinglesRowHTML = (championship) => {
+        const holders = championshipHolderSuperstars(championship.id, showId);
+        const primaryHolder = holders[0] || null;
+        return `
+          <div class="show-board-row">
+            <div class="show-board-row-visual">
+              ${primaryHolder
+                ? `<button type="button" class="show-board-row-portrait-btn" data-open-ss="${primaryHolder.id}">${holderVisualHTML(primaryHolder, { compact: true })}</button>`
+                : `<div class="show-board-holder-fallback compact">?</div>`
+              }
+            </div>
+            ${primaryHolder ? `
+              <button type="button" class="show-board-row-champion" data-open-ss="${primaryHolder.id}">
+                <div class="show-board-row-copy">
+                  <div class="show-board-row-nameplate">${escapeHTML(primaryHolder.name)}</div>
+                  <div class="show-board-row-belt">${escapeHTML(championship.name)}</div>
+                </div>
+              </button>
+            ` : `
+              <div class="show-board-row-copy">
+                <div class="show-board-row-nameplate">Vacant</div>
+                <div class="show-board-row-belt">${escapeHTML(championship.name)}</div>
+              </div>
+            `}
+          </div>
+        `;
+    };
+    const buildTagRowHTML = (championship) => {
+        const holders = championshipHolderSuperstars(championship.id, showId);
+        const teamLabel = holders.length ? tagTeamLabelForHolders(holders) : "";
+        return `
+          <div class="show-board-row tag">
+            <div class="show-board-row-visual tag">
+              ${holders.length
+                ? holders.slice(0, 2).map(holder => `
+                    <button type="button" class="show-board-tag-portrait-btn" data-open-ss="${holder.id}">
+                      ${holderVisualHTML(holder, { compact: true })}
+                    </button>
+                  `).join("")
+                : `<div class="show-board-holder-fallback compact">?</div><div class="show-board-holder-fallback compact">?</div>`
+              }
+            </div>
+            ${holders.length ? `
+              <div class="show-board-tag-champion">
+                <div class="show-board-row-copy">
+                  <div class="show-board-row-nameplate">${escapeHTML(teamLabel)}</div>
+                  <div class="show-board-row-belt">${escapeHTML(championship.name)}</div>
+                  <div class="show-board-row-meta">${escapeHTML(holders.map(holder => holder.name).join(", "))}</div>
+                </div>
+              </div>
+            ` : `
+              <div class="show-board-row-copy">
+                <div class="show-board-row-nameplate">Vacant</div>
+                <div class="show-board-row-belt">${escapeHTML(championship.name)}</div>
+              </div>
+            `}
+          </div>
+        `;
+    };
+    const mensWorldChampionship = takeChampionship(championship => {
+        const division = normalizeChampionshipDivision(championship.division, championship.name, championship.gender);
+        const gender = normalizeChampionshipGender(championship.gender);
+        return division === "World" && gender !== "Female";
+    });
+    const womensWorldChampionship = takeChampionship(championship => {
+        const division = normalizeChampionshipDivision(championship.division, championship.name, championship.gender);
+        const gender = normalizeChampionshipGender(championship.gender);
+        return division === "Women" || (division === "World" && gender === "Female");
+    });
+    const mensMidcardChampionships = championships.filter(championship => {
+        const division = normalizeChampionshipDivision(championship.division, championship.name, championship.gender);
+        const gender = normalizeChampionshipGender(championship.gender);
+        if (usedChampionshipIds.has(championship.id)) return false;
+        return division === "Midcard" && gender !== "Female";
+    });
+    mensMidcardChampionships.forEach(championship => usedChampionshipIds.add(championship.id));
+    const womensMidcardChampionships = championships.filter(championship => {
+        const division = normalizeChampionshipDivision(championship.division, championship.name, championship.gender);
+        const gender = normalizeChampionshipGender(championship.gender);
+        if (usedChampionshipIds.has(championship.id)) return false;
+        return division === "Midcard" && gender === "Female";
+    });
+    womensMidcardChampionships.forEach(championship => usedChampionshipIds.add(championship.id));
+    const mensTagChampionships = championships.filter(championship => {
+        const division = normalizeChampionshipDivision(championship.division, championship.name, championship.gender);
+        const gender = normalizeChampionshipGender(championship.gender);
+        if (usedChampionshipIds.has(championship.id)) return false;
+        return division === "Tag" && gender !== "Female";
+    });
+    mensTagChampionships.forEach(championship => usedChampionshipIds.add(championship.id));
+    const womensTagChampionships = championships.filter(championship => {
+        const division = normalizeChampionshipDivision(championship.division, championship.name, championship.gender);
+        const gender = normalizeChampionshipGender(championship.gender);
+        if (usedChampionshipIds.has(championship.id)) return false;
+        return division === "Tag" && gender === "Female";
+    });
+    womensTagChampionships.forEach(championship => usedChampionshipIds.add(championship.id));
+    const otherChampionships = championships.filter(championship => !usedChampionshipIds.has(championship.id));
+
+    const bodyHTML = championships.length
+        ? `
+            <div class="show-board-modal" style="--show-board-accent:${escapeAttr(show.color)};">
+              <div class="show-board-shell">
+                <div class="show-board-header">${escapeHTML(show.name)}</div>
+                <div class="show-board-featured-grid">
+                  ${buildFeaturedChampionshipHTML(mensWorldChampionship, "Men's World Championship")}
+                  ${buildFeaturedChampionshipHTML(womensWorldChampionship, "Women's World Championship")}
+                </div>
+                <div class="show-board-section">
+                  ${mensMidcardChampionships.map(buildSinglesRowHTML).join("")}
+                  ${womensMidcardChampionships.map(buildSinglesRowHTML).join("")}
+                  ${mensTagChampionships.map(buildTagRowHTML).join("")}
+                  ${womensTagChampionships.map(buildTagRowHTML).join("")}
+                  ${otherChampionships.map(championship => {
+                      const division = normalizeChampionshipDivision(championship.division, championship.name, championship.gender);
+                      return division === "Tag" ? buildTagRowHTML(championship) : buildSinglesRowHTML(championship);
+                  }).join("")}
+                </div>
+              </div>
+            </div>
+          `
+        : `<div class="muted">No championships are assigned to ${escapeHTML(show.name)} yet.</div>`;
+
+    const modalPromise = openModal({
+        title: `${show.name} Champions`,
+        bodyHTML,
+        okText: "Close",
+        cancelText: "Close",
+    });
+
+    const modalCancelBtn = $("#modalCancel");
+    modalCancelBtn.classList.add("hidden");
+    let selectedSuperstarId = "";
+    $$("[data-open-ss]", $("#modalBody")).forEach(el => {
+        const open = () => {
+            selectedSuperstarId = String(el.dataset.openSs || "").trim();
+            closeModal({ ok: false });
+        };
+        el.addEventListener("click", open);
+        el.addEventListener("keydown", (e) => {
+            if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                open();
+            }
+        });
+    });
+
+    await modalPromise;
+    modalCancelBtn.classList.remove("hidden");
+    if (selectedSuperstarId) {
+        await openSuperstarDetails(selectedSuperstarId, { readOnly: true });
+    }
+}
 function showName(showId) {
     if (!showId) return "No show";
     const s = getShow(showId);
@@ -1315,10 +1652,25 @@ $("#modalOk").addEventListener("click", () => closeModal({ ok: true }));
 
 // -------------------- DASHBOARD --------------------
 function renderDashboard() {
+    const tabsEl = $("#dashboardShowTabs");
     const el = $("#nextEvent");
     const rankingsEl = $("#weeklyRankings");
     const universeToday = getUniverseCurrentISO();
     const upcoming = nextUniverseEvent();
+
+    if (tabsEl) {
+        tabsEl.innerHTML = state.shows.length
+            ? state.shows.map(show => `
+                <button type="button" class="dashboard-show-tab" data-dashboard-show="${show.id}">
+                  <span class="dashboard-show-tab-dot" style="background:${show.color}"></span>
+                  <span>${escapeHTML(show.name)}</span>
+                </button>
+              `).join("")
+            : `<div class="muted tiny">Add shows to see champion tabs here.</div>`;
+        $$("[data-dashboard-show]", tabsEl).forEach(btn => {
+            btn.addEventListener("click", () => openShowChampionsModal(btn.dataset.dashboardShow));
+        });
+    }
 
     if (!upcoming) {
         el.innerHTML = `<div class="muted">No upcoming events after universe day <b>${universeToday}</b>. Add one from Calendar or Settings.</div>`;
@@ -1548,7 +1900,7 @@ async function editSuperstarFlow(id) {
           `).join("")
         : `<div class="muted tiny">No shows created yet.</div>`;
     const selectedChampionships = new Set(parseChampionships(ss.championships));
-    const availableChampionships = eligibleChampionshipsForShowIds(Array.from(selectedShows));
+    const availableChampionships = eligibleChampionshipsForShowIds(Array.from(selectedShows), { superstar: ss });
     const championshipOptions = availableChampionships.length
         ? availableChampionships.map(c => `
             <label class="edit-ss-check-item">
@@ -1607,7 +1959,14 @@ async function editSuperstarFlow(id) {
     const newPhoto = $("#editSSPhoto").value.trim();
     const newShowIds = Array.from(new Set($$(".editSSShowItem:checked").map(el => el.value)));
     const newDiv = $("#editSSDiv").value;
-    const allowedChampionshipIds = new Set(eligibleChampionshipsForShowIds(newShowIds).map(c => c.id));
+    const allowedChampionshipIds = new Set(eligibleChampionshipsForShowIds(newShowIds, {
+        superstar: {
+            ...ss,
+            showIds: newShowIds,
+            showId: newShowIds[0] ?? null,
+            division: newDiv,
+        },
+    }).map(c => c.id));
     const newChamps = $$(".editSSChampItem:checked")
         .map(el => el.value)
         .filter(championshipId => allowedChampionshipIds.has(championshipId));
@@ -2758,26 +3117,28 @@ function renderPlanner(fromPositions = null) {
 
     const optionsHTML = plannerRosterOptions(ev);
     const eventShows = eventShowIds(ev);
-    const availableChampionships = eligibleChampionshipsForShowIds(eventShows);
-    const availableChampionshipIdSet = new Set(availableChampionships.map(c => c.id));
     let clearedUnavailableChampionship = false;
     ev.matches = ev.matches.map(match => {
         const championshipId = String(match?.championshipId || "").trim();
-        if (championshipId && !availableChampionshipIdSet.has(championshipId)) {
+        const championship = getChampionship(championshipId);
+        if (championshipId && !championshipEligibleForMatch(championship, match, eventShows)) {
             clearedUnavailableChampionship = true;
             return { ...match, championshipId: "" };
         }
         return match;
     });
-    if (clearedUnavailableChampionship) upsertEvent(ev);
-    const championshipOptionsHTML = [
-        `<option value="">None</option>`,
-        ...availableChampionships.map(c => `<option value="${escapeAttr(c.id)}">${escapeHTML(c.name)}</option>`)
-    ].join("");
+    if (clearedUnavailableChampionship) {
+        upsertEvent(ev);
+    }
 
     body.innerHTML = ev.matches.map((m, idx) => {
         const slotCount = participantSlotCount(m);
         const participants = Array.isArray(m.participants) ? m.participants.filter(Boolean) : [];
+        const championshipOptionsHTML = [
+            `<option value="">None</option>`,
+            ...eligibleChampionshipsForShowIds(eventShows, { participantIds: participants })
+                .map(c => `<option value="${escapeAttr(c.id)}">${escapeHTML(c.name)}</option>`)
+        ].join("");
         const participantTeams = normalizedParticipantTeams(m);
         const teamGroups = inferMatchTeams(m.matchType, participants, participantTeams);
         const isTeamBased = isTeamOrHandicapMatch(m.matchType, participants.length);
@@ -3332,8 +3693,8 @@ function openPlanner(eventId) {
 // -------------------- SETTINGS: POPULATE / GENERATE --------------------
 const SETTINGS_JSON_EXAMPLE = `{
   "championships": [
-    { "name": "World Heavyweight Championship" },
-    { "name": "Intercontinental Championship" }
+    { "name": "World Heavyweight Championship", "division": "World", "gender": "Male", "shows": ["RAW"] },
+    { "name": "Women's World Championship", "division": "Women", "gender": "Female", "shows": ["RAW", "SmackDown"] }
   ],
   "shows": [
     { "name": "RAW", "color": "#d00000" },
@@ -3772,32 +4133,129 @@ function renderShowsSettingsPanel() {
 function renderChampionshipSettingsPanel() {
     const root = $("#modalBody");
     if (!root) return;
+    const renderShowAssignmentOptions = ({ inputClass, selectedShowIds = [], dataTitleId = "" } = {}) => {
+        if (!state.shows.length) {
+            return `<div class="muted tiny">No shows created yet. Leave this unassigned to keep it available everywhere.</div>`;
+        }
+        const selected = new Set(selectedShowIds);
+        return state.shows.map(show => `
+            <label class="championship-settings-show-option">
+              <input
+                class="${escapeAttr(inputClass)}"
+                ${dataTitleId ? `data-title-id="${escapeAttr(dataTitleId)}"` : ""}
+                type="checkbox"
+                value="${show.id}"
+                ${selected.has(show.id) ? "checked" : ""}
+              />
+              <span>${escapeHTML(show.name)}</span>
+            </label>
+          `).join("");
+    };
+    const renderShowScopeText = (championship) => {
+        const shows = championshipShowNames(championship);
+        return shows.length ? shows.join(", ") : "All shows";
+    };
+    const renderScopePills = (championship) => `
+        <div class="championship-settings-pills">
+          <span class="championship-settings-pill">${escapeHTML(championshipDivisionLabel(normalizeChampionshipDivision(championship.division, championship.name, championship.gender)))}</span>
+          <span class="championship-settings-pill">${escapeHTML(normalizeChampionshipGender(championship.gender))}</span>
+          <span class="championship-settings-pill">${escapeHTML(renderShowScopeText(championship))}</span>
+        </div>
+    `;
 
     root.innerHTML = `
-      <div class="stack">
-        <div class="row gap wrap">
-          <input id="championshipNameInput" class="input grow" placeholder="Championship name (e.g., Intercontinental Championship)" />
-          <button class="btn" id="addChampionshipBtn">Add Championship</button>
+      <div class="stack championship-settings-panel">
+        <div class="championship-settings-shell">
+          <div class="championship-settings-header">
+            <div>
+              <div class="h3">Add Championship</div>
+              <div class="muted tiny">Create a title, set who can hold it, and decide which shows can book it.</div>
+            </div>
+            <button class="btn" id="addChampionshipBtn">Add Championship</button>
+          </div>
+          <div class="championship-settings-grid">
+            <label class="championship-settings-field">
+              <span class="championship-settings-label">Championship Name</span>
+              <input id="championshipNameInput" class="input" placeholder="Intercontinental Championship" />
+            </label>
+            <label class="championship-settings-field championship-settings-field-compact">
+              <span class="championship-settings-label">Division</span>
+              <select id="championshipDivisionInput" class="input">
+                ${CHAMPIONSHIP_DIVISION_OPTIONS.map(division => `<option value="${division}">${escapeHTML(championshipDivisionLabel(division))}</option>`).join("")}
+              </select>
+            </label>
+            <label class="championship-settings-field championship-settings-field-compact">
+              <span class="championship-settings-label">Eligible Superstars</span>
+              <select id="championshipGenderInput" class="input">
+                ${CHAMPIONSHIP_GENDER_OPTIONS.map(gender => `<option value="${gender}">${gender}</option>`).join("")}
+              </select>
+            </label>
+          </div>
+          <div class="championship-settings-scope">
+            <div class="championship-settings-scope-head">
+              <div class="championship-settings-label">Assigned Shows</div>
+              <div class="muted tiny">Leave all shows unchecked to allow every brand.</div>
+            </div>
+            <div class="championship-settings-show-grid">
+              ${renderShowAssignmentOptions({ inputClass: "settingsChampionshipShowItem" })}
+            </div>
+          </div>
         </div>
         ${settingsStatusHTML("settingsChampionshipStatus", settingsUiState.championships.message)}
         <div id="championshipsList" class="stack">
           ${!state.championships.length ? `<div class="item"><div class="muted tiny">No championships yet. Add one above.</div></div>` : `
-            <div class="list">
+            <div class="list championship-settings-list">
               ${state.championships.map(championship => {
                 const isEditing = settingsUiState.championships.editingId === championship.id;
                 const isDeleting = settingsUiState.championships.deletingId === championship.id;
                 return `
-                  <div class="item">
-                    <div class="item-title">${escapeHTML(championship.name)}</div>
-                    <div class="item-actions">
-                      <button class="btn secondary" data-edit-title="${championship.id}">${isEditing ? "Cancel" : "Edit"}</button>
-                      <button class="btn danger" data-del-title="${championship.id}">${isDeleting ? "Cancel Delete" : "Delete"}</button>
+                  <div class="item championship-settings-item ${isEditing ? "is-editing" : ""}">
+                    <div class="championship-settings-item-head">
+                      <div class="championship-settings-item-copy">
+                        <div class="item-title">${escapeHTML(championship.name)}</div>
+                        <div class="item-sub">${escapeHTML(championshipScopeSummary(championship))}</div>
+                        ${renderScopePills(championship)}
+                      </div>
+                      <div class="item-actions championship-settings-actions">
+                        <button class="btn secondary" data-edit-title="${championship.id}">${isEditing ? "Cancel" : "Edit"}</button>
+                        <button class="btn danger" data-del-title="${championship.id}">${isDeleting ? "Cancel Delete" : "Delete"}</button>
+                      </div>
                     </div>
                     ${isEditing ? `
-                      <div class="settings-inline-edit">
-                        <div class="row gap wrap">
-                          <input class="input grow" data-settings-title-name="${championship.id}" value="${escapeAttr(championship.name)}" />
-                          <button class="btn" data-settings-save-title="${championship.id}">Save</button>
+                      <div class="settings-inline-edit championship-settings-editor">
+                        <div class="championship-settings-grid">
+                          <label class="championship-settings-field">
+                            <span class="championship-settings-label">Championship Name</span>
+                            <input class="input" data-settings-title-name="${championship.id}" value="${escapeAttr(championship.name)}" />
+                          </label>
+                          <label class="championship-settings-field championship-settings-field-compact">
+                            <span class="championship-settings-label">Division</span>
+                            <select class="input" data-settings-title-division="${championship.id}">
+                              ${CHAMPIONSHIP_DIVISION_OPTIONS.map(division => `<option value="${division}" ${division === normalizeChampionshipDivision(championship.division, championship.name, championship.gender) ? "selected" : ""}>${escapeHTML(championshipDivisionLabel(division))}</option>`).join("")}
+                            </select>
+                          </label>
+                          <label class="championship-settings-field championship-settings-field-compact">
+                            <span class="championship-settings-label">Eligible Superstars</span>
+                            <select class="input" data-settings-title-gender="${championship.id}">
+                              ${CHAMPIONSHIP_GENDER_OPTIONS.map(gender => `<option value="${gender}" ${gender === normalizeChampionshipGender(championship.gender) ? "selected" : ""}>${gender}</option>`).join("")}
+                            </select>
+                          </label>
+                        </div>
+                        <div class="championship-settings-scope">
+                          <div class="championship-settings-scope-head">
+                            <div class="championship-settings-label">Assigned Shows</div>
+                            <div class="muted tiny">Leave all shows unchecked to keep this title available on every show.</div>
+                          </div>
+                          <div class="championship-settings-show-grid">
+                            ${renderShowAssignmentOptions({
+                                inputClass: "settingsEditTitleShowItem",
+                                selectedShowIds: Array.isArray(championship.showIds) ? championship.showIds : [],
+                                dataTitleId: championship.id,
+                            })}
+                          </div>
+                        </div>
+                        <div class="championship-settings-editor-actions">
+                          <button class="btn" data-settings-save-title="${championship.id}">Save Changes</button>
                         </div>
                       </div>
                     ` : ""}
@@ -3822,13 +4280,19 @@ function renderChampionshipSettingsPanel() {
     const status = $("#settingsChampionshipStatus", root);
     $("#addChampionshipBtn", root).onclick = () => {
         const input = $("#championshipNameInput", root);
+        const divisionInput = $("#championshipDivisionInput", root);
+        const genderInput = $("#championshipGenderInput", root);
         const name = input.value.trim();
         if (!name) {
             setSettingsStatus(status, "Enter a championship name before adding it.", "danger");
             return;
         }
 
-        const added = addChampionshipByName(name);
+        const added = addChampionshipByName(name, {
+            division: divisionInput?.value || "World",
+            gender: genderInput?.value || "Intergender",
+            showIds: $$(".settingsChampionshipShowItem:checked", root).map(el => el.value),
+        });
         if (!added) {
             setSettingsStatus(status, "A championship with that name already exists.", "danger");
             return;
@@ -3859,7 +4323,14 @@ function renderChampionshipSettingsPanel() {
             if (!championship) return;
 
             const nameInput = $(`[data-settings-title-name="${id}"]`, root);
+            const divisionInput = $(`[data-settings-title-division="${id}"]`, root);
+            const genderInput = $(`[data-settings-title-gender="${id}"]`, root);
             const nextName = nameInput.value.trim();
+            const nextDivision = normalizeChampionshipDivision(divisionInput?.value, nextName, genderInput?.value);
+            const nextGender = normalizeChampionshipGender(genderInput?.value);
+            const nextShowIds = sanitizeShowIds(
+                $$(`.settingsEditTitleShowItem[data-title-id="${id}"]:checked`, root).map(el => el.value)
+            );
             if (!nextName) {
                 setSettingsStatus(status, "Championship name cannot be empty.", "danger");
                 return;
@@ -3871,8 +4342,21 @@ function renderChampionshipSettingsPanel() {
                 return;
             }
 
-            state.championships = state.championships.map(c => c.id === id ? { ...c, name: nextName } : c);
-            settingsUiState.championships.message = { tone: "success", text: `${nextName} updated.` };
+            state.championships = state.championships.map(c => c.id === id ? {
+                ...c,
+                name: nextName,
+                division: nextDivision,
+                gender: nextGender,
+                showIds: nextShowIds,
+                showId: nextShowIds[0] ?? null,
+            } : c);
+            const scrubbedAssignments = scrubIneligibleChampionshipAssignments();
+            settingsUiState.championships.message = {
+                tone: "success",
+                text: scrubbedAssignments
+                    ? `${nextName} updated. Ineligible holders or booked title matches were cleared.`
+                    : `${nextName} updated.`,
+            };
             settingsUiState.championships.editingId = null;
             saveSoon();
             renderAll();
@@ -4105,12 +4589,58 @@ function normalizeHexColor(color) {
     return /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(c) ? c : null;
 }
 
-function addChampionshipByName(rawName) {
+function sanitizeShowIds(showIds) {
+    const validShowIds = new Set(state.shows.map(show => show.id));
+    return Array.from(new Set(
+        (Array.isArray(showIds) ? showIds : [])
+            .map(showId => String(showId ?? "").trim())
+            .filter(showId => validShowIds.has(showId))
+    ));
+}
+
+function scrubIneligibleChampionshipAssignments() {
+    let changed = false;
+
+    state.superstars = state.superstars.map(ss => {
+        const nextChamps = parseChampionships(ss.championships).filter(championshipId => {
+            const championship = getChampionship(championshipId);
+            return championshipEligibleForSuperstar(championship, ss);
+        });
+        if (nextChamps.length === parseChampionships(ss.championships).length) return ss;
+        changed = true;
+        return { ...ss, championships: nextChamps, isChampion: nextChamps.length > 0 };
+    });
+
+    state.events = state.events.map(event => {
+        const showIds = eventShowIds(event);
+        let eventChanged = false;
+        const nextMatches = (Array.isArray(event?.matches) ? event.matches : []).map(match => {
+            const championshipId = String(match?.championshipId || "").trim();
+            const championship = getChampionship(championshipId);
+            if (!championshipId || championshipEligibleForMatch(championship, match, showIds)) return match;
+            eventChanged = true;
+            changed = true;
+            return { ...match, championshipId: "" };
+        });
+        return eventChanged ? { ...event, matches: nextMatches } : event;
+    });
+
+    return changed;
+}
+
+function addChampionshipByName(rawName, { division = "World", gender = "Intergender", showIds = [] } = {}) {
     const name = String(rawName ?? "").trim();
     if (!name) return false;
     const exists = state.championships.some(c => c.name.toLowerCase() === name.toLowerCase());
     if (exists) return false;
-    state.championships.push(enrichChampionship({ name }));
+    const validShowIds = sanitizeShowIds(showIds);
+    state.championships.push(enrichChampionship({
+        name,
+        division: normalizeChampionshipDivision(division, name, gender),
+        gender: normalizeChampionshipGender(gender),
+        showIds: validShowIds,
+        showId: validShowIds[0] ?? null,
+    }));
     return true;
 }
 
@@ -4228,7 +4758,11 @@ function importPopulateJSON(payload, { replace = true } = {}) {
             .filter(Boolean);
         const championshipShowFiltered = championships.filter(championshipId => {
             const championship = getChampionship(championshipId);
-            return championshipAvailableForShowIds(championship, showIds);
+            return championshipEligibleForSuperstar(championship, {
+                showIds,
+                showId: showIds[0] ?? null,
+                division,
+            });
         });
         state.superstars.push(enrichSuperstar({
             id: uid("ss"),
