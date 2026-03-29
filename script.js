@@ -390,6 +390,15 @@ function isPromoResult(resultValue) {
     const normalized = normalizeNameForCompare(resultValue);
     return normalized === "promo";
 }
+function isSpecialMatchResult(resultValue) {
+    const normalized = normalizeNameForCompare(resultValue);
+    return isDQResult(resultValue)
+        || isDrawRecordResult(resultValue)
+        || normalized === "no contest"
+        || normalized === "nc"
+        || normalized === "no result"
+        || normalized === "promo";
+}
 function computeSuperstarRecords() {
     const records = new Map();
     state.superstars.forEach(ss => {
@@ -429,10 +438,14 @@ function computeSuperstarRecords() {
                 return;
             }
 
-            if (resultValue === "TEAM:A" || resultValue === "TEAM:B") {
+            if (isTeamResultValue(resultValue)) {
                 const teams = inferMatchTeams(match?.matchType, participantIds, normalizedParticipantTeams(match));
-                const winners = resultValue === "TEAM:A" ? (teams?.[0] || []) : (teams?.[1] || []);
-                const losers = resultValue === "TEAM:A" ? (teams?.[1] || []) : (teams?.[0] || []);
+                const winningTeamKey = parseTeamResultValue(resultValue);
+                const winningTeam = teams.find(group => group.key === winningTeamKey);
+                const winners = winningTeam?.participants || [];
+                const losers = teams
+                    .filter(group => group.key !== winningTeamKey)
+                    .flatMap(group => group.participants);
                 if (!winners.length || !losers.length) return;
                 winners.forEach(pid => {
                     const rec = records.get(pid);
@@ -479,25 +492,73 @@ function isTagTeamMatchType(matchType) {
     const t = String(matchType || "").toLowerCase();
     return t.includes("tag");
 }
+function normalizeTeamKey(value) {
+    const raw = String(value || "").trim().toUpperCase();
+    if (!raw) return "";
+    if (raw === "A") return "T1";
+    if (raw === "B") return "T2";
+    if (/^TEAM:\s*[AB]$/.test(raw)) return normalizeTeamKey(raw.slice(5));
+    if (/^TEAM:\s*T\d+$/.test(raw)) return normalizeTeamKey(raw.slice(5));
+    if (/^T\d+$/.test(raw)) return raw;
+    if (/^\d+$/.test(raw)) return `T${Math.max(1, Number(raw))}`;
+    return "";
+}
+function teamKeyIndex(teamKey) {
+    const normalized = normalizeTeamKey(teamKey);
+    if (!normalized) return 0;
+    return Math.max(1, Number(normalized.slice(1)) || 1);
+}
+function compareTeamKeys(a, b) {
+    return teamKeyIndex(a) - teamKeyIndex(b);
+}
+function teamLabel(teamKey) {
+    return `Team ${teamKeyIndex(teamKey) || 1}`;
+}
+function teamResultValue(teamKey) {
+    const normalized = normalizeTeamKey(teamKey);
+    return normalized ? `TEAM:${normalized}` : "";
+}
+function parseTeamResultValue(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    if (raw === "TEAM:A") return "T1";
+    if (raw === "TEAM:B") return "T2";
+    if (!raw.toUpperCase().startsWith("TEAM:")) return "";
+    return normalizeTeamKey(raw.slice(5));
+}
+function isTeamResultValue(value) {
+    return Boolean(parseTeamResultValue(value));
+}
 function normalizedParticipantTeams(match) {
     const raw = match?.participantTeams;
     if (!raw || typeof raw !== "object") return {};
     const out = {};
     Object.entries(raw).forEach(([participantId, team]) => {
         const pid = String(participantId || "").trim();
-        const t = String(team || "").trim().toUpperCase();
+        const t = normalizeTeamKey(team);
         if (!pid) return;
-        if (t !== "A" && t !== "B") return;
+        if (!t) return;
         out[pid] = t;
     });
     return out;
 }
 function normalizedTeamNames(match) {
     const raw = match?.teamNames;
-    if (!raw || typeof raw !== "object") return { A: "", B: "" };
-    const teamA = String(raw.A ?? "").trim();
-    const teamB = String(raw.B ?? "").trim();
-    return { A: teamA, B: teamB };
+    if (!raw || typeof raw !== "object") return {};
+    const out = {};
+    Object.entries(raw).forEach(([teamKey, name]) => {
+        const normalized = normalizeTeamKey(teamKey);
+        const nextName = String(name ?? "").trim();
+        if (!normalized || !nextName) return;
+        out[normalized] = nextName;
+    });
+    if (!Object.keys(out).length) {
+        const legacyA = String(raw.A ?? "").trim();
+        const legacyB = String(raw.B ?? "").trim();
+        if (legacyA) out.T1 = legacyA;
+        if (legacyB) out.T2 = legacyB;
+    }
+    return out;
 }
 function normalizedParticipantEscorts(match) {
     const raw = match?.participantEscorts;
@@ -547,34 +608,80 @@ function factionOptionsForParticipants(participantRefs = []) {
     });
     return Array.from(options).sort((a, b) => a.localeCompare(b));
 }
-function teamDisplayName(match, side, participantRefs = []) {
+function teamDisplayName(match, teamKey, participantRefs = []) {
     const names = normalizedTeamNames(match);
-    const custom = String(names?.[side] ?? "").trim();
+    const normalized = normalizeTeamKey(teamKey);
+    const custom = String(names?.[normalized] ?? "").trim();
     if (custom) return custom;
-    return side === "A" ? "Team A" : "Team B";
+    return teamLabel(normalized);
 }
 function teamNameInitial(name, fallback = "?") {
     const value = String(name ?? "").trim();
     if (!value) return fallback;
     return value[0].toUpperCase();
 }
+function inferTagTeamCount(matchType, participantCount) {
+    const t = String(matchType || "").toLowerCase();
+    if (!t.includes("tag")) return 0;
+    if (t.includes("triple threat")) return 3;
+    if (t.includes("fatal 4") || t.includes("fatal four") || t.includes("4-way") || t.includes("four way")) return 4;
+    const teamMatch = t.match(/(\d+)\s*team/);
+    if (teamMatch) return Math.max(2, Number(teamMatch[1]) || 0);
+    const wayMatch = t.match(/(\d+)\s*way/);
+    if (wayMatch) return Math.max(2, Number(wayMatch[1]) || 0);
+    if (participantCount === 4) return 2;
+    return 0;
+}
 function inferMatchTeams(matchType, participantIds, participantTeams = {}) {
     const ids = Array.isArray(participantIds) ? participantIds.filter(Boolean) : [];
-    if (ids.length < 3) return null;
-    const teamAExplicit = ids.filter(id => participantTeams[id] === "A");
-    const teamBExplicit = ids.filter(id => participantTeams[id] === "B");
-    if (teamAExplicit.length && teamBExplicit.length) {
-        return [teamAExplicit, teamBExplicit];
+    if (ids.length < 3) return [];
+
+    const explicitMap = new Map();
+    ids.forEach(id => {
+        const teamKey = normalizeTeamKey(participantTeams[id]);
+        if (!teamKey) return;
+        if (!explicitMap.has(teamKey)) explicitMap.set(teamKey, []);
+        explicitMap.get(teamKey).push(id);
+    });
+    if (explicitMap.size >= 2) {
+        const groups = Array.from(explicitMap.entries())
+            .sort(([a], [b]) => compareTeamKeys(a, b))
+            .map(([key, participants]) => ({ key, participants: [...participants] }));
+        const assigned = new Set(groups.flatMap(group => group.participants));
+        ids.filter(id => !assigned.has(id)).forEach(id => {
+            groups.sort((a, b) => {
+                const sizeDiff = a.participants.length - b.participants.length;
+                if (sizeDiff !== 0) return sizeDiff;
+                return compareTeamKeys(a.key, b.key);
+            });
+            groups[0]?.participants.push(id);
+        });
+        return groups.filter(group => group.participants.length);
     }
+
     const t = String(matchType || "").toLowerCase();
     if (t.includes("handicap")) {
-        return [ids.slice(0, 1), ids.slice(1)];
+        return [
+            { key: "T1", participants: ids.slice(0, 1) },
+            { key: "T2", participants: ids.slice(1) },
+        ].filter(group => group.participants.length);
     }
     if (t.includes("tag")) {
+        const inferredTeamCount = inferTagTeamCount(matchType, ids.length);
+        if (inferredTeamCount >= 2 && ids.length % inferredTeamCount === 0) {
+            const teamSize = ids.length / inferredTeamCount;
+            return Array.from({ length: inferredTeamCount }, (_, idx) => ({
+                key: `T${idx + 1}`,
+                participants: ids.slice(idx * teamSize, (idx + 1) * teamSize),
+            })).filter(group => group.participants.length);
+        }
         const split = Math.ceil(ids.length / 2);
-        return [ids.slice(0, split), ids.slice(split)];
+        return [
+            { key: "T1", participants: ids.slice(0, split) },
+            { key: "T2", participants: ids.slice(split) },
+        ].filter(group => group.participants.length);
     }
-    return null;
+    return [];
 }
 function normalizeNameForCompare(value) {
     return String(value ?? "")
@@ -632,7 +739,7 @@ function resolveMatchParticipantIds(match, superstarNameToId) {
 function resolveMatchWinnerId(match, participantIds, superstarNameById) {
     const rawResult = String(match?.result ?? "").trim();
     if (!rawResult || participantIds.length === 0) return null;
-    if (rawResult === "TEAM:A" || rawResult === "TEAM:B") return rawResult;
+    if (isTeamResultValue(rawResult)) return parseTeamResultValue(rawResult);
     if (participantIds.includes(rawResult)) return rawResult;
     const result = normalizeNameForCompare(rawResult);
     for (const pid of participantIds) {
@@ -641,6 +748,29 @@ function resolveMatchWinnerId(match, participantIds, superstarNameById) {
         if (result.includes(participantName)) return pid;
     }
     return null;
+}
+function teamResultLabel(match, teamKey, participantRefs = []) {
+    return teamDisplayName(match, teamKey, participantRefs);
+}
+function winningTeamFromMatch(match, teamGroups, winnerId) {
+    const winnerTeamKey = parseTeamResultValue(winnerId) || normalizeTeamKey(winnerId);
+    if (winnerTeamKey) {
+        return teamGroups.find(group => group.key === winnerTeamKey) || null;
+    }
+    if (!winnerId) return null;
+    return teamGroups.find(group => group.participants.includes(winnerId)) || null;
+}
+function losingParticipantsFromTeamGroups(teamGroups, winningTeam) {
+    return teamGroups
+        .filter(group => group !== winningTeam)
+        .flatMap(group => group.participants);
+}
+function forEachTeamPairing(teamGroups, callback) {
+    for (let i = 0; i < teamGroups.length; i++) {
+        for (let j = i + 1; j < teamGroups.length; j++) {
+            callback(teamGroups[i], teamGroups[j]);
+        }
+    }
 }
 function matchImportanceMultiplier(event, matchIndex, matchesLength, match) {
     const isMainEvent = matchIndex === (matchesLength - 1);
@@ -801,7 +931,7 @@ function computeWeeklyRankings(topN = 3) {
 
             const participantTeams = normalizedParticipantTeams(match);
             const teams = inferMatchTeams(match?.matchType, participantIds, participantTeams);
-            const hasTeams = Boolean(teams && teams[0].length && teams[1].length);
+            const hasTeams = teams.length >= 2 && teams.every(group => group.participants.length);
             const rankContext = buildShowRankContext();
 
             if (isDrawLikeResult) {
@@ -811,11 +941,13 @@ function computeWeeklyRankings(topN = 3) {
                     winStreaks.set(id, 0);
                 });
                 if (hasTeams) {
-                    for (const a of teams[0]) {
-                        for (const b of teams[1]) {
-                            applyHeadToHeadElo(a, b, 0.5, 0.5, matchMultiplier);
+                    forEachTeamPairing(teams, (teamA, teamB) => {
+                        for (const a of teamA.participants) {
+                            for (const b of teamB.participants) {
+                                applyHeadToHeadElo(a, b, 0.5, 0.5, matchMultiplier);
+                            }
                         }
-                    }
+                    });
                 } else {
                     for (let i = 0; i < participantIds.length; i++) {
                         for (let j = i + 1; j < participantIds.length; j++) {
@@ -842,42 +974,34 @@ function computeWeeklyRankings(topN = 3) {
             }
 
             if (hasTeams) {
-                const winningTeam = winnerId === "TEAM:A"
-                    ? teams[0]
-                    : winnerId === "TEAM:B"
-                        ? teams[1]
-                        : winnerId
-                            ? (teams[0].includes(winnerId) ? teams[0] : (teams[1].includes(winnerId) ? teams[1] : []))
-                            : [];
-                const teamA = teams[0];
-                const teamB = teams[1];
-                const losingTeam = winningTeam === teamA ? teamB : teamA;
-                if (!winningTeam.length || !losingTeam.length) {
+                const winningTeam = winningTeamFromMatch(match, teams, winnerId);
+                const winners = winningTeam?.participants || [];
+                const losers = losingParticipantsFromTeamGroups(teams, winningTeam);
+                if (!winners.length || !losers.length) {
                     noteAppearance(participantIds);
                     participantIds.forEach(id => winStreaks.set(id, 0));
                     return;
                 }
 
-                const bonuses = defeatedOpponentBonuses(losingTeam, rankContext);
+                const bonuses = defeatedOpponentBonuses(losers, rankContext);
                 noteAppearance(participantIds);
-                winningTeam.forEach(id => {
+                winners.forEach(id => {
                     addBonusPoints(id, scaledBonus(rules.winPoints + bonuses.rankBonus + bonuses.streakBonus, matchMultiplier));
                     wins.set(id, (wins.get(id) || 0) + 1);
                     winStreaks.set(id, (winStreaks.get(id) || 0) + 1);
                 });
-                losingTeam.forEach(id => {
+                losers.forEach(id => {
                     addBonusPoints(id, scaledBonus(rules.lossPoints, matchMultiplier));
                     winStreaks.set(id, 0);
                 });
-                if (pinById && winningTeam.includes(pinById)) {
+                if (pinById && winners.includes(pinById)) {
                     addBonusPoints(pinById, scaledBonus(rules.pinBonus, matchMultiplier));
                 }
-                for (const a of teamA) {
-                    for (const b of teamB) {
-                        const teamAWon = winningTeam === teamA;
-                        applyHeadToHeadElo(a, b, teamAWon ? 1 : 0, teamAWon ? 0 : 1, matchMultiplier);
-                    }
-                }
+                winners.forEach(a => {
+                    losers.forEach(b => {
+                        applyHeadToHeadElo(a, b, 1, 0, matchMultiplier);
+                    });
+                });
                 return;
             }
 
@@ -1169,9 +1293,7 @@ function renderDashboard() {
         const mainEventTitle = mainEventType || `Match ${mainEvent?.num ?? (matches.length || 1)}`;
         const mainEventChampionshipName = championshipName(String(mainEvent?.championshipId || "").trim());
         const mainEventTeams = inferMatchTeams(mainEvent?.matchType, mainEventDisplayParticipants, normalizedParticipantTeams(mainEvent));
-        const mainEventUseTeamFormat = isTagTeamMatchType(mainEvent?.matchType) && Array.isArray(mainEventTeams?.[0]) && Array.isArray(mainEventTeams?.[1]) && mainEventTeams[0].length && mainEventTeams[1].length;
-        const mainEventTeamALabel = mainEventUseTeamFormat ? teamDisplayName(mainEvent, "A", mainEventTeams[0]) : "Team A";
-        const mainEventTeamBLabel = mainEventUseTeamFormat ? teamDisplayName(mainEvent, "B", mainEventTeams[1]) : "Team B";
+        const mainEventUseTeamFormat = isTagTeamMatchType(mainEvent?.matchType) && mainEventTeams.length >= 2 && mainEventTeams.every(group => group.participants.length);
         const mainEventFighterHTML = (participantRef) => {
             const fighter = participantInfo(participantRef);
             const escortName = participantEscortName(mainEvent, participantRef);
@@ -1202,7 +1324,11 @@ function renderDashboard() {
             `;
         };
         const mainEventFightRowHTML = mainEventUseTeamFormat
-            ? `${teamBlockHTML(mainEventTeamALabel, mainEventTeams[0])}<div class="event-vs event-fight-separator event-vs-main">VS</div>${teamBlockHTML(mainEventTeamBLabel, mainEventTeams[1])}`
+            ? mainEventTeams.map((group, idx) => {
+                const blockHTML = teamBlockHTML(teamDisplayName(mainEvent, group.key, group.participants), group.participants);
+                if (idx >= mainEventTeams.length - 1) return blockHTML;
+                return `${blockHTML}<div class="event-vs event-fight-separator event-vs-main">VS</div>`;
+            }).join("")
             : mainEventDisplayParticipants.map((participantRef, idx) => {
                 const fighterHTML = mainEventFighterHTML(participantRef);
                 if (idx >= mainEventDisplayParticipants.length - 1) return fighterHTML;
@@ -1500,7 +1626,7 @@ async function openSuperstarDetails(id, { readOnly = false } = {}) {
     };
     const resultParticipantId = (resultValue) => {
         const raw = String(resultValue ?? "").trim();
-        if (!raw || raw === "TEAM:A" || raw === "TEAM:B") return "";
+        if (!raw || isTeamResultValue(raw)) return "";
         const byId = state.superstars.find(star => star.id === raw);
         if (byId) return byId.id;
         const normalizedRaw = normalizeNameForCompare(raw);
@@ -1525,10 +1651,11 @@ async function openSuperstarDetails(id, { readOnly = false } = {}) {
 
         if (!resultValue || normalizeNameForCompare(resultValue) === "no result") return "Draw";
 
-        if (resultValue === "TEAM:A" || resultValue === "TEAM:B") {
+        if (isTeamResultValue(resultValue)) {
             const teams = inferMatchTeams(match?.matchType, participantIds, normalizedParticipantTeams(match));
-            const winningTeam = resultValue === "TEAM:A" ? (teams?.[0] || []) : (teams?.[1] || []);
-            const won = winningTeam.some(pid => selectedIdSet.has(pid));
+            const winningTeamKey = parseTeamResultValue(resultValue);
+            const winningTeam = teams.find(group => group.key === winningTeamKey);
+            const won = Boolean(winningTeam?.participants.some(pid => selectedIdSet.has(pid)));
             return won ? "Win" : "Loss";
         }
 
@@ -2024,18 +2151,15 @@ async function openCalendarEventDetails(eventId, { fromCalendar = false } = {}) 
                 : [participants[0] || "", ""];
             const hideVsForMatch = displayParticipants.length > 2 && !isTagTeamMatchType(m?.matchType);
             const matchTeams = inferMatchTeams(m?.matchType, displayParticipants, normalizedParticipantTeams(m));
-            const useTeamFormat = isTagTeamMatchType(m?.matchType) && Array.isArray(matchTeams?.[0]) && Array.isArray(matchTeams?.[1]) && matchTeams[0].length && matchTeams[1].length;
-            const teamALabel = useTeamFormat ? teamDisplayName(m, "A", matchTeams[0]) : "Team A";
-            const teamBLabel = useTeamFormat ? teamDisplayName(m, "B", matchTeams[1]) : "Team B";
+            const useTeamFormat = isTagTeamMatchType(m?.matchType) && matchTeams.length >= 2 && matchTeams.every(group => group.participants.length);
             const championshipOnTheLine = championshipName(String(m?.championshipId || "").trim());
             const title = m.matchType?.trim() || `Match ${m.num ?? (m._idx + 1)}`;
             const winnerRef = String(m.result ?? "").trim();
             const isPromo = normalizeNameForCompare(winnerRef) === "promo";
-            const winnerName = winnerRef === "TEAM:A"
-                ? teamALabel
-                : winnerRef === "TEAM:B"
-                    ? teamBLabel
-                    : superstarNameById(winnerRef);
+            const winningTeamKey = parseTeamResultValue(winnerRef);
+            const winnerName = winningTeamKey
+                ? teamResultLabel(m, winningTeamKey, matchTeams.find(group => group.key === winningTeamKey)?.participants || [])
+                : superstarNameById(winnerRef);
             const pinByName = superstarNameById(String(m.pinBy ?? "").trim());
             const resultText = isPromo ? "" : (winnerName || winnerRef);
             const pinText = pinByName ? ` • Pin by: ${pinByName}` : "";
@@ -2069,7 +2193,11 @@ async function openCalendarEventDetails(eventId, { fromCalendar = false } = {}) 
                 `;
             };
             const fightRowHTML = useTeamFormat
-                ? `${teamBlockHTML(teamALabel, matchTeams[0])}<div class="event-vs event-fight-separator ${isMainEvent ? "event-vs-main" : ""}">VS</div>${teamBlockHTML(teamBLabel, matchTeams[1])}`
+                ? matchTeams.map((group, idx) => {
+                    const blockHTML = teamBlockHTML(teamDisplayName(m, group.key, group.participants), group.participants);
+                    if (idx >= matchTeams.length - 1) return blockHTML;
+                    return `${blockHTML}<div class="event-vs event-fight-separator ${isMainEvent ? "event-vs-main" : ""}">VS</div>`;
+                }).join("")
                 : displayParticipants.map((participantRef, idx) => {
                     const fighterHTML = fighterBlockHTML(participantRef);
                     if (idx >= displayParticipants.length - 1) return fighterHTML;
@@ -2509,6 +2637,45 @@ async function openPlannerEscortModal({ row, slot }) {
     renderPlanner();
 }
 
+function pruneMatchTeamNames(match, teamGroups) {
+    const validKeys = new Set(teamGroups.map(group => group.key));
+    const nextNames = {};
+    Object.entries(normalizedTeamNames(match)).forEach(([teamKey, name]) => {
+        if (!validKeys.has(teamKey)) return;
+        nextNames[teamKey] = name;
+    });
+    return nextNames;
+}
+
+function reconcilePlannerMatchTeams(match) {
+    const participants = Array.isArray(match?.participants) ? match.participants.filter(Boolean) : [];
+    const isTeamBased = isTeamOrHandicapMatch(match?.matchType, participants.length);
+    if (!isTeamBased) {
+        match.participantTeams = {};
+        match.teamNames = {};
+        if (!participants.includes(match.result)) match.result = "";
+        if (!participants.includes(match.pinBy)) match.pinBy = "";
+        return;
+    }
+
+    const teamGroups = inferMatchTeams(match?.matchType, participants, normalizedParticipantTeams(match));
+    match.teamNames = pruneMatchTeamNames(match, teamGroups);
+
+    if (!isTeamResultValue(match.result) && !isSpecialMatchResult(match.result)) {
+        match.result = "";
+    }
+
+    const winningTeam = winningTeamFromMatch(match, teamGroups, String(match.result || ""));
+    if (isTeamResultValue(match.result) && !winningTeam?.participants?.length) {
+        match.result = "";
+    }
+
+    const winningPool = winningTeam?.participants || [];
+    if (match.pinBy && (!winningPool.length || !winningPool.includes(match.pinBy))) {
+        match.pinBy = "";
+    }
+}
+
 function renderPlanner(fromPositions = null) {
     renderPlannerEventSelect();
     const meta = $("#plannerMeta");
@@ -2554,30 +2721,29 @@ function renderPlanner(fromPositions = null) {
         const slotCount = participantSlotCount(m);
         const participants = Array.isArray(m.participants) ? m.participants.filter(Boolean) : [];
         const participantTeams = normalizedParticipantTeams(m);
-        const teams = inferMatchTeams(m.matchType, participants, participantTeams);
-        const teamA = teams?.[0] || [];
-        const teamB = teams?.[1] || [];
+        const teamGroups = inferMatchTeams(m.matchType, participants, participantTeams);
         const isTeamBased = isTeamOrHandicapMatch(m.matchType, participants.length);
         const isTagTeam = isTagTeamMatchType(m.matchType);
-        const teamALabel = isTagTeam ? teamDisplayName(m, "A", teamA) : "Team A";
-        const teamBLabel = isTagTeam ? teamDisplayName(m, "B", teamB) : "Team B";
-        const teamAFactionOptions = factionOptionsForParticipants(teamA);
-        const teamBFactionOptions = factionOptionsForParticipants(teamB);
-        const teamNameAValue = String(normalizedTeamNames(m).A || "");
-        const teamNameBValue = String(normalizedTeamNames(m).B || "");
-        const teamAOptionValues = new Set(teamAFactionOptions);
-        const teamBOptionValues = new Set(teamBFactionOptions);
-        if (teamNameAValue && !teamAOptionValues.has(teamNameAValue)) teamAFactionOptions.push(teamNameAValue);
-        if (teamNameBValue && !teamBOptionValues.has(teamNameBValue)) teamBFactionOptions.push(teamNameBValue);
-        const winningTeam = m.result === "TEAM:A" ? teamA : m.result === "TEAM:B" ? teamB : [];
+        const teamNameMap = normalizedTeamNames(m);
+        const winningTeamKey = parseTeamResultValue(m.result);
+        const winningTeam = teamGroups.find(group => group.key === winningTeamKey) || null;
+        const teamOptionCount = Math.max(
+            2,
+            slotCount,
+            ...Object.values(participantTeams).map(teamKeyIndex),
+            ...teamGroups.map(group => teamKeyIndex(group.key)),
+        );
+        const participantTeamOptions = Array.from({ length: teamOptionCount }, (_, teamIdx) => {
+            const teamKey = `T${teamIdx + 1}`;
+            return `<option value="${teamKey}">${escapeHTML(teamLabel(teamKey))}</option>`;
+        }).join("");
         const specialResultOptions = `
             <option value="DQ">DQ</option>
             <option value="Promo">Promo</option>
         `;
         const winnerOptions = isTeamBased
             ? [
-                teamA.length ? `<option value="TEAM:A">${escapeHTML(teamALabel)}</option>` : "",
-                teamB.length ? `<option value="TEAM:B">${escapeHTML(teamBLabel)}</option>` : "",
+                ...teamGroups.map(group => `<option value="${escapeAttr(teamResultValue(group.key))}">${escapeHTML(teamDisplayName(m, group.key, group.participants))}</option>`),
                 specialResultOptions,
             ].join("")
             : [
@@ -2587,8 +2753,10 @@ function renderPlanner(fromPositions = null) {
                 }),
                 specialResultOptions,
             ].join("");
-        const showPinBy = isTeamOrHandicapMatch(m.matchType, participants.length);
-        const pinPool = showPinBy ? (winningTeam.length ? winningTeam : participants) : participants;
+        const showPinBy = isTeamBased;
+        const pinPool = showPinBy
+            ? (winningTeam?.participants?.length ? winningTeam.participants : participants)
+            : participants;
         const pinByOptions = pinPool.map(pid => {
             const name = superstarNameById(pid) || pid;
             return `<option value="${escapeAttr(pid)}">${escapeHTML(name)}</option>`;
@@ -2607,14 +2775,32 @@ function renderPlanner(fromPositions = null) {
               aria-label="Add ringside accompaniment"
             >+</button>
             ${isTeamBased ? `
-              <select class="cell-input small" data-field="participantTeam" data-slot="${slotIdx}" style="max-width:110px;">
+              <select class="cell-input small" data-field="participantTeam" data-slot="${slotIdx}" style="max-width:120px;">
                 <option value="">(team)</option>
-                <option value="A">Team A</option>
-                <option value="B">Team B</option>
+                ${participantTeamOptions}
               </select>
             ` : ``}
           </div>
         `).join("");
+        const teamNameFields = isTagTeam && teamGroups.length
+            ? `
+              <div class="stack" style="gap:6px;">
+                ${teamGroups.map(group => {
+                    const teamLabelValue = teamLabel(group.key);
+                    const optionValues = factionOptionsForParticipants(group.participants);
+                    const currentName = String(teamNameMap[group.key] || "");
+                    if (currentName && !optionValues.includes(currentName)) optionValues.push(currentName);
+                    optionValues.sort((a, b) => a.localeCompare(b));
+                    return `
+                      <select class="cell-input small" data-field="teamName" data-team-key="${escapeAttr(group.key)}">
+                        <option value="">${escapeHTML(teamLabelValue)}</option>
+                        ${optionValues.map(name => `<option value="${escapeAttr(name)}">${escapeHTML(name)}</option>`).join("")}
+                      </select>
+                    `;
+                }).join("")}
+              </div>
+            `
+            : "";
         const removeParticipantBtn = slotCount > MIN_PARTICIPANT_SLOTS
             ? `<button type="button" class="btn secondary participant-add-btn" data-remove-participant="${idx}">-</button>`
             : "";
@@ -2656,18 +2842,7 @@ function renderPlanner(fromPositions = null) {
         </td>
         <td>
           <div class="stack" style="gap:6px;">
-            ${isTagTeam ? `
-              <div class="row gap wrap">
-                <select class="cell-input small" data-field="teamNameA">
-                  <option value="">Team A</option>
-                  ${teamAFactionOptions.map(name => `<option value="${escapeAttr(name)}">${escapeHTML(name)}</option>`).join("")}
-                </select>
-                <select class="cell-input small" data-field="teamNameB">
-                  <option value="">Team B</option>
-                  ${teamBFactionOptions.map(name => `<option value="${escapeAttr(name)}">${escapeHTML(name)}</option>`).join("")}
-                </select>
-              </div>
-            ` : ``}
+            ${teamNameFields}
             <select class="cell-input small" data-field="result">
               <option value="">(winner)</option>
               ${winnerOptions}
@@ -2709,10 +2884,12 @@ function renderPlanner(fromPositions = null) {
         const resultSelect = tr.querySelector('[data-field="result"]');
         if (resultSelect) {
             const resultValue = String(match.result || "");
+            const normalizedTeamResult = parseTeamResultValue(resultValue);
+            const normalizedResultValue = normalizedTeamResult ? teamResultValue(normalizedTeamResult) : resultValue;
             if (!resultValue) {
                 resultSelect.value = "";
-            } else if (Array.from(resultSelect.options).some(opt => opt.value === resultValue)) {
-                resultSelect.value = resultValue;
+            } else if (Array.from(resultSelect.options).some(opt => opt.value === normalizedResultValue)) {
+                resultSelect.value = normalizedResultValue;
             } else {
                 const normalizedResult = normalizeNameForCompare(resultValue);
                 const matchedOption = Array.from(resultSelect.options).find(opt => {
@@ -2726,20 +2903,13 @@ function renderPlanner(fromPositions = null) {
                 }
             }
         }
-        const teamNameASelect = tr.querySelector('[data-field="teamNameA"]');
-        if (teamNameASelect) {
-            const teamNameAValue = String(normalizedTeamNames(match).A || "");
-            const options = Array.from(teamNameASelect.options).map(opt => opt.value);
-            const nextValue = options.includes(teamNameAValue) ? teamNameAValue : "";
-            teamNameASelect.value = nextValue;
-        }
-        const teamNameBSelect = tr.querySelector('[data-field="teamNameB"]');
-        if (teamNameBSelect) {
-            const teamNameBValue = String(normalizedTeamNames(match).B || "");
-            const options = Array.from(teamNameBSelect.options).map(opt => opt.value);
-            const nextValue = options.includes(teamNameBValue) ? teamNameBValue : "";
-            teamNameBSelect.value = nextValue;
-        }
+        $$('[data-field="teamName"]', tr).forEach(select => {
+            const teamKey = normalizeTeamKey(select.dataset.teamKey);
+            const teamNameValue = String(normalizedTeamNames(match)[teamKey] || "");
+            const options = Array.from(select.options).map(opt => opt.value);
+            const nextValue = options.includes(teamNameValue) ? teamNameValue : "";
+            select.value = nextValue;
+        });
         $$('[data-open-escort]', tr).forEach((btn, slotIdx) => {
             const participantId = p[slotIdx] || "";
             btn.disabled = !participantId;
@@ -2920,45 +3090,12 @@ function renderPlanner(fromPositions = null) {
             deduped.forEach((participantId, slotIdx) => {
                 if (!participantId) return;
                 const teamFromUi = teamInputs[slotIdx]?.value || "";
-                const team = (teamFromUi === "A" || teamFromUi === "B")
-                    ? teamFromUi
-                    : (prevTeams[participantId] || "");
-                if (team === "A" || team === "B") nextTeams[participantId] = team;
+                const team = normalizeTeamKey(teamFromUi || prevTeams[participantId] || "");
+                if (team) nextTeams[participantId] = team;
             });
             ev2.matches[row].participantTeams = nextTeams;
             ev2.matches[row].participantSlots = participantSlotCount(ev2.matches[row]);
-            const isTeamBased = isTeamOrHandicapMatch(ev2.matches[row].matchType, ev2.matches[row].participants.length);
-            if (isTeamBased) {
-                const teams = inferMatchTeams(ev2.matches[row].matchType, ev2.matches[row].participants, ev2.matches[row].participantTeams);
-                const teamA = teams?.[0] || [];
-                const teamB = teams?.[1] || [];
-                if (ev2.matches[row].result !== "TEAM:A" && ev2.matches[row].result !== "TEAM:B") {
-                    const normalizedResult = normalizeNameForCompare(ev2.matches[row].result);
-                    const isSpecial = normalizedResult === "dq"
-                        || normalizedResult.includes("disqualification")
-                        || normalizedResult === "draw"
-                        || normalizedResult === "tie"
-                        || normalizedResult === "no contest"
-                        || normalizedResult === "nc"
-                        || normalizedResult === "no result"
-                        || normalizedResult === "promo";
-                    if (!isSpecial) ev2.matches[row].result = "";
-                }
-                if (ev2.matches[row].result === "TEAM:A" && !teamA.length) ev2.matches[row].result = "";
-                if (ev2.matches[row].result === "TEAM:B" && !teamB.length) ev2.matches[row].result = "";
-                const winningPool = ev2.matches[row].result === "TEAM:A" ? teamA : ev2.matches[row].result === "TEAM:B" ? teamB : [];
-                if (ev2.matches[row].pinBy && (!winningPool.length || !winningPool.includes(ev2.matches[row].pinBy))) {
-                    ev2.matches[row].pinBy = "";
-                }
-            } else {
-                if (!ev2.matches[row].participants.includes(ev2.matches[row].result)) {
-                    ev2.matches[row].result = "";
-                }
-                if (!ev2.matches[row].participants.includes(ev2.matches[row].pinBy)) {
-                    ev2.matches[row].pinBy = "";
-                }
-                ev2.matches[row].participantTeams = {};
-            }
+            reconcilePlannerMatchTeams(ev2.matches[row]);
             upsertEvent(ev2); // debounced via saveSoon
             renderPlanner();
             return;
@@ -2967,45 +3104,30 @@ function renderPlanner(fromPositions = null) {
             const participantInputs = $$('[data-field="participant"]', tr);
             const participantId = participantInputs[slot]?.value || "";
             const teams = normalizedParticipantTeams(ev2.matches[row]);
-            if (participantId && (target.value === "A" || target.value === "B")) {
-                teams[participantId] = target.value;
+            const nextTeam = normalizeTeamKey(target.value);
+            if (participantId && nextTeam) {
+                teams[participantId] = nextTeam;
             } else if (participantId) {
                 delete teams[participantId];
             }
             ev2.matches[row].participantTeams = teams;
-            const teamGroups = inferMatchTeams(ev2.matches[row].matchType, ev2.matches[row].participants || [], teams);
-            const teamA = teamGroups?.[0] || [];
-            const teamB = teamGroups?.[1] || [];
-            if (ev2.matches[row].result === "TEAM:A" && !teamA.length) ev2.matches[row].result = "";
-            if (ev2.matches[row].result === "TEAM:B" && !teamB.length) ev2.matches[row].result = "";
-            const winningPool = ev2.matches[row].result === "TEAM:A" ? teamA : ev2.matches[row].result === "TEAM:B" ? teamB : [];
-            if (ev2.matches[row].pinBy && (!winningPool.length || !winningPool.includes(ev2.matches[row].pinBy))) {
-                ev2.matches[row].pinBy = "";
-            }
+            reconcilePlannerMatchTeams(ev2.matches[row]);
             upsertEvent(ev2); // debounced via saveSoon
             renderPlanner();
             return;
         } else if (field === "result") {
             ev2.matches[row].result = target.value;
-            const isTeamBased = isTeamOrHandicapMatch(ev2.matches[row].matchType, (ev2.matches[row].participants || []).length);
-            if (isTeamBased) {
-                const teams = inferMatchTeams(ev2.matches[row].matchType, ev2.matches[row].participants || [], normalizedParticipantTeams(ev2.matches[row]));
-                const teamA = teams?.[0] || [];
-                const teamB = teams?.[1] || [];
-                const winningPool = ev2.matches[row].result === "TEAM:A" ? teamA : ev2.matches[row].result === "TEAM:B" ? teamB : [];
-                if (ev2.matches[row].pinBy && (!winningPool.length || !winningPool.includes(ev2.matches[row].pinBy))) {
-                    ev2.matches[row].pinBy = "";
-                }
-            } else if (!ev2.matches[row].participants.includes(ev2.matches[row].pinBy)) {
-                ev2.matches[row].pinBy = "";
-            }
+            reconcilePlannerMatchTeams(ev2.matches[row]);
             upsertEvent(ev2); // debounced via saveSoon
             renderPlanner();
             return;
-        } else if (field === "teamNameA" || field === "teamNameB") {
+        } else if (field === "teamName") {
             const names = normalizedTeamNames(ev2.matches[row]);
-            const key = field === "teamNameA" ? "A" : "B";
-            names[key] = String(target.value || "").trim();
+            const key = normalizeTeamKey(target.dataset.teamKey);
+            if (!key) return;
+            const nextName = String(target.value || "").trim();
+            if (!nextName) delete names[key];
+            else names[key] = nextName;
             ev2.matches[row].teamNames = names;
             upsertEvent(ev2);
             renderPlanner();
@@ -3015,27 +3137,7 @@ function renderPlanner(fromPositions = null) {
         } else {
             ev2.matches[row][field] = target.value;
             if (field === "matchType") {
-                const isTeamBased = isTeamOrHandicapMatch(ev2.matches[row].matchType, (ev2.matches[row].participants || []).length);
-                if (!isTeamBased) {
-                    ev2.matches[row].participantTeams = {};
-                    if (ev2.matches[row].result && String(ev2.matches[row].result).startsWith("TEAM:")) {
-                        ev2.matches[row].result = "";
-                    }
-                    if (ev2.matches[row].pinBy && !ev2.matches[row].participants.includes(ev2.matches[row].pinBy)) {
-                        ev2.matches[row].pinBy = "";
-                    }
-                } else if (ev2.matches[row].result && !String(ev2.matches[row].result).startsWith("TEAM:")) {
-                    const normalizedResult = normalizeNameForCompare(ev2.matches[row].result);
-                    const isSpecial = normalizedResult === "dq"
-                        || normalizedResult.includes("disqualification")
-                        || normalizedResult === "draw"
-                        || normalizedResult === "tie"
-                        || normalizedResult === "no contest"
-                        || normalizedResult === "nc"
-                        || normalizedResult === "no result"
-                        || normalizedResult === "promo";
-                    if (!isSpecial) ev2.matches[row].result = "";
-                }
+                reconcilePlannerMatchTeams(ev2.matches[row]);
                 upsertEvent(ev2); // debounced via saveSoon
                 // Avoid re-rendering on every keystroke on mobile; refresh once field is committed.
                 if (e.type === "change") renderPlanner();
@@ -3099,6 +3201,13 @@ function renderPlanner(fromPositions = null) {
                 nextEscorts[participantId] = escortRef;
             });
             ev2.matches[idx].participantEscorts = nextEscorts;
+            const nextTeams = {};
+            Object.entries(normalizedParticipantTeams(ev2.matches[idx])).forEach(([participantId, teamKey]) => {
+                if (!remaining.has(participantId)) return;
+                nextTeams[participantId] = teamKey;
+            });
+            ev2.matches[idx].participantTeams = nextTeams;
+            reconcilePlannerMatchTeams(ev2.matches[idx]);
             upsertEvent(ev2);
             renderPlanner();
         });
