@@ -2707,8 +2707,12 @@ function reconcilePlannerMatchTeams(match) {
     if (!isTeamBased) {
         match.participantTeams = {};
         match.teamNames = {};
-        if (!participants.includes(match.result)) match.result = "";
-        if (!participants.includes(match.pinBy)) match.pinBy = "";
+        if (match.result && !participants.includes(match.result) && !isSpecialMatchResult(match.result)) {
+            match.result = "";
+        }
+        if (match.pinBy && (!participants.includes(match.pinBy) || isSpecialMatchResult(match.result))) {
+            match.pinBy = "";
+        }
         return;
     }
 
