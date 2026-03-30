@@ -435,8 +435,7 @@ function championshipEligibleForParticipantIds(championship, participantIds) {
         .map(id => state.superstars.find(ss => ss.id === id))
         .filter(Boolean);
     if (!participants.length) return true;
-    return participants.every(superstar => championshipEligibleForDivision(championship, superstar.division))
-        && championshipEligibleForGenders(championship, participants.map(superstarGender));
+    return championshipEligibleForGenders(championship, participants.map(superstarGender));
 }
 function championshipEligibleForMatch(championship, match, showIds) {
     if (!championshipAvailableForShowIds(championship, showIds)) return false;
