@@ -1310,7 +1310,7 @@ function championshipBoardSlotKey(championship) {
     const savedDivision = normalizeChampionshipDivision(championship?.division, championship?.name, championship?.gender);
     const isWomenNamed = /women|womens/.test(name);
     const isTagNamed = /tag|team/.test(name);
-    const isMidcardNamed = /intercontinental|unitedstates|northamerican|television|heritagecup|cruiserweight|european|continental|national/.test(name);
+    const isMidcardNamed = /intercontinental|unitedstates|uschampionship|ustitle|northamerican|television|heritagecup|cruiserweight|european|continental|national/.test(name);
 
     if (savedDivision === "Tag" || isTagNamed) {
         return gender === "Female" || isWomenNamed ? "women_tag" : "men_tag";
