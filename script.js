@@ -1416,34 +1416,26 @@ async function openShowChampionsModal(showId) {
         const gender = normalizeChampionshipGender(championship.gender);
         return division === "Women" || (division === "World" && gender === "Female");
     });
-    const mensMidcardChampionships = championships.filter(championship => {
+    const mensMidcardChampionship = takeChampionship(championship => {
         const division = normalizeChampionshipDivision(championship.division, championship.name, championship.gender);
         const gender = normalizeChampionshipGender(championship.gender);
-        if (usedChampionshipIds.has(championship.id)) return false;
         return division === "Midcard" && gender !== "Female";
     });
-    mensMidcardChampionships.forEach(championship => usedChampionshipIds.add(championship.id));
-    const womensMidcardChampionships = championships.filter(championship => {
+    const womensMidcardChampionship = takeChampionship(championship => {
         const division = normalizeChampionshipDivision(championship.division, championship.name, championship.gender);
         const gender = normalizeChampionshipGender(championship.gender);
-        if (usedChampionshipIds.has(championship.id)) return false;
         return division === "Midcard" && gender === "Female";
     });
-    womensMidcardChampionships.forEach(championship => usedChampionshipIds.add(championship.id));
-    const mensTagChampionships = championships.filter(championship => {
+    const mensTagChampionship = takeChampionship(championship => {
         const division = normalizeChampionshipDivision(championship.division, championship.name, championship.gender);
         const gender = normalizeChampionshipGender(championship.gender);
-        if (usedChampionshipIds.has(championship.id)) return false;
         return division === "Tag" && gender !== "Female";
     });
-    mensTagChampionships.forEach(championship => usedChampionshipIds.add(championship.id));
-    const womensTagChampionships = championships.filter(championship => {
+    const womensTagChampionship = takeChampionship(championship => {
         const division = normalizeChampionshipDivision(championship.division, championship.name, championship.gender);
         const gender = normalizeChampionshipGender(championship.gender);
-        if (usedChampionshipIds.has(championship.id)) return false;
         return division === "Tag" && gender === "Female";
     });
-    womensTagChampionships.forEach(championship => usedChampionshipIds.add(championship.id));
     const otherChampionships = championships.filter(championship => !usedChampionshipIds.has(championship.id));
 
     const bodyHTML = championships.length
@@ -1456,10 +1448,10 @@ async function openShowChampionsModal(showId) {
                   ${buildFeaturedChampionshipHTML(womensWorldChampionship, "Women's World Championship")}
                 </div>
                 <div class="show-board-section">
-                  ${mensMidcardChampionships.map(buildSinglesRowHTML).join("")}
-                  ${womensMidcardChampionships.map(buildSinglesRowHTML).join("")}
-                  ${mensTagChampionships.map(buildTagRowHTML).join("")}
-                  ${womensTagChampionships.map(buildTagRowHTML).join("")}
+                  ${mensMidcardChampionship ? buildSinglesRowHTML(mensMidcardChampionship) : ""}
+                  ${womensMidcardChampionship ? buildSinglesRowHTML(womensMidcardChampionship) : ""}
+                  ${mensTagChampionship ? buildTagRowHTML(mensTagChampionship) : ""}
+                  ${womensTagChampionship ? buildTagRowHTML(womensTagChampionship) : ""}
                   ${otherChampionships.map(championship => {
                       const division = normalizeChampionshipDivision(championship.division, championship.name, championship.gender);
                       return division === "Tag" ? buildTagRowHTML(championship) : buildSinglesRowHTML(championship);
