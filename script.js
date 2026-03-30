@@ -80,11 +80,15 @@ function normalizeSuperstarDivision(value) {
 function championshipDivisionLabel(value) {
     return value === "Women" ? "Women's" : value;
 }
+function championshipNameLooksMidcard(name) {
+    const normalizedName = normalizeNameForCompare(name);
+    return /intercontinental|united states|unitedstates|\bus\b|north american|northamerican|television|heritage cup|heritagecup|cruiserweight|european|continental|national/.test(normalizedName);
+}
 function inferChampionshipDivisionFromName(name, gender = "Intergender") {
     const normalizedName = normalizeNameForCompare(name);
     if (/tag|team/.test(normalizedName)) return "Tag";
     if (/women|womens|divas/.test(normalizedName)) return "Women";
-    if (/intercontinental|unitedstates|northamerican|television|heritagecup|cruiserweight|european|continental|national/.test(normalizedName)) {
+    if (championshipNameLooksMidcard(normalizedName)) {
         return "Midcard";
     }
     if (normalizeChampionshipGender(gender) === "Female") return "Women";
@@ -1310,7 +1314,7 @@ function championshipBoardSlotKey(championship) {
     const savedDivision = normalizeChampionshipDivision(championship?.division, championship?.name, championship?.gender);
     const isWomenNamed = /women|womens/.test(name);
     const isTagNamed = /tag|team/.test(name);
-    const isMidcardNamed = /intercontinental|unitedstates|uschampionship|ustitle|northamerican|television|heritagecup|cruiserweight|european|continental|national/.test(name);
+    const isMidcardNamed = championshipNameLooksMidcard(name) || /\bus championship\b|\bus title\b/.test(name);
 
     if (savedDivision === "Tag" || isTagNamed) {
         return gender === "Female" || isWomenNamed ? "women_tag" : "men_tag";
