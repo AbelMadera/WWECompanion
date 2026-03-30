@@ -1304,6 +1304,25 @@ function sortChampionshipsForDashboard(a, b) {
     if (genderDelta !== 0) return genderDelta;
     return String(a?.name || "").localeCompare(String(b?.name || ""));
 }
+function championshipBoardSlotKey(championship) {
+    const name = normalizeNameForCompare(championship?.name);
+    const gender = normalizeChampionshipGender(championship?.gender);
+    const savedDivision = normalizeChampionshipDivision(championship?.division, championship?.name, championship?.gender);
+    const isWomenNamed = /women|womens/.test(name);
+    const isTagNamed = /tag|team/.test(name);
+    const isMidcardNamed = /intercontinental|unitedstates|northamerican|television|heritagecup|cruiserweight|european|continental|national/.test(name);
+
+    if (savedDivision === "Tag" || isTagNamed) {
+        return gender === "Female" || isWomenNamed ? "women_tag" : "men_tag";
+    }
+    if (savedDivision === "Midcard" || isMidcardNamed) {
+        return gender === "Female" || isWomenNamed ? "women_midcard" : "men_midcard";
+    }
+    if (savedDivision === "Women" || gender === "Female" || isWomenNamed) {
+        return "women_world";
+    }
+    return "men_world";
+}
 async function openShowChampionsModal(showId) {
     const show = getShow(showId);
     if (!show) return;
@@ -1407,34 +1426,22 @@ async function openShowChampionsModal(showId) {
         `;
     };
     const mensWorldChampionship = takeChampionship(championship => {
-        const division = normalizeChampionshipDivision(championship.division, championship.name, championship.gender);
-        const gender = normalizeChampionshipGender(championship.gender);
-        return division === "World" && gender !== "Female";
+        return championshipBoardSlotKey(championship) === "men_world";
     });
     const womensWorldChampionship = takeChampionship(championship => {
-        const division = normalizeChampionshipDivision(championship.division, championship.name, championship.gender);
-        const gender = normalizeChampionshipGender(championship.gender);
-        return division === "Women" || (division === "World" && gender === "Female");
+        return championshipBoardSlotKey(championship) === "women_world";
     });
     const mensMidcardChampionship = takeChampionship(championship => {
-        const division = normalizeChampionshipDivision(championship.division, championship.name, championship.gender);
-        const gender = normalizeChampionshipGender(championship.gender);
-        return division === "Midcard" && gender !== "Female";
+        return championshipBoardSlotKey(championship) === "men_midcard";
     });
     const womensMidcardChampionship = takeChampionship(championship => {
-        const division = normalizeChampionshipDivision(championship.division, championship.name, championship.gender);
-        const gender = normalizeChampionshipGender(championship.gender);
-        return division === "Midcard" && gender === "Female";
+        return championshipBoardSlotKey(championship) === "women_midcard";
     });
     const mensTagChampionship = takeChampionship(championship => {
-        const division = normalizeChampionshipDivision(championship.division, championship.name, championship.gender);
-        const gender = normalizeChampionshipGender(championship.gender);
-        return division === "Tag" && gender !== "Female";
+        return championshipBoardSlotKey(championship) === "men_tag";
     });
     const womensTagChampionship = takeChampionship(championship => {
-        const division = normalizeChampionshipDivision(championship.division, championship.name, championship.gender);
-        const gender = normalizeChampionshipGender(championship.gender);
-        return division === "Tag" && gender === "Female";
+        return championshipBoardSlotKey(championship) === "women_tag";
     });
     const otherChampionships = championships.filter(championship => !usedChampionshipIds.has(championship.id));
 
@@ -1453,8 +1460,9 @@ async function openShowChampionsModal(showId) {
                   ${mensTagChampionship ? buildTagRowHTML(mensTagChampionship) : ""}
                   ${womensTagChampionship ? buildTagRowHTML(womensTagChampionship) : ""}
                   ${otherChampionships.map(championship => {
-                      const division = normalizeChampionshipDivision(championship.division, championship.name, championship.gender);
-                      return division === "Tag" ? buildTagRowHTML(championship) : buildSinglesRowHTML(championship);
+                      return championshipBoardSlotKey(championship).includes("tag")
+                          ? buildTagRowHTML(championship)
+                          : buildSinglesRowHTML(championship);
                   }).join("")}
                 </div>
               </div>
