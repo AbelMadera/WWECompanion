@@ -419,6 +419,10 @@ function championshipEligibleForDivision(championship, division) {
     if (!division) return true;
     const titleDivision = normalizeChampionshipDivision(championship?.division, championship?.name, championship?.gender);
     const superstarDivision = normalizeSuperstarDivision(division);
+    const titleGender = normalizeChampionshipGender(championship?.gender);
+    if (superstarDivision === "Women" && titleGender === "Female") {
+        return true;
+    }
     if (titleDivision !== superstarDivision) return false;
     return championshipEligibleForGenders(championship, superstarGender({ division }));
 }
