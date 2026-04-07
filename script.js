@@ -87,10 +87,10 @@ function championshipNameLooksMidcard(name) {
 function inferChampionshipDivisionFromName(name, gender = "Intergender") {
     const normalizedName = normalizeNameForCompare(name);
     if (/tag|team/.test(normalizedName)) return "Tag";
-    if (/women|womens|divas/.test(normalizedName)) return "Women";
     if (championshipNameLooksMidcard(normalizedName)) {
         return "Midcard";
     }
+    if (/women|womens|divas/.test(normalizedName)) return "Women";
     if (normalizeChampionshipGender(gender) === "Female") return "Women";
     return "World";
 }
@@ -125,16 +125,19 @@ function enrichChampionship(championship) {
     };
 }
 function enrichSuperstar(ss) {
-    const showIds = Array.isArray(ss?.showIds)
-        ? ss.showIds.map(x => String(x ?? "").trim()).filter(Boolean)
-        : (ss?.showId ? [ss.showId] : []);
-    const uniqueShowIds = Array.from(new Set(showIds));
+    const rawShowRefs = Array.from(new Set([
+        ...parseShowRefs(ss?.showIds),
+        ...parseShowRefs(ss?.shows),
+        ...parseShowRefs(ss?.showId),
+        ...parseShowRefs(ss?.show),
+        ...parseShowRefs(ss?.showName),
+    ]));
     const championships = parseChampionships(ss?.championships);
     return {
         id: ss?.id || uid("ss"),
         name: String(ss?.name ?? "").trim(),
-        showId: uniqueShowIds[0] ?? null, // legacy compatibility
-        showIds: uniqueShowIds,
+        showId: rawShowRefs[0] ?? null, // legacy compatibility
+        showIds: rawShowRefs,
         division: String(ss?.division ?? "World").trim() || "World",
         isChampion: championships.length > 0,
         championships,
@@ -168,16 +171,17 @@ function normalizeStateData(sourceState) {
 
     const validShowIds = new Set(normalized.shows.map(s => s.id));
     const showNameToId = new Map(normalized.shows.map(s => [s.name.toLowerCase(), s.id]));
+    const resolveShowRefs = (refs) => Array.from(new Set(
+        parseShowRefs(refs)
+            .map(ref => validShowIds.has(ref) ? ref : (showNameToId.get(String(ref).toLowerCase()) || null))
+            .filter(Boolean)
+    ));
     normalized.championships = Array.isArray(normalized.championships)
         ? normalized.championships
             .map(enrichChampionship)
             .filter(Boolean)
             .map(c => {
-                const resolvedShowIds = Array.from(new Set(
-                    parseShowRefs(c?.showIds)
-                        .map(ref => validShowIds.has(ref) ? ref : (showNameToId.get(String(ref).toLowerCase()) || null))
-                        .filter(Boolean)
-                ));
+                const resolvedShowIds = resolveShowRefs(c?.showIds);
                 return {
                     ...c,
                     showIds: resolvedShowIds,
@@ -209,7 +213,7 @@ function normalizeStateData(sourceState) {
 
     normalized.superstars = Array.isArray(normalized.superstars)
         ? normalized.superstars.map(enrichSuperstar).map(ss => {
-            const validShowIds = ss.showIds.filter(showId => normalized.shows.some(s => s.id === showId));
+            const validShowIds = resolveShowRefs(ss.showIds);
             const championshipIds = parseChampionships(ss.championships)
                 .map(resolveChampionshipId)
                 .filter(Boolean)
@@ -249,12 +253,12 @@ function normalizeStateData(sourceState) {
     normalized.events = Array.isArray(normalized.events)
         ? normalized.events.map(ev => {
             const type = String(ev?.type ?? "weekly").trim().toLowerCase() === "ppv" ? "ppv" : "weekly";
-            const ids = Array.isArray(ev?.showIds)
-                ? ev.showIds.map(id => String(id ?? "").trim()).filter(id => validShowIds.has(id))
-                : [];
-            const legacyShowId = String(ev?.showId ?? "").trim();
-            if (legacyShowId && validShowIds.has(legacyShowId)) ids.unshift(legacyShowId);
-            const showIds = Array.from(new Set(ids));
+            const showIds = resolveShowRefs([
+                ...parseShowRefs(ev?.showIds),
+                ...parseShowRefs(ev?.showId),
+                ...parseShowRefs(ev?.show),
+                ...parseShowRefs(ev?.showName),
+            ]);
             return {
                 ...ev,
                 type,
@@ -394,8 +398,7 @@ function championshipName(championshipId) {
     return getChampionship(championshipId)?.name || "";
 }
 function superstarGender(superstar) {
-    const division = normalizeNameForCompare(superstar?.division);
-    return division === "women" || division === "female" ? "Female" : "Male";
+    return normalizeSuperstarDivision(superstar?.division) === "Women" ? "Female" : "Male";
 }
 function championshipEligibleForGenders(championship, genders) {
     const requiredGenders = Array.from(new Set(
