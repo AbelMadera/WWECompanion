@@ -419,30 +419,21 @@ function championshipAvailableForShowIds(championship, showIds) {
     return champShowIds.some(showId => eventOrRosterShowIds.includes(showId));
 }
 function championshipEligibleForDivision(championship, division) {
-    if (!division) return true;
-    const titleDivision = normalizeChampionshipDivision(championship?.division, championship?.name, championship?.gender);
-    const superstarDivision = normalizeSuperstarDivision(division);
-    const titleGender = normalizeChampionshipGender(championship?.gender);
-    if (superstarDivision === "Women" && titleGender === "Female") {
-        return true;
-    }
-    if (titleDivision !== superstarDivision) return false;
-    return championshipEligibleForGenders(championship, superstarGender({ division }));
+    return true;
 }
 function championshipEligibleForSuperstar(championship, superstar) {
     if (!championship || !superstar) return true;
     const showIds = Array.isArray(superstar?.showIds) && superstar.showIds.length
         ? superstar.showIds
         : (superstar?.showId ? [superstar.showId] : []);
-    return championshipAvailableForShowIds(championship, showIds)
-        && championshipEligibleForGenders(championship, superstarGender(superstar));
+    return championshipAvailableForShowIds(championship, showIds);
 }
 function championshipEligibleForParticipantIds(championship, participantIds) {
     const participants = (Array.isArray(participantIds) ? participantIds : [])
         .map(id => state.superstars.find(ss => ss.id === id))
         .filter(Boolean);
     if (!participants.length) return true;
-    return championshipEligibleForGenders(championship, participants.map(superstarGender));
+    return participants.every(participant => championshipEligibleForSuperstar(championship, participant));
 }
 function championshipEligibleForMatch(championship, match, showIds) {
     if (!championshipAvailableForShowIds(championship, showIds)) return false;
@@ -452,12 +443,10 @@ function championshipEligibleForMatch(championship, match, showIds) {
 function eligibleChampionshipsForShowIds(showIds, options = {}) {
     const participantIds = Array.isArray(options?.participantIds) ? options.participantIds.filter(Boolean) : [];
     const superstar = options?.superstar || null;
-    const division = String(options?.division ?? "").trim();
     return state.championships.filter(c => {
         if (!championshipAvailableForShowIds(c, showIds)) return false;
         if (participantIds.length && !championshipEligibleForParticipantIds(c, participantIds)) return false;
         if (superstar && !championshipEligibleForSuperstar(c, superstar)) return false;
-        if (!superstar && division && !championshipEligibleForDivision(c, division)) return false;
         return true;
     });
 }
@@ -4179,7 +4168,7 @@ function renderChampionshipSettingsPanel() {
           <div class="championship-settings-header">
             <div>
               <div class="h3">Add Championship</div>
-              <div class="muted tiny">Create a title, set who can hold it, and decide which shows can book it.</div>
+              <div class="muted tiny">Create a title, classify it for display, and decide which shows can book it.</div>
             </div>
             <button class="btn" id="addChampionshipBtn">Add Championship</button>
           </div>
@@ -4189,13 +4178,13 @@ function renderChampionshipSettingsPanel() {
               <input id="championshipNameInput" class="input" placeholder="Intercontinental Championship" />
             </label>
             <label class="championship-settings-field championship-settings-field-compact">
-              <span class="championship-settings-label">Division</span>
+              <span class="championship-settings-label">Board Division</span>
               <select id="championshipDivisionInput" class="input">
                 ${CHAMPIONSHIP_DIVISION_OPTIONS.map(division => `<option value="${division}">${escapeHTML(championshipDivisionLabel(division))}</option>`).join("")}
               </select>
             </label>
             <label class="championship-settings-field championship-settings-field-compact">
-              <span class="championship-settings-label">Eligible Superstars</span>
+              <span class="championship-settings-label">Display Gender</span>
               <select id="championshipGenderInput" class="input">
                 ${CHAMPIONSHIP_GENDER_OPTIONS.map(gender => `<option value="${gender}">${gender}</option>`).join("")}
               </select>
@@ -4239,13 +4228,13 @@ function renderChampionshipSettingsPanel() {
                             <input class="input" data-settings-title-name="${championship.id}" value="${escapeAttr(championship.name)}" />
                           </label>
                           <label class="championship-settings-field championship-settings-field-compact">
-                            <span class="championship-settings-label">Division</span>
+                            <span class="championship-settings-label">Board Division</span>
                             <select class="input" data-settings-title-division="${championship.id}">
                               ${CHAMPIONSHIP_DIVISION_OPTIONS.map(division => `<option value="${division}" ${division === normalizeChampionshipDivision(championship.division, championship.name, championship.gender) ? "selected" : ""}>${escapeHTML(championshipDivisionLabel(division))}</option>`).join("")}
                             </select>
                           </label>
                           <label class="championship-settings-field championship-settings-field-compact">
-                            <span class="championship-settings-label">Eligible Superstars</span>
+                            <span class="championship-settings-label">Display Gender</span>
                             <select class="input" data-settings-title-gender="${championship.id}">
                               ${CHAMPIONSHIP_GENDER_OPTIONS.map(gender => `<option value="${gender}" ${gender === normalizeChampionshipGender(championship.gender) ? "selected" : ""}>${gender}</option>`).join("")}
                             </select>
