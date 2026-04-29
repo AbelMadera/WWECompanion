@@ -235,6 +235,40 @@ function normalizeStateData(sourceState) {
         })
         : [];
 
+    const validSuperstarIds = new Set(normalized.superstars.map(ss => ss.id));
+    const superstarNameToId = new Map(normalized.superstars.map(ss => [ss.name.toLowerCase(), ss.id]));
+    normalized.rivalries = Array.isArray(normalized.rivalries)
+        ? normalized.rivalries
+            .map(row => {
+                const title = String(row?.title ?? row?.name ?? "").trim();
+                const participantIds = Array.from(new Set(
+                    parseShowRefs(row?.participantIds ?? row?.participants ?? row?.superstars)
+                        .map(ref => validSuperstarIds.has(ref) ? ref : (superstarNameToId.get(String(ref).toLowerCase()) || null))
+                        .filter(Boolean)
+                ));
+                if (!title && !participantIds.length) return null;
+                const showIds = resolveShowRefs([
+                    ...parseShowRefs(row?.showIds),
+                    ...parseShowRefs(row?.showId),
+                    ...parseShowRefs(row?.show),
+                    ...parseShowRefs(row?.showName),
+                ]);
+                return {
+                    id: row?.id || uid("riv"),
+                    title: title || participantIds.map(id => normalized.superstars.find(ss => ss.id === id)?.name).filter(Boolean).join(" vs "),
+                    showIds,
+                    showId: showIds[0] ?? null,
+                    participantIds,
+                    status: normalizeRivalryStatus(row?.status),
+                    startDate: isISODate(row?.startDate) ? row.startDate : "",
+                    endDate: isISODate(row?.endDate) ? row.endDate : "",
+                    summary: String(row?.summary ?? row?.storyline ?? "").trim(),
+                    notes: String(row?.notes ?? "").trim(),
+                };
+            })
+            .filter(Boolean)
+        : [];
+
     normalized.weeklySchedule = Array.isArray(normalized.weeklySchedule)
         ? normalized.weeklySchedule
             .map(row => ({
@@ -287,6 +321,7 @@ function defaultState() {
         shows: [],        // {id, name, color}
         championships: [], // {id, name, division?, gender?, showIds:[], showId(legacy)}
         superstars: [],   // {id, name, showIds:[], showId(legacy), division}
+        rivalries: [],    // {id, title, showIds:[], participantIds:[], status, startDate, endDate, summary, notes}
         weeklySchedule: [], // [{showId, weekday}] where weekday is 0-6
         events: [],       // {id, date, type:"weekly"|"ppv", showId|null, name, matches:[...], defaultRows?}
         universeStartDate: todayISO(),
@@ -378,6 +413,31 @@ const WEEKDAY_OPTIONS = [
     { value: 6, label: "Saturday" },
     { value: 0, label: "Sunday" },
 ];
+const RIVALRY_STATUS_OPTIONS = ["Active", "Heating Up", "Blowoff Ready", "Paused", "Ended"];
+function normalizeRivalryStatus(value) {
+    const raw = String(value ?? "").trim();
+    const statuses = ["Active", "Heating Up", "Blowoff Ready", "Paused", "Ended"];
+    const found = statuses.find(status => status.toLowerCase() === raw.toLowerCase());
+    return found || "Active";
+}
+function rivalryShowNames(rivalry) {
+    const ids = Array.isArray(rivalry?.showIds) ? rivalry.showIds : (rivalry?.showId ? [rivalry.showId] : []);
+    return ids.map(showName).filter(name => name && name !== "Unknown show" && name !== "No show");
+}
+function rivalryParticipantNames(rivalry) {
+    return (Array.isArray(rivalry?.participantIds) ? rivalry.participantIds : [])
+        .map(id => state.superstars.find(ss => ss.id === id)?.name)
+        .filter(Boolean);
+}
+function rivalryParticipants(rivalry) {
+    return (Array.isArray(rivalry?.participantIds) ? rivalry.participantIds : [])
+        .map(id => state.superstars.find(ss => ss.id === id))
+        .filter(Boolean);
+}
+function rivalryDisplayTitle(rivalry) {
+    const names = rivalryParticipantNames(rivalry);
+    return names.length >= 2 ? names.join(" vs ") : String(rivalry?.title || "Untitled Rivalry").trim();
+}
 function calendarWeekdaySundayZero(date) {
     // In the custom 28-day calendar, day 1 is Monday.
     // This maps day-of-month to 0-6 using Sunday=0, Monday=1 ... Saturday=6.
@@ -1553,6 +1613,10 @@ function deleteShowAndUnassign(showId) {
         const nextShowIds = Array.isArray(c?.showIds) ? c.showIds.filter(id => id !== showId) : [];
         return { ...c, showIds: nextShowIds, showId: nextShowIds[0] ?? null };
     });
+    state.rivalries = (Array.isArray(state.rivalries) ? state.rivalries : []).map(rivalry => {
+        const nextShowIds = (Array.isArray(rivalry?.showIds) ? rivalry.showIds : []).filter(id => id !== showId);
+        return { ...rivalry, showIds: nextShowIds, showId: nextShowIds[0] ?? null };
+    });
     state.shows = state.shows.filter(x => x.id !== showId);
     state.weeklySchedule = (state.weeklySchedule || []).filter(row => row.showId !== showId);
 }
@@ -1879,8 +1943,13 @@ async function deleteSuperstarFlow(id) {
     if (!ok.ok) return false;
 
     state.superstars = state.superstars.filter(x => x.id !== id);
+    state.rivalries = (Array.isArray(state.rivalries) ? state.rivalries : []).map(rivalry => ({
+        ...rivalry,
+        participantIds: (Array.isArray(rivalry?.participantIds) ? rivalry.participantIds : []).filter(participantId => participantId !== id),
+    }));
     saveSoon();
     renderRoster();
+    renderRivalries();
     renderPlannerEventSelect();
     return true;
 }
@@ -2242,6 +2311,310 @@ function renderRoster() {
                 e.preventDefault();
                 open();
             }
+        });
+    });
+}
+
+function rivalryFormHTML(rivalry = {}) {
+    const selectedShowIds = new Set(Array.isArray(rivalry?.showIds) ? rivalry.showIds : []);
+    const selectedParticipantIds = new Set(Array.isArray(rivalry?.participantIds) ? rivalry.participantIds : []);
+    const showOptions = state.shows.length
+        ? state.shows.map(show => `
+            <label class="edit-ss-check-item">
+              <input class="rivalryShowItem" type="checkbox" value="${show.id}" ${selectedShowIds.has(show.id) ? "checked" : ""} />
+              <span>${escapeHTML(show.name)}</span>
+            </label>
+          `).join("")
+        : `<div class="muted tiny">No shows created yet.</div>`;
+    const participantOptions = state.superstars.length
+        ? state.superstars
+            .slice()
+            .sort((a, b) => a.name.localeCompare(b.name))
+            .map(ss => {
+                const shows = superstarShowNames(ss).join(", ") || "Unassigned";
+                const photo = superstarPhotoURL(ss);
+                return `
+                  <label class="edit-ss-check-item rivalry-participant-option">
+                    <input class="rivalryParticipantItem" type="checkbox" value="${ss.id}" ${selectedParticipantIds.has(ss.id) ? "checked" : ""} />
+                    ${photo
+                        ? `<img class="rivalry-picker-photo" src="${escapeAttr(photo)}" alt="${escapeAttr(ss.name)}" />`
+                        : `<span class="rivalry-picker-fallback">${escapeHTML(superstarInitials(ss.name))}</span>`
+                    }
+                    <span>
+                      <b>${escapeHTML(ss.name)}</b>
+                      <span class="muted tiny">${escapeHTML(shows)}</span>
+                    </span>
+                  </label>
+                `;
+            }).join("")
+        : `<div class="muted tiny">Add superstars before creating rivalries.</div>`;
+    const status = normalizeRivalryStatus(rivalry?.status);
+
+    return `
+      <div class="stack rivalry-form">
+        <div class="edit-ss-section">
+          <label class="edit-ss-label">People Feuding</label>
+          <div class="edit-ss-check-grid rivalry-participant-grid">${participantOptions}</div>
+        </div>
+
+        <div class="grid2">
+          <label>
+            <span class="edit-ss-label">Status</span>
+            <select id="rivalryStatusInput" class="input">
+              ${RIVALRY_STATUS_OPTIONS.map(option => `<option value="${option}" ${option === status ? "selected" : ""}>${option}</option>`).join("")}
+            </select>
+          </label>
+          <label>
+            <span class="edit-ss-label">Start Date</span>
+            <input id="rivalryStartDateInput" class="input" type="date" value="${escapeAttr(rivalry?.startDate || "")}" />
+          </label>
+        </div>
+
+        <div class="edit-ss-section">
+          <label class="edit-ss-label">Shows</label>
+          <div class="edit-ss-check-grid">${showOptions}</div>
+        </div>
+
+        <label class="edit-ss-label" for="rivalrySummaryInput">Storyline</label>
+        <textarea id="rivalrySummaryInput" class="input textarea" placeholder="Current story beat, motivation, or end goal">${escapeHTML(rivalry?.summary || "")}</textarea>
+
+        <details class="rivalry-advanced" ${rivalry?.notes || rivalry?.endDate ? "open" : ""}>
+          <summary>More details</summary>
+          <div class="stack">
+            <label>
+              <span class="edit-ss-label">End Date</span>
+              <input id="rivalryEndDateInput" class="input" type="date" value="${escapeAttr(rivalry?.endDate || "")}" />
+            </label>
+            <label class="edit-ss-label" for="rivalryNotesInput">Notes</label>
+            <textarea id="rivalryNotesInput" class="input textarea" placeholder="Key beats, planned matches, promos, turns...">${escapeHTML(rivalry?.notes || "")}</textarea>
+          </div>
+        </details>
+      </div>
+    `;
+}
+
+async function openRivalryEditor(rivalryId = "", draft = null) {
+    const existing = rivalryId ? state.rivalries.find(rivalry => rivalry.id === rivalryId) : null;
+    const formRivalry = draft || existing || {};
+    const modalResult = await openModal({
+        title: existing ? "Edit Rivalry" : "Add Rivalry",
+        bodyHTML: rivalryFormHTML(formRivalry),
+        okText: existing ? "Save Rivalry" : "Add Rivalry",
+    });
+    if (!modalResult?.ok) return false;
+
+    const participantIds = Array.from(new Set($$(".rivalryParticipantItem:checked").map(el => el.value)));
+    const showIds = Array.from(new Set($$(".rivalryShowItem:checked").map(el => el.value)));
+    const draftRivalry = {
+        title: "",
+        showIds,
+        participantIds,
+        status: normalizeRivalryStatus($("#rivalryStatusInput")?.value),
+        startDate: $("#rivalryStartDateInput")?.value || "",
+        endDate: $("#rivalryEndDateInput")?.value || "",
+        summary: $("#rivalrySummaryInput")?.value.trim() || "",
+        notes: $("#rivalryNotesInput")?.value.trim() || "",
+    };
+    if (participantIds.length < 2) {
+        await openModal({
+            title: "Pick at least two people",
+            bodyHTML: `<div class="muted">A rivalry needs at least two selected superstars.</div>`,
+            okText: "OK",
+            cancelText: "Close",
+        });
+        return openRivalryEditor(rivalryId, draftRivalry);
+    }
+
+    const nextRivalry = {
+        id: existing?.id || uid("riv"),
+        title: participantIds.map(id => state.superstars.find(ss => ss.id === id)?.name).filter(Boolean).join(" vs "),
+        showIds,
+        showId: showIds[0] ?? null,
+        participantIds,
+        status: draftRivalry.status,
+        startDate: isISODate(draftRivalry.startDate) ? draftRivalry.startDate : "",
+        endDate: isISODate(draftRivalry.endDate) ? draftRivalry.endDate : "",
+        summary: draftRivalry.summary,
+        notes: draftRivalry.notes,
+    };
+
+    if (existing) {
+        state.rivalries = state.rivalries.map(rivalry => rivalry.id === existing.id ? nextRivalry : rivalry);
+    } else {
+        state.rivalries.push(nextRivalry);
+    }
+    saveSoon();
+    renderRivalries();
+    return true;
+}
+
+async function deleteRivalryFlow(rivalryId) {
+    const rivalry = state.rivalries.find(row => row.id === rivalryId);
+    if (!rivalry) return;
+    const result = await openModal({
+        title: "Delete rivalry?",
+        bodyHTML: `<div>Delete <b>${escapeHTML(rivalry.title)}</b>?</div>`,
+        okText: "Delete",
+    });
+    if (!result?.ok) return;
+    state.rivalries = state.rivalries.filter(row => row.id !== rivalryId);
+    saveSoon();
+    renderRivalries();
+}
+
+function renderRivalries() {
+    populateShowSelects();
+
+    const list = $("#rivalriesList");
+    if (!list) return;
+
+    const inSettingsPanel = Boolean($("#settingsRivalriesPanel"));
+    const deletingId = inSettingsPanel ? settingsUiState.rivalries.deletingId : null;
+    const search = ($("#rivalrySearch")?.value || "").trim().toLowerCase();
+    const showFilter = $("#rivalryShowFilter")?.value || "all";
+    const statusFilter = $("#rivalryStatusFilter")?.value || "all";
+
+    const rows = (Array.isArray(state.rivalries) ? state.rivalries : [])
+        .filter(rivalry => {
+            if (showFilter === "all") return true;
+            const ids = Array.isArray(rivalry?.showIds) ? rivalry.showIds : [];
+            return !ids.length || ids.includes(showFilter);
+        })
+        .filter(rivalry => statusFilter === "all" ? true : normalizeRivalryStatus(rivalry.status) === statusFilter)
+        .filter(rivalry => {
+            if (!search) return true;
+            const haystack = [
+                rivalryDisplayTitle(rivalry),
+                rivalry.summary,
+                rivalry.notes,
+                normalizeRivalryStatus(rivalry.status),
+                ...rivalryShowNames(rivalry),
+                ...rivalryParticipantNames(rivalry),
+            ].join(" ").toLowerCase();
+            return haystack.includes(search);
+        })
+        .sort((a, b) => {
+            const statusOrder = { "Active": 0, "Heating Up": 1, "Blowoff Ready": 2, "Paused": 3, "Ended": 4 };
+            const statusDelta = (statusOrder[normalizeRivalryStatus(a.status)] ?? 9) - (statusOrder[normalizeRivalryStatus(b.status)] ?? 9);
+            if (statusDelta !== 0) return statusDelta;
+            return String(b.startDate || "").localeCompare(String(a.startDate || ""));
+        });
+
+    if (!rows.length) {
+        list.innerHTML = `
+          <div class="rivalry-empty-state">
+            <div class="rivalry-empty-title">No rivalries match your filters.</div>
+            <div class="muted tiny">Change the filters or add a rivalry from the button above.</div>
+          </div>
+        `;
+        return;
+    }
+
+    list.innerHTML = `
+      <div class="rivalry-list-head">
+        <span>${rows.length} ${rows.length === 1 ? "rivalry" : "rivalries"}</span>
+        <span class="muted tiny">Sorted by status and start date</span>
+      </div>
+      <div class="list rivalry-list">
+        ${rows.map(rivalry => {
+            const shows = rivalryShowNames(rivalry);
+            const participants = rivalryParticipants(rivalry);
+            const dateRange = [rivalry.startDate, rivalry.endDate].filter(Boolean).join(" to ");
+            return `
+              <div class="item rivalry-item">
+                <div class="rivalry-card-head">
+                  <div class="rivalry-render-row">
+                    ${participants.length
+                        ? participants.map(ss => {
+                            const photo = superstarPhotoURL(ss);
+                            return `
+                              <div class="rivalry-render">
+                                ${photo
+                                    ? `<img class="rivalry-render-photo" src="${escapeAttr(photo)}" alt="${escapeAttr(ss.name)}" />`
+                                    : `<div class="rivalry-render-fallback">${escapeHTML(superstarInitials(ss.name))}</div>`
+                                }
+                                <div class="rivalry-render-name">${escapeHTML(ss.name)}</div>
+                              </div>
+                            `;
+                        }).join(`<div class="rivalry-vs">VS</div>`)
+                        : `<div class="muted tiny">No participants selected</div>`
+                    }
+                  </div>
+                  <span class="rivalry-status rivalry-status-${escapeAttr(normalizeRivalryStatus(rivalry.status).toLowerCase().replaceAll(" ", "-"))}">${escapeHTML(normalizeRivalryStatus(rivalry.status))}</span>
+                </div>
+                <div class="item-title rivalry-title">${escapeHTML(rivalryDisplayTitle(rivalry))}</div>
+                <div class="row gap wrap rivalry-meta">
+                  ${shows.length ? shows.map(name => `<span class="badge">${escapeHTML(name)}</span>`).join("") : `<span class="badge">All shows</span>`}
+                  ${dateRange ? `<span class="badge">${escapeHTML(dateRange)}</span>` : ""}
+                </div>
+                ${rivalry.summary ? `<div class="rivalry-story">${escapeHTML(rivalry.summary).replace(/\n/g, "<br>")}</div>` : ""}
+                ${rivalry.notes ? `<div class="rivalry-notes">${escapeHTML(rivalry.notes).replace(/\n/g, "<br>")}</div>` : ""}
+                <div class="item-actions rivalry-actions">
+                  <button class="btn secondary" data-edit-rivalry="${rivalry.id}">Edit</button>
+                  <button class="btn danger" data-delete-rivalry="${rivalry.id}">${deletingId === rivalry.id ? "Cancel Delete" : "Delete"}</button>
+                </div>
+                ${deletingId === rivalry.id ? `
+                  <div class="settings-confirm-row">
+                    <div class="muted tiny">Delete ${escapeHTML(rivalryDisplayTitle(rivalry))}?</div>
+                    <div class="row gap wrap">
+                      <button class="btn danger" data-confirm-delete-rivalry="${rivalry.id}">Confirm Delete</button>
+                      <button class="btn secondary" data-cancel-delete-rivalry="${rivalry.id}">Keep Rivalry</button>
+                    </div>
+                  </div>
+                ` : ""}
+              </div>
+            `;
+        }).join("")}
+      </div>
+    `;
+
+    $$("[data-edit-rivalry]", list).forEach(btn => {
+        btn.addEventListener("click", () => {
+            if ($("#settingsRivalriesPanel")) {
+                settingsUiState.rivalries.message = null;
+                settingsUiState.rivalries.adding = false;
+                settingsUiState.rivalries.editingId = btn.dataset.editRivalry;
+                settingsUiState.rivalries.deletingId = null;
+                settingsUiState.rivalries.draft = null;
+                renderRivalriesSettingsPanel();
+                return;
+            }
+            openRivalryEditor(btn.dataset.editRivalry);
+        });
+    });
+    $$("[data-delete-rivalry]", list).forEach(btn => {
+        btn.addEventListener("click", () => {
+            if ($("#settingsRivalriesPanel")) {
+                const id = btn.dataset.deleteRivalry;
+                settingsUiState.rivalries.message = null;
+                settingsUiState.rivalries.adding = false;
+                settingsUiState.rivalries.editingId = null;
+                settingsUiState.rivalries.deletingId = settingsUiState.rivalries.deletingId === id ? null : id;
+                settingsUiState.rivalries.draft = null;
+                renderRivalriesSettingsPanel();
+                return;
+            }
+            deleteRivalryFlow(btn.dataset.deleteRivalry);
+        });
+    });
+    $$("[data-confirm-delete-rivalry]", list).forEach(btn => {
+        btn.addEventListener("click", () => {
+            const rivalry = state.rivalries.find(row => row.id === btn.dataset.confirmDeleteRivalry);
+            if (!rivalry) return;
+            state.rivalries = state.rivalries.filter(row => row.id !== rivalry.id);
+            settingsUiState.rivalries.message = { tone: "success", text: `${rivalryDisplayTitle(rivalry)} deleted.` };
+            settingsUiState.rivalries.adding = false;
+            settingsUiState.rivalries.editingId = null;
+            settingsUiState.rivalries.deletingId = null;
+            settingsUiState.rivalries.draft = null;
+            saveSoon();
+            renderRivalriesSettingsPanel();
+        });
+    });
+    $$("[data-cancel-delete-rivalry]", list).forEach(btn => {
+        btn.addEventListener("click", () => {
+            settingsUiState.rivalries.deletingId = null;
+            renderRivalriesSettingsPanel();
         });
     });
 }
@@ -3747,6 +4120,13 @@ const settingsUiState = {
         editingId: null,
         deletingId: null,
     },
+    rivalries: {
+        message: null,
+        adding: false,
+        editingId: null,
+        deletingId: null,
+        draft: null,
+    },
 };
 
 function settingsStatusHTML(id, message) {
@@ -3781,6 +4161,15 @@ function resetSettingsPanelState(panelKey) {
         settingsUiState.championships.message = null;
         settingsUiState.championships.editingId = null;
         settingsUiState.championships.deletingId = null;
+        return;
+    }
+
+    if (panelKey === "rivalries") {
+        settingsUiState.rivalries.message = null;
+        settingsUiState.rivalries.adding = false;
+        settingsUiState.rivalries.editingId = null;
+        settingsUiState.rivalries.deletingId = null;
+        settingsUiState.rivalries.draft = null;
     }
 }
 
@@ -3789,6 +4178,7 @@ async function openSettingsPanel(panelKey) {
         weekly: { title: "Weekly Calendar Setup", render: renderWeeklySettingsPanel },
         shows: { title: "Manage Shows", render: renderShowsSettingsPanel },
         championships: { title: "Manage Championships", render: renderChampionshipSettingsPanel },
+        rivalries: { title: "Rivalries & Storylines", render: renderRivalriesSettingsPanel },
         data: { title: "Import, Export, and Reset", render: renderDataSettingsPanel },
     };
     const panel = panels[panelKey];
@@ -3816,6 +4206,8 @@ function renderSettingsTools() {
         Number.isInteger(Number(row.weekday))
     ).length;
     const pleCount = state.events.filter(ev => String(ev?.type || "").toLowerCase() === "ppv").length;
+    const activeRivalryCount = (Array.isArray(state.rivalries) ? state.rivalries : [])
+        .filter(rivalry => normalizeRivalryStatus(rivalry.status) !== "Ended").length;
 
     panels.innerHTML = `
       <button class="settings-launch" data-settings-open="weekly">
@@ -3840,6 +4232,14 @@ function renderSettingsTools() {
           <span class="pill">${state.championships.length} championships</span>
         </span>
       </button>
+      <button class="settings-launch" data-settings-open="rivalries">
+        <span class="settings-launch-title">Rivalries & Storylines</span>
+        <span class="settings-launch-copy">Track who is feuding, story beats, status, and brand scope.</span>
+        <span class="settings-launch-meta">
+          <span class="pill">${state.rivalries.length} total</span>
+          <span class="pill">${activeRivalryCount} active</span>
+        </span>
+      </button>
       <button class="settings-launch" data-settings-open="data">
         <span class="settings-launch-title">Data Tools</span>
         <span class="settings-launch-copy">Import JSON, export backups, and reset the universe when needed.</span>
@@ -3855,6 +4255,131 @@ function renderSettingsTools() {
             openSettingsPanel(btn.dataset.settingsOpen);
         };
     });
+}
+
+function readRivalryFormDraft() {
+    const participantIds = Array.from(new Set($$(".rivalryParticipantItem:checked").map(el => el.value)));
+    const showIds = Array.from(new Set($$(".rivalryShowItem:checked").map(el => el.value)));
+    return {
+        title: "",
+        showIds,
+        participantIds,
+        status: normalizeRivalryStatus($("#rivalryStatusInput")?.value),
+        startDate: $("#rivalryStartDateInput")?.value || "",
+        endDate: $("#rivalryEndDateInput")?.value || "",
+        summary: $("#rivalrySummaryInput")?.value.trim() || "",
+        notes: $("#rivalryNotesInput")?.value.trim() || "",
+    };
+}
+
+function saveRivalryFromSettingsForm() {
+    const existingId = settingsUiState.rivalries.editingId;
+    const existing = existingId ? state.rivalries.find(rivalry => rivalry.id === existingId) : null;
+    const draft = readRivalryFormDraft();
+
+    if (draft.participantIds.length < 2) {
+        settingsUiState.rivalries.message = { tone: "danger", text: "Pick at least two superstars before saving a rivalry." };
+        settingsUiState.rivalries.draft = draft;
+        renderRivalriesSettingsPanel();
+        return false;
+    }
+
+    const nextRivalry = {
+        id: existing?.id || uid("riv"),
+        title: draft.participantIds.map(id => state.superstars.find(ss => ss.id === id)?.name).filter(Boolean).join(" vs "),
+        showIds: draft.showIds,
+        showId: draft.showIds[0] ?? null,
+        participantIds: draft.participantIds,
+        status: draft.status,
+        startDate: isISODate(draft.startDate) ? draft.startDate : "",
+        endDate: isISODate(draft.endDate) ? draft.endDate : "",
+        summary: draft.summary,
+        notes: draft.notes,
+    };
+
+    if (existing) {
+        state.rivalries = state.rivalries.map(rivalry => rivalry.id === existing.id ? nextRivalry : rivalry);
+    } else {
+        state.rivalries.push(nextRivalry);
+    }
+
+    settingsUiState.rivalries.message = { tone: "success", text: `${rivalryDisplayTitle(nextRivalry)} saved.` };
+    settingsUiState.rivalries.adding = false;
+    settingsUiState.rivalries.editingId = null;
+    settingsUiState.rivalries.deletingId = null;
+    settingsUiState.rivalries.draft = null;
+    saveSoon();
+    renderRivalriesSettingsPanel();
+    return true;
+}
+
+function renderRivalriesSettingsPanel() {
+    const root = $("#modalBody");
+    if (!root) return;
+
+    const editingRivalry = settingsUiState.rivalries.editingId
+        ? state.rivalries.find(rivalry => rivalry.id === settingsUiState.rivalries.editingId)
+        : null;
+    const showEditor = settingsUiState.rivalries.adding || Boolean(editingRivalry);
+    const editorRivalry = settingsUiState.rivalries.draft || editingRivalry || {};
+
+    root.innerHTML = `
+      <div id="settingsRivalriesPanel" class="stack rivalry-view">
+        <div class="muted tiny">Open rivalries from Settings, then track the people feuding, their status, story beats, and assigned show.</div>
+        ${settingsStatusHTML("settingsRivalriesStatus", settingsUiState.rivalries.message)}
+        <div class="card rivalry-toolbar-card">
+          <div class="card-body rivalry-toolbar">
+            <div class="rivalry-filters">
+              <select id="rivalryShowFilter" class="input"></select>
+              <select id="rivalryStatusFilter" class="input">
+                <option value="all">All statuses</option>
+                ${RIVALRY_STATUS_OPTIONS.map(status => `<option value="${status}">${status}</option>`).join("")}
+              </select>
+              <input id="rivalrySearch" class="input" placeholder="Search..." />
+            </div>
+            <button id="openAddRivalryModal" class="btn">Add Rivalry</button>
+          </div>
+        </div>
+        ${showEditor ? `
+          <div class="card rivalry-editor-card">
+            <div class="card-title">${editingRivalry ? "Edit Rivalry" : "Add Rivalry"}</div>
+            <div class="card-body stack">
+              ${rivalryFormHTML(editorRivalry)}
+              <div class="item-actions rivalry-actions">
+                <button class="btn" id="settingsSaveRivalry">${editingRivalry ? "Save Rivalry" : "Add Rivalry"}</button>
+                <button class="btn secondary" id="settingsCancelRivalry">Cancel</button>
+              </div>
+            </div>
+          </div>
+        ` : ""}
+        <div class="card rivalry-board-card">
+          <div class="card-title">Rivalries & Storylines</div>
+          <div id="rivalriesList" class="card-body"></div>
+        </div>
+      </div>
+    `;
+
+    renderRivalries();
+
+    $("#openAddRivalryModal", root)?.addEventListener("click", () => {
+        settingsUiState.rivalries.message = null;
+        settingsUiState.rivalries.adding = true;
+        settingsUiState.rivalries.editingId = null;
+        settingsUiState.rivalries.deletingId = null;
+        settingsUiState.rivalries.draft = null;
+        renderRivalriesSettingsPanel();
+    });
+    $("#settingsSaveRivalry", root)?.addEventListener("click", saveRivalryFromSettingsForm);
+    $("#settingsCancelRivalry", root)?.addEventListener("click", () => {
+        settingsUiState.rivalries.message = null;
+        settingsUiState.rivalries.adding = false;
+        settingsUiState.rivalries.editingId = null;
+        settingsUiState.rivalries.deletingId = null;
+        settingsUiState.rivalries.draft = null;
+        renderRivalriesSettingsPanel();
+    });
+    $("#rivalrySearch", root)?.addEventListener("input", () => renderRivalries());
+    $("#rivalryStatusFilter", root)?.addEventListener("change", () => renderRivalries());
 }
 
 function renderWeeklySettingsPanel() {
@@ -4430,7 +4955,7 @@ function renderDataSettingsPanel() {
         <div class="settings-danger-box stack">
           <label class="row gap settings-checkbox-row">
             <input id="settingsWipeConfirm" type="checkbox" />
-            <span class="muted tiny">I understand this deletes all shows, roster data, and events.</span>
+            <span class="muted tiny">I understand this deletes all shows, roster data, rivalries, and events.</span>
           </label>
           <button class="btn danger" id="wipeBtn">Wipe Everything</button>
         </div>
@@ -4482,7 +5007,7 @@ function renderDataSettingsPanel() {
             setSettingsStatus(
                 status,
                 result.mode === "snapshot"
-                    ? `Universe restored: ${result.roster} roster entries, ${result.championships} championships, ${result.shows} shows, ${result.events} events, ${result.weeklySchedule} weekly rules, and ${result.completedDates} completed days loaded.`
+                    ? `Universe restored: ${result.roster} roster entries, ${result.championships} championships, ${result.shows} shows, ${result.rivalries} rivalries, ${result.events} events, ${result.weeklySchedule} weekly rules, and ${result.completedDates} completed days loaded.`
                     : `Added ${result.championships} championships, ${result.shows} shows, ${result.roster} roster entries, and ${result.ples} PLEs.`,
                 "success"
             );
@@ -4661,6 +5186,7 @@ function importPopulateJSON(payload, { replace = true } = {}) {
             championships: state.championships.length,
             shows: state.shows.length,
             roster: state.superstars.length,
+            rivalries: state.rivalries.length,
             ples: state.events.filter(event => event.type === "ppv").length,
             events: state.events.length,
             completedDates: state.completedDates.length,
@@ -4971,6 +5497,18 @@ function populateShowSelects() {
         calShowFilter.value = (state.shows.some(s => s.id === prev) || prev === "all") ? prev : "all";
         calShowFilter.onchange = () => renderCalendar();
     }
+
+    // rivalry show filter
+    const rivalryShowFilter = $("#rivalryShowFilter");
+    if (rivalryShowFilter) {
+        const prev = rivalryShowFilter.value || "all";
+        rivalryShowFilter.innerHTML = [
+            `<option value="all">All shows</option>`,
+            ...state.shows.map(s => `<option value="${s.id}">${escapeHTML(s.name)}</option>`)
+        ].join("");
+        rivalryShowFilter.value = (state.shows.some(s => s.id === prev) || prev === "all") ? prev : "all";
+        rivalryShowFilter.onchange = () => renderRivalries();
+    }
 }
 
 // -------------------- RENDER ALL --------------------
@@ -5007,7 +5545,6 @@ $("#openAddSSModal").addEventListener("click", () => {
 });
 
 $("#rosterSearch").addEventListener("input", () => renderRoster());
-
 $("#calPrev").addEventListener("click", () => { calCursor.setMonth(calCursor.getMonth() - 1); renderCalendar(); });
 $("#calNext").addEventListener("click", () => { calCursor.setMonth(calCursor.getMonth() + 1); renderCalendar(); });
 $("#calToday").addEventListener("click", () => {
