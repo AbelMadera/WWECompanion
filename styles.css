@@ -2930,3 +2930,536 @@ textarea.cell-input {
         scroll-behavior: auto !important;
     }
 }
+
+/* =========================================================
+   v5.0 additions: Toast/undo, Universe Day hero,
+   Booking Assistant, Title Reigns, Mobile planner cards,
+   Rivalry timelines, Roster polish, Calendar refinements
+   ========================================================= */
+
+/* Save-state error indicator */
+.save-state-error {
+    color: #ff8a8a !important;
+    background: rgba(255, 77, 77, .14);
+    border-color: rgba(255, 77, 77, .35) !important;
+}
+
+/* Toast stack — bottom-center on mobile, bottom-right on desktop */
+.toast-stack {
+    position: fixed;
+    left: 50%;
+    bottom: calc(80px + env(safe-area-inset-bottom));
+    transform: translateX(-50%);
+    z-index: 1500;
+    display: flex;
+    flex-direction: column-reverse;
+    gap: 10px;
+    pointer-events: none;
+    max-width: min(420px, calc(100vw - 24px));
+    width: max-content;
+}
+
+.toast {
+    pointer-events: auto;
+    background: rgba(20, 20, 32, .96);
+    border: 1px solid var(--line);
+    color: var(--text);
+    border-radius: 14px;
+    box-shadow: 0 12px 28px rgba(0, 0, 0, .45);
+    padding: 12px 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    opacity: 0;
+    transform: translateY(20px) scale(.98);
+    transition:
+        opacity var(--dur-med) var(--ease-smooth),
+        transform var(--dur-med) var(--ease-smooth);
+    backdrop-filter: blur(6px);
+}
+
+.toast.is-visible {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+}
+
+.toast.is-leaving {
+    opacity: 0;
+    transform: translateY(8px) scale(.98);
+}
+
+.toast-message {
+    flex: 1;
+    font-size: 13px;
+    line-height: 1.35;
+}
+
+.toast-action {
+    border: 1px solid rgba(255, 255, 255, .14);
+    background: rgba(255, 255, 255, .08);
+    color: var(--text);
+    padding: 6px 12px;
+    border-radius: 10px;
+    font-weight: 700;
+    font-size: 13px;
+    cursor: pointer;
+    flex: 0 0 auto;
+    transition: background var(--dur-fast) var(--ease-soft);
+}
+.toast-action:hover { background: rgba(255, 255, 255, .14); }
+.toast-action:active { transform: translateY(1px); }
+
+.toast-close {
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 18px;
+    line-height: 1;
+}
+.toast-close:hover { background: rgba(255, 255, 255, .06); color: var(--text); }
+
+.toast-danger { border-color: rgba(255, 77, 77, .35); background: rgba(40, 18, 22, .96); }
+.toast-danger .toast-action { background: rgba(255, 77, 77, .18); border-color: rgba(255, 77, 77, .4); }
+
+@media (min-width: 721px) {
+    .toast-stack {
+        left: auto;
+        right: 24px;
+        bottom: 24px;
+        transform: none;
+    }
+}
+
+
+/* ====================== Title Reigns card ====================== */
+.title-reigns-list {
+    display: grid;
+    gap: 8px;
+}
+.reign-row {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 12px;
+    align-items: center;
+    padding: 10px 12px;
+    background: rgba(255, 255, 255, .03);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    cursor: pointer;
+    color: var(--text);
+    text-align: left;
+    transition: background var(--dur-fast) var(--ease-soft), transform var(--dur-fast) var(--ease-soft);
+}
+.reign-row:hover { background: rgba(255, 255, 255, .06); transform: translateY(-1px); }
+.reign-row:active { transform: translateY(0); }
+
+.reign-photos {
+    display: flex;
+    margin-left: 0;
+}
+.reign-photos > * + * { margin-left: -10px; }
+
+.reign-photo, .reign-photo-fallback {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    object-fit: cover;
+    border: 2px solid rgba(20, 20, 32, .98);
+}
+.reign-photo-fallback {
+    background: rgba(155, 155, 255, .25);
+    color: var(--text);
+    display: grid;
+    place-items: center;
+    font-weight: 900;
+    font-size: 12px;
+}
+
+.reign-body { min-width: 0; }
+.reign-name { font-weight: 800; font-size: 13px; line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reign-belt { font-size: 11px; }
+
+.reign-days { text-align: right; }
+.reign-days-num { font-weight: 900; font-size: 18px; line-height: 1; }
+.reign-days-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; }
+
+/* Reign history rows in modal */
+.reign-history-row {
+    padding: 8px 10px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, .02);
+    border: 1px solid var(--line);
+}
+.reign-history-row.is-active { background: rgba(155, 155, 255, .07); border-color: rgba(155, 155, 255, .25); }
+.reign-history-name { font-weight: 700; font-size: 13px; }
+.reign-history-meta { margin-top: 2px; }
+
+/* ====================== Calendar — month-aware refinements ====================== */
+.cal-cell-outside {
+    opacity: .35;
+    cursor: pointer;
+}
+.cal-cell.is-selected {
+    border-color: rgba(155, 155, 255, .5);
+    background: rgba(155, 155, 255, .08);
+    box-shadow: 0 0 0 1px rgba(155, 155, 255, .35) inset;
+}
+.cal-cell.is-today .cal-date {
+    color: #4dd6a8;
+}
+.cal-cell.is-today {
+    border-color: rgba(77, 214, 168, .35);
+}
+.cal-cell.is-universe-now {
+    background: linear-gradient(180deg, rgba(155, 155, 255, .12), rgba(155, 155, 255, .04));
+    border-color: rgba(155, 155, 255, .35);
+}
+
+/* ====================== Rivalry timeline ====================== */
+.rivalry-timeline {
+    margin-top: 10px;
+    padding: 10px 12px;
+    background: rgba(255, 255, 255, .025);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+}
+.rivalry-timeline-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 6px;
+}
+.rivalry-timeline-title {
+    font-size: 11px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: .1em;
+    color: var(--muted);
+}
+.rivalry-timeline-score {
+    font-size: 11px;
+    font-weight: 800;
+    color: var(--text);
+    background: rgba(255, 255, 255, .07);
+    padding: 2px 8px;
+    border-radius: 8px;
+}
+.rivalry-timeline-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: grid;
+    gap: 4px;
+}
+.rivalry-timeline-row {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 8px;
+    align-items: baseline;
+    padding: 6px 4px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    transition: background var(--dur-fast) var(--ease-soft);
+}
+.rivalry-timeline-row:hover { background: rgba(255, 255, 255, .04); }
+.rivalry-timeline-date { font-weight: 700; color: var(--muted); }
+.rivalry-timeline-winner { font-weight: 800; }
+.rivalry-timeline-event { text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ====================== Streak / momentum badges ====================== */
+.streak-badge {
+    font-weight: 800;
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+.streak-win {
+    background: rgba(255, 130, 60, .14);
+    border-color: rgba(255, 130, 60, .35);
+    color: #ffb088;
+}
+.streak-loss {
+    background: rgba(120, 180, 255, .12);
+    border-color: rgba(120, 180, 255, .3);
+    color: #b9d2ff;
+}
+
+.sparkline {
+    display: inline-block;
+    vertical-align: middle;
+}
+
+.roster-list { gap: 6px; }
+.roster-item {
+    flex-direction: column;
+    align-items: stretch;
+}
+.roster-item-main { align-items: center; min-width: 0; flex-wrap: nowrap; }
+.roster-item-text { min-width: 0; flex: 1; }
+.roster-item-meta {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-top: 6px;
+    flex-wrap: wrap;
+}
+.roster-item-spark {
+    display: inline-flex;
+    align-items: center;
+    background: rgba(255, 255, 255, .04);
+    padding: 2px 6px;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+}
+
+/* Roster header gets a clean column on small screens */
+.roster-filters {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    width: 100%;
+}
+.roster-filters > #rosterSearch { grid-column: 1 / -1; }
+
+@media (min-width: 721px) {
+    .roster-filters {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        width: auto;
+    }
+    .roster-filters > #rosterSearch { grid-column: auto; min-width: 180px; }
+}
+
+/* Momentum block in superstar details */
+.ss-momentum {
+    background: rgba(255, 255, 255, .03);
+    padding: 10px 12px;
+    border-radius: 12px;
+    border: 1px solid var(--line);
+}
+.ss-momentum-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 4px;
+}
+.ss-momentum-spark { display: flex; align-items: center; }
+.ss-momentum-spark .sparkline { width: 100%; height: 32px; }
+
+.ss-reign-row {
+    padding: 8px 10px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, .02);
+    border: 1px solid var(--line);
+}
+.ss-reign-row.is-active { background: rgba(155, 155, 255, .07); border-color: rgba(155, 155, 255, .25); }
+.ss-reign-name { font-weight: 700; font-size: 13px; }
+
+/* ====================== Mobile planner CARDS ====================== */
+/* On small screens, hide the table and show cards. On wide screens, opposite. */
+.planner-card-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 12px;
+}
+.planner-table-wrap { display: none; }
+.planner-card-list { display: flex; }
+
+@media (min-width: 961px) {
+    .planner-table-wrap { display: block; }
+    .planner-card-list { display: none; }
+}
+
+.planner-card {
+    background: rgba(20, 20, 30, .8);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    transition: border-color var(--dur-fast) var(--ease-soft), background var(--dur-fast) var(--ease-soft), transform var(--dur-fast) var(--ease-soft);
+}
+.planner-card.planner-row-dragging {
+    opacity: .65;
+    border-color: rgba(155, 155, 255, .45);
+    background: rgba(28, 28, 44, .95);
+}
+.planner-card.planner-row-drop-target {
+    border-color: rgba(77, 214, 168, .55);
+    box-shadow: 0 0 0 2px rgba(77, 214, 168, .2);
+}
+
+.planner-card-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.planner-card-drag {
+    background: rgba(255, 255, 255, .04);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    color: var(--muted);
+    width: 36px;
+    height: 36px;
+    cursor: grab;
+    display: grid;
+    place-items: center;
+    font-size: 18px;
+    line-height: 1;
+    touch-action: none;
+}
+.planner-card-drag:active { cursor: grabbing; background: rgba(255, 255, 255, .1); }
+.planner-card-num {
+    font-weight: 900;
+    font-size: 13px;
+    letter-spacing: .02em;
+}
+.planner-card-belt {
+    background: linear-gradient(135deg, #ffd76b, #ffb84d);
+    color: #1a1300;
+    padding: 4px 8px;
+    border-radius: 7px;
+    font-size: 10px;
+    font-weight: 900;
+    letter-spacing: .02em;
+    line-height: 1.2;
+    max-width: 50%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.planner-card-spacer { flex: 1; }
+.planner-card-iconbtn {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+    background: rgba(255, 255, 255, .05);
+    color: var(--text);
+    cursor: pointer;
+    font-size: 16px;
+    font-weight: 700;
+    display: grid;
+    place-items: center;
+    transition: background var(--dur-fast) var(--ease-soft);
+}
+.planner-card-iconbtn:hover { background: rgba(255, 255, 255, .1); }
+.planner-card-iconbtn:disabled { opacity: .4; cursor: not-allowed; }
+.planner-card-iconbtn.danger { border-color: rgba(255, 77, 77, .35); background: rgba(255, 77, 77, .1); color: #ffa8a8; }
+.planner-card-iconbtn.danger:hover { background: rgba(255, 77, 77, .18); }
+.planner-card-iconbtn.small { width: 30px; height: 30px; font-size: 14px; }
+
+.planner-card-section {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.planner-card-section-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.planner-card-section-actions { display: flex; gap: 4px; }
+.planner-card-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: .12em;
+    color: var(--muted);
+    font-weight: 800;
+}
+
+.planner-card-participants {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.planner-card-participant {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 8px;
+    background: rgba(255, 255, 255, .025);
+    border: 1px solid rgba(255, 255, 255, .05);
+    border-radius: 10px;
+}
+.planner-card-participant-row {
+    display: flex;
+    gap: 8px;
+    align-items: stretch;
+}
+.planner-card-participant-row .cell-input {
+    flex: 1;
+    min-width: 0;
+}
+.planner-card-team-pick { width: 100%; }
+.planner-card-escort { padding-left: 4px; }
+
+.planner-card-team-names {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+}
+
+.planner-card-notes {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+.planner-card-note {
+    text-align: left;
+    border: 1px dashed rgba(255, 255, 255, .14);
+    background: transparent;
+    color: var(--text);
+    padding: 8px 10px;
+    border-radius: 10px;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-height: 56px;
+    transition: background var(--dur-fast) var(--ease-soft), border-color var(--dur-fast) var(--ease-soft);
+}
+.planner-card-note:hover {
+    background: rgba(255, 255, 255, .04);
+    border-color: rgba(255, 255, 255, .25);
+}
+.planner-card-note-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: .12em;
+    color: var(--muted);
+    font-weight: 800;
+}
+.planner-card-note-preview {
+    font-size: 12px;
+    line-height: 1.3;
+    color: var(--text);
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+}
+.planner-card-note-preview.is-empty { color: var(--muted); font-style: italic; }
+
+@media (max-width: 480px) {
+    .planner-card-team-names { grid-template-columns: 1fr; }
+    .planner-card-notes { grid-template-columns: 1fr; }
+}
+
+/* On large screens, increase the planner-card-list cap so cards don't dominate */
+@media (min-width: 961px) {
+    .planner-card-list { max-width: 720px; }
+}
+

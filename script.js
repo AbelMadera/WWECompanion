@@ -2,6 +2,9 @@
 // Storage isolated so you can swap to a DB later.
 
 const STORAGE_KEY = "universeBooker.v2";
+const STORAGE_BACKUP_PREFIX = "universeBooker.v2.corrupt-";
+const STORAGE_AUTOEXPORT_KEY = "universeBooker.v2.lastReminder";
+const CALENDAR_DAYS_PER_MONTH = 28;
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
@@ -332,18 +335,42 @@ function defaultState() {
 }
 
 const store = {
+    lastSaveError: null,
+    saveCount: 0,
     load() {
         const raw = localStorage.getItem(STORAGE_KEY);
         if (!raw) return defaultState();
         const parsed = safeJSONParse(raw);
-        return parsed && parsed.version ? parsed : defaultState();
+        if (parsed && parsed.version) return parsed;
+        // Corrupt or unrecognized — back it up before falling back to defaults
+        try {
+            const backupKey = `${STORAGE_BACKUP_PREFIX}${Date.now()}`;
+            localStorage.setItem(backupKey, raw);
+        } catch (e) { /* ignore — at least we tried */ }
+        return defaultState();
     },
     save(state) {
         state.updatedAt = Date.now();
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+        try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+            this.lastSaveError = null;
+            this.saveCount += 1;
+            return { ok: true };
+        } catch (err) {
+            this.lastSaveError = err;
+            return { ok: false, error: err };
+        }
     },
     wipe() {
         localStorage.removeItem(STORAGE_KEY);
+    },
+    listCorruptBackups() {
+        const keys = [];
+        for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i);
+            if (k && k.startsWith(STORAGE_BACKUP_PREFIX)) keys.push(k);
+        }
+        return keys;
     }
 };
 
@@ -353,16 +380,53 @@ let addSuperstarShowIds = new Set();
 
 // Debounced saving (smooth typing)
 let saveTimer = null;
-function saveSoon() {
-    $("#saveState")?.classList.remove("muted");
-    $("#saveState") && ($("#saveState").textContent = "Saving…");
-    clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => {
-        store.save(state);
-        $("#saveState") && ($("#saveState").textContent = "Saved");
-        $("#saveState")?.classList.add("muted");
-    }, 250);
+let pendingSave = false;
+function flushSaveNow() {
+    if (saveTimer) {
+        clearTimeout(saveTimer);
+        saveTimer = null;
+    }
+    if (!pendingSave) return;
+    pendingSave = false;
+    const result = store.save(state);
+    const indicator = $("#saveState");
+    if (indicator) {
+        if (result.ok) {
+            indicator.textContent = "Saved";
+            indicator.classList.add("muted");
+            indicator.classList.remove("save-state-error");
+        } else {
+            indicator.textContent = "Save failed";
+            indicator.classList.remove("muted");
+            indicator.classList.add("save-state-error");
+        }
+    }
+    // Periodic backup nudge — every 50 successful saves
+    if (result.ok && store.saveCount > 0 && store.saveCount % 50 === 0) {
+        showBackupReminderToast();
+    }
+    if (!result.ok) {
+        showSaveErrorToast();
+    }
 }
+function saveSoon() {
+    pendingSave = true;
+    const indicator = $("#saveState");
+    if (indicator) {
+        indicator.classList.remove("muted");
+        indicator.classList.remove("save-state-error");
+        indicator.textContent = "Saving…";
+    }
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(flushSaveNow, 250);
+}
+window.addEventListener("beforeunload", () => {
+    if (pendingSave) flushSaveNow();
+});
+// Also flush on page hide (mobile Safari may not fire beforeunload reliably)
+document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden" && pendingSave) flushSaveNow();
+});
 
 // -------------------- HELPERS --------------------
 function getShow(showId) { return state.shows.find(s => s.id === showId) || null; }
@@ -440,7 +504,7 @@ function rivalryDisplayTitle(rivalry) {
 }
 function calendarWeekdaySundayZero(date) {
     // In the custom 28-day calendar, day 1 is Monday.
-    // This maps day-of-month to 0-6 using Sunday=0, Monday=1 ... Saturday=6.
+    // Maps day-of-month to 0-6 using Sunday=0, Monday=1 ... Saturday=6.
     return date.getDate() % 7;
 }
 function superstarOnShow(superstar, showId) {
@@ -525,7 +589,11 @@ function superstarChampionshipNames(superstar) {
         .filter(Boolean);
 }
 function superstarPhotoURL(superstar) {
-    return String(superstar?.photo ?? "").trim();
+    const raw = String(superstar?.photo ?? "").trim();
+    if (!raw) return "";
+    // Allow only http(s) and data URIs — anything else (javascript:, file:, vbscript:) is dropped
+    if (/^(https?:\/\/|data:image\/)/i.test(raw)) return raw;
+    return "";
 }
 function superstarInitials(name) {
     const parts = String(name ?? "").trim().split(/\s+/).filter(Boolean);
@@ -1270,6 +1338,521 @@ function computeWeeklyRankings(topN = 3) {
     }
     return byShow;
 }
+
+// -------------------- TITLE REIGN HISTORY (derived) --------------------
+// Walk every match across already-completed events in chronological order.
+// Whenever a championship match has a winner different from the current
+// holder of that title, log a title change.
+let _titleReignsCache = null;
+let _titleReignsCacheKey = "";
+function titleReignsCacheKey() {
+    return `${state.updatedAt || 0}:${state.events.length}:${state.championships.length}:${state.superstars.length}:${(state.completedDates || []).length}`;
+}
+function computeTitleReigns() {
+    const key = titleReignsCacheKey();
+    if (_titleReignsCache && _titleReignsCacheKey === key) return _titleReignsCache;
+    // Map championshipId -> array of reigns: { championshipId, holderId, holderName, startDate, endDate?, lostTo?, lostEventId?, eventId }
+    const reignsByChampionship = new Map();
+    state.championships.forEach(c => reignsByChampionship.set(c.id, []));
+
+    const universeCurrentISO = getUniverseCurrentISO();
+    const processedEvents = state.events
+        .filter(e => isISODate(e?.date))
+        .filter(e => e.date < universeCurrentISO || isUniverseDateCompleted(e.date))
+        .slice()
+        .sort((a, b) => a.date.localeCompare(b.date));
+
+    // Initialise from current holders if we have nothing recorded — gives an "in progress" reign starting at universe start.
+    const startingHolders = new Map(); // championshipId -> holderId(s) before any match
+    state.championships.forEach(c => {
+        const holders = state.superstars.filter(ss => parseChampionships(ss.championships).includes(c.id));
+        if (holders.length) startingHolders.set(c.id, holders.map(h => h.id));
+    });
+
+    const superstarNameToId = new Map(state.superstars.map(ss => [normalizeNameForCompare(ss.name), ss.id]));
+    const superstarNameById = new Map(state.superstars.map(ss => [ss.id, ss.name]));
+
+    // currentHolders: championshipId -> [holderId,...] (singles = 1, tag = 2+)
+    const currentHolders = new Map();
+    // We'll populate by replaying. For singles titles, only one holder at a time.
+    // For tag titles, multiple holders. We treat "winners" of a tag title match as the new holders.
+
+    const startISO = getUniverseStartISO();
+    // Seed: pretend each starting holder won the title on universe start.
+    state.championships.forEach(c => {
+        const initial = startingHolders.get(c.id) || [];
+        if (initial.length) {
+            currentHolders.set(c.id, initial.slice());
+            const reigns = reignsByChampionship.get(c.id);
+            reigns.push({
+                championshipId: c.id,
+                holderIds: initial.slice(),
+                holderNames: initial.map(id => superstarNameById.get(id)).filter(Boolean),
+                startDate: startISO,
+                endDate: null,
+                lostToIds: null,
+                lostEventId: null,
+                eventId: null,
+                isInitial: true,
+            });
+        }
+    });
+
+    for (const ev of processedEvents) {
+        const matches = Array.isArray(ev.matches) ? ev.matches : [];
+        for (const match of matches) {
+            const championshipId = String(match?.championshipId || "").trim();
+            if (!championshipId) continue;
+            const championship = state.championships.find(c => c.id === championshipId);
+            if (!championship) continue;
+            const resultValue = String(match?.result || "").trim();
+            if (!resultValue) continue;
+            if (isPromoResult(resultValue)) continue;
+            if (isDQResult(resultValue)) continue; // Most title matches must be won via pin/sub — DQ keeps title
+            if (isDrawRecordResult(resultValue)) continue;
+            if (normalizeNameForCompare(resultValue) === "no result") continue;
+
+            const participantIds = resolveMatchParticipantIds(match, superstarNameToId);
+            if (!participantIds.length) continue;
+
+            // Determine winner ids (could be team for tag matches)
+            let newHolderIds = [];
+            if (isTeamResultValue(resultValue)) {
+                const teams = inferMatchTeams(match?.matchType, participantIds, normalizedParticipantTeams(match));
+                const winningTeamKey = parseTeamResultValue(resultValue);
+                const winningTeam = teams.find(g => g.key === winningTeamKey);
+                if (winningTeam) newHolderIds = winningTeam.participants.slice();
+            } else {
+                const winId = resolveMatchWinnerId(match, participantIds, superstarNameById);
+                if (winId) newHolderIds = [winId];
+            }
+            if (!newHolderIds.length) continue;
+
+            const prevHolders = currentHolders.get(championshipId) || [];
+            const prevSet = new Set(prevHolders);
+            const newSet = new Set(newHolderIds);
+            const sameHolders = prevSet.size === newSet.size && [...prevSet].every(x => newSet.has(x));
+            if (sameHolders) continue; // Successful defence — no title change
+
+            // Title change!
+            const reigns = reignsByChampionship.get(championshipId);
+            // Close out the previous reign
+            if (reigns.length) {
+                const last = reigns[reigns.length - 1];
+                if (!last.endDate) {
+                    last.endDate = ev.date;
+                    last.lostToIds = newHolderIds.slice();
+                    last.lostEventId = ev.id;
+                }
+            }
+            // Open new reign
+            reigns.push({
+                championshipId,
+                holderIds: newHolderIds.slice(),
+                holderNames: newHolderIds.map(id => superstarNameById.get(id)).filter(Boolean),
+                startDate: ev.date,
+                endDate: null,
+                lostToIds: null,
+                lostEventId: null,
+                eventId: ev.id,
+                isInitial: false,
+            });
+            currentHolders.set(championshipId, newHolderIds.slice());
+        }
+    }
+
+    _titleReignsCache = reignsByChampionship;
+    _titleReignsCacheKey = key;
+    return reignsByChampionship;
+}
+function reignsForChampionship(championshipId) {
+    return computeTitleReigns().get(championshipId) || [];
+}
+function reignsForSuperstar(superstarId) {
+    const map = computeTitleReigns();
+    const out = [];
+    for (const [, reigns] of map) {
+        for (const reign of reigns) {
+            if (reign.holderIds.includes(superstarId)) out.push(reign);
+        }
+    }
+    return out.sort((a, b) => String(a.startDate || "").localeCompare(String(b.startDate || "")));
+}
+function reignDayLength(reign) {
+    const start = reign.startDate;
+    const end = reign.endDate || getUniverseCurrentISO();
+    if (!isISODate(start) || !isISODate(end)) return 0;
+    const ms = parseISO(end) - parseISO(start);
+    return Math.max(0, Math.round(ms / (1000 * 60 * 60 * 24)));
+}
+function longestActiveReigns(limit = 5) {
+    const map = computeTitleReigns();
+    const out = [];
+    for (const [championshipId, reigns] of map) {
+        if (!reigns.length) continue;
+        const last = reigns[reigns.length - 1];
+        if (last.endDate) continue;
+        out.push({ championshipId, reign: last, days: reignDayLength(last) });
+    }
+    return out.sort((a, b) => b.days - a.days).slice(0, limit);
+}
+
+// -------------------- RIVALRY MATCH TIMELINE (derived) --------------------
+// For each rivalry, find all completed-event matches whose participant set
+// is a subset of the rivalry's participants (i.e. the match is "between" the rivalry's people).
+function matchesForRivalry(rivalry) {
+    const participantIds = new Set((rivalry?.participantIds || []).filter(Boolean));
+    if (participantIds.size < 2) return [];
+    const universeCurrentISO = getUniverseCurrentISO();
+    const eventsAsc = state.events
+        .filter(e => isISODate(e?.date))
+        .filter(e => e.date < universeCurrentISO || isUniverseDateCompleted(e.date))
+        .slice()
+        .sort((a, b) => a.date.localeCompare(b.date));
+    const out = [];
+    const superstarNameToId = new Map(state.superstars.map(ss => [normalizeNameForCompare(ss.name), ss.id]));
+    const superstarNameById = new Map(state.superstars.map(ss => [ss.id, ss.name]));
+    for (const ev of eventsAsc) {
+        const matches = Array.isArray(ev.matches) ? ev.matches : [];
+        for (const match of matches) {
+            const matchPids = new Set(resolveMatchParticipantIds(match, superstarNameToId));
+            if (matchPids.size < 2) continue;
+            // Match counts if at least 2 of the rivalry's participants are in it,
+            // AND every match participant is in the rivalry (no random extras).
+            let overlap = 0;
+            let allIn = true;
+            for (const pid of matchPids) {
+                if (participantIds.has(pid)) overlap += 1;
+                else allIn = false;
+            }
+            if (overlap < 2 || !allIn) continue;
+            const result = String(match?.result || "").trim();
+            let winnerLabel = "";
+            if (result && !isPromoResult(result)) {
+                if (isDrawRecordResult(result)) winnerLabel = "Draw";
+                else if (isDQResult(result)) winnerLabel = "DQ";
+                else if (isTeamResultValue(result)) {
+                    const teams = inferMatchTeams(match?.matchType, [...matchPids], normalizedParticipantTeams(match));
+                    const winning = teams.find(g => g.key === parseTeamResultValue(result));
+                    winnerLabel = winning ? teamDisplayName(match, winning.key, winning.participants) : "";
+                } else {
+                    const winId = resolveMatchWinnerId(match, [...matchPids], superstarNameById);
+                    winnerLabel = winId ? superstarNameById.get(winId) || "" : "";
+                }
+            }
+            out.push({
+                eventId: ev.id,
+                eventName: ev.name,
+                eventType: ev.type,
+                date: ev.date,
+                matchType: match.matchType || "",
+                participants: [...matchPids].map(pid => superstarNameById.get(pid) || ""),
+                winnerLabel,
+                isPromo: isPromoResult(result),
+            });
+        }
+    }
+    return out;
+}
+
+// -------------------- BOOKING ASSISTANT (derived) --------------------
+// Surface actionable suggestions on the dashboard.
+function computeBookingSuggestions() {
+    const suggestions = [];
+    const universeCurrentISO = getUniverseCurrentISO();
+    const records = computeSuperstarRecords();
+    const rankings = computeWeeklyRankings(10);
+    const reignsByChampionship = computeTitleReigns();
+
+    // Last-appeared map: superstarId -> ISO date
+    const lastAppeared = new Map();
+    state.events
+        .filter(e => isISODate(e?.date))
+        .filter(e => e.date < universeCurrentISO || isUniverseDateCompleted(e.date))
+        .slice()
+        .sort((a, b) => a.date.localeCompare(b.date))
+        .forEach(ev => {
+            (Array.isArray(ev.matches) ? ev.matches : []).forEach(m => {
+                (Array.isArray(m.participants) ? m.participants : []).forEach(ref => {
+                    const pid = resolveSuperstarIdFromRef(ref);
+                    if (pid) lastAppeared.set(pid, ev.date);
+                });
+            });
+        });
+
+    const daysBetween = (isoA, isoB) => {
+        if (!isISODate(isoA) || !isISODate(isoB)) return 0;
+        return Math.round((parseISO(isoB) - parseISO(isoA)) / 86400000);
+    };
+
+    // Suggestion 1: Hot contenders who haven't faced the champion
+    for (const [showId, rows] of rankings) {
+        if (!rows.length) continue;
+        const showName_ = showName(showId);
+        // Find each title scoped to this show with an active singles holder
+        state.championships.forEach(championship => {
+            if (!championshipAvailableForShowIds(championship, [showId])) return;
+            const reigns = reignsByChampionship.get(championship.id) || [];
+            const lastReign = reigns[reigns.length - 1];
+            if (!lastReign || lastReign.endDate) return; // vacant
+            if (lastReign.holderIds.length !== 1) return; // skip tag for this rule
+            const champId = lastReign.holderIds[0];
+            const champName = superstarNameById(champId);
+            if (!champName) return;
+            // Look at top-5 contenders on this show in same gender as title
+            const titleGender = normalizeChampionshipGender(championship.gender);
+            const contenders = rows.slice(0, 5)
+                .map(r => r.superstar)
+                .filter(ss => ss.id !== champId)
+                .filter(ss => {
+                    if (titleGender === "Intergender") return true;
+                    return superstarGender(ss) === titleGender;
+                });
+            for (const contender of contenders) {
+                // Has contender ever faced champ? Search completed events
+                const facedBefore = (function () {
+                    for (const ev of state.events) {
+                        if (!isISODate(ev?.date)) continue;
+                        if (ev.date >= universeCurrentISO && !isUniverseDateCompleted(ev.date)) continue;
+                        for (const m of (ev.matches || [])) {
+                            const pids = (m.participants || []).map(resolveSuperstarIdFromRef).filter(Boolean);
+                            if (pids.includes(champId) && pids.includes(contender.id)) return true;
+                        }
+                    }
+                    return false;
+                })();
+                if (facedBefore) continue;
+                suggestions.push({
+                    kind: "fresh_matchup",
+                    priority: 5,
+                    title: `${contender.name} vs ${champName}`,
+                    detail: `${contender.name} is a top-5 contender on ${showName_} and has never faced the ${championship.name} holder.`,
+                    superstarIds: [contender.id, champId],
+                    championshipId: championship.id,
+                });
+                break; // one per title
+            }
+        });
+    }
+
+    // Suggestion 2: Stale active rivalries (no booked match in 30+ days while Active/Heating Up/Blowoff Ready)
+    (state.rivalries || []).forEach(rivalry => {
+        const status = normalizeRivalryStatus(rivalry.status);
+        if (status === "Ended" || status === "Paused") return;
+        const matches = matchesForRivalry(rivalry);
+        const lastMatchDate = matches.length ? matches[matches.length - 1].date : (rivalry.startDate || "");
+        if (!isISODate(lastMatchDate)) return;
+        const daysSince = daysBetween(lastMatchDate, universeCurrentISO);
+        if (daysSince < 30) return;
+        suggestions.push({
+            kind: "stalled_rivalry",
+            priority: status === "Blowoff Ready" ? 8 : 6,
+            title: `${rivalryDisplayTitle(rivalry)} needs a match`,
+            detail: `${status} for ${daysSince} days with no booked match. ${status === "Blowoff Ready" ? "Time for the blowoff." : ""}`.trim(),
+            rivalryId: rivalry.id,
+        });
+    });
+
+    // Suggestion 3: Missing-from-TV — superstars who haven't appeared in 21+ days
+    state.superstars.forEach(ss => {
+        const last = lastAppeared.get(ss.id);
+        if (!last) return; // never appeared = exclude (probably new)
+        const days = daysBetween(last, universeCurrentISO);
+        if (days < 21) return;
+        // Only flag for top-tier or champion superstars (avoids spam)
+        const isChamp = !!ss.isChampion;
+        let isTopTen = false;
+        for (const [, rows] of rankings) {
+            if (rows.some(r => r.superstar.id === ss.id)) { isTopTen = true; break; }
+        }
+        if (!isChamp && !isTopTen) return;
+        suggestions.push({
+            kind: "missing_from_tv",
+            priority: isChamp ? 7 : 4,
+            title: `${ss.name} hasn't appeared in ${days} days`,
+            detail: `${isChamp ? "Champion " : ""}${ss.name} is missing from TV.`,
+            superstarIds: [ss.id],
+        });
+    });
+
+    // Suggestion 4: Title not defended in 60+ days (active reign)
+    state.championships.forEach(championship => {
+        const reigns = reignsByChampionship.get(championship.id) || [];
+        const lastReign = reigns[reigns.length - 1];
+        if (!lastReign || lastReign.endDate) return;
+        // Find the most recent match that featured this championship
+        let lastDefenceDate = lastReign.startDate;
+        for (const ev of state.events) {
+            if (!isISODate(ev?.date)) continue;
+            if (ev.date >= universeCurrentISO && !isUniverseDateCompleted(ev.date)) continue;
+            for (const m of (ev.matches || [])) {
+                if (String(m.championshipId || "") === championship.id) {
+                    if (!isISODate(lastDefenceDate) || ev.date > lastDefenceDate) lastDefenceDate = ev.date;
+                }
+            }
+        }
+        const days = daysBetween(lastDefenceDate, universeCurrentISO);
+        if (days < 60) return;
+        suggestions.push({
+            kind: "stale_title",
+            priority: 6,
+            title: `${championship.name} not defended in ${days} days`,
+            detail: `Book a defence to keep the title hot.`,
+            championshipId: championship.id,
+        });
+    });
+
+    // Suggestion 5: Hot streak that deserves a title shot — 5+ wins in a row, not currently a champ
+    const streakByPerson = new Map();
+    state.superstars.forEach(ss => streakByPerson.set(ss.id, 0));
+    state.events
+        .filter(e => isISODate(e?.date))
+        .filter(e => e.date < universeCurrentISO || isUniverseDateCompleted(e.date))
+        .slice()
+        .sort((a, b) => a.date.localeCompare(b.date))
+        .forEach(ev => {
+            (ev.matches || []).forEach(m => {
+                const result = String(m.result || "").trim();
+                const pids = (m.participants || []).map(resolveSuperstarIdFromRef).filter(Boolean);
+                if (pids.length < 2 || !result || isPromoResult(result)) return;
+                if (isDQResult(result) || isDrawRecordResult(result)) {
+                    pids.forEach(id => streakByPerson.set(id, 0));
+                    return;
+                }
+                let winners = [], losers = [];
+                if (isTeamResultValue(result)) {
+                    const teams = inferMatchTeams(m.matchType, pids, normalizedParticipantTeams(m));
+                    const winningKey = parseTeamResultValue(result);
+                    const winning = teams.find(g => g.key === winningKey);
+                    winners = winning?.participants || [];
+                    losers = pids.filter(p => !winners.includes(p));
+                } else {
+                    const winId = resolveSuperstarIdFromRef(result);
+                    if (!winId || !pids.includes(winId)) return;
+                    winners = [winId];
+                    losers = pids.filter(p => p !== winId);
+                }
+                winners.forEach(id => streakByPerson.set(id, (streakByPerson.get(id) || 0) + 1));
+                losers.forEach(id => streakByPerson.set(id, 0));
+            });
+        });
+    state.superstars.forEach(ss => {
+        const streak = streakByPerson.get(ss.id) || 0;
+        if (streak < 5) return;
+        if (ss.isChampion) return;
+        suggestions.push({
+            kind: "hot_streak",
+            priority: 5,
+            title: `${ss.name} on a ${streak}-match win streak`,
+            detail: `Title shot territory. Book a #1 contender match or a championship match.`,
+            superstarIds: [ss.id],
+        });
+    });
+
+    // Sort by priority desc, then title alpha for stability
+    return suggestions.sort((a, b) => (b.priority - a.priority) || a.title.localeCompare(b.title));
+}
+
+// -------------------- MOMENTUM SPARKLINE (derived) --------------------
+// Returns an array of recent score deltas per booked match for a superstar (last N matches).
+function superstarMomentumPoints(superstarId, n = 12) {
+    const universeCurrentISO = getUniverseCurrentISO();
+    const eventsAsc = state.events
+        .filter(e => isISODate(e?.date))
+        .filter(e => e.date < universeCurrentISO || isUniverseDateCompleted(e.date))
+        .slice()
+        .sort((a, b) => a.date.localeCompare(b.date));
+    const points = [];
+    let running = 0;
+    for (const ev of eventsAsc) {
+        for (const m of (ev.matches || [])) {
+            const pids = (m.participants || []).map(resolveSuperstarIdFromRef).filter(Boolean);
+            if (!pids.includes(superstarId)) continue;
+            const result = String(m.result || "").trim();
+            if (isPromoResult(result)) { running += 0.3; points.push(running); continue; }
+            if (isDQResult(result) || isDrawRecordResult(result) || normalizeNameForCompare(result) === "no result") {
+                running += 0; points.push(running); continue;
+            }
+            let won = false, lost = false;
+            if (isTeamResultValue(result)) {
+                const teams = inferMatchTeams(m.matchType, pids, normalizedParticipantTeams(m));
+                const winning = teams.find(g => g.key === parseTeamResultValue(result));
+                if (winning?.participants.includes(superstarId)) won = true;
+                else if (winning?.participants.length) lost = true;
+            } else {
+                const winId = resolveSuperstarIdFromRef(result);
+                if (winId === superstarId) won = true;
+                else if (winId && pids.includes(winId)) lost = true;
+            }
+            if (won) running += 1;
+            else if (lost) running -= 1;
+            points.push(running);
+        }
+    }
+    return points.slice(-n);
+}
+function sparklineSVG(points, { width = 80, height = 24, stroke = "#9b9bff" } = {}) {
+    if (!points || points.length < 2) {
+        return `<svg class="sparkline" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" aria-hidden="true"><line x1="2" y1="${height / 2}" x2="${width - 2}" y2="${height / 2}" stroke="rgba(255,255,255,.18)" stroke-width="1"/></svg>`;
+    }
+    const min = Math.min(...points);
+    const max = Math.max(...points);
+    const range = (max - min) || 1;
+    const step = (width - 4) / (points.length - 1);
+    const coords = points.map((p, i) => {
+        const x = 2 + i * step;
+        const y = height - 2 - ((p - min) / range) * (height - 4);
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(" ");
+    const last = points[points.length - 1];
+    const first = points[0];
+    const trendingUp = last >= first;
+    const color = trendingUp ? "#4dd6a8" : "#ff7676";
+    return `<svg class="sparkline" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" aria-hidden="true">
+        <polyline fill="none" stroke="${color}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" points="${coords}" />
+    </svg>`;
+}
+
+// -------------------- STREAK / DROUGHT BADGES --------------------
+function superstarCurrentStreak(superstarId) {
+    const universeCurrentISO = getUniverseCurrentISO();
+    const eventsDesc = state.events
+        .filter(e => isISODate(e?.date))
+        .filter(e => e.date < universeCurrentISO || isUniverseDateCompleted(e.date))
+        .slice()
+        .sort((a, b) => b.date.localeCompare(a.date));
+    let kind = null; // "win" | "loss" | null
+    let count = 0;
+    outer: for (const ev of eventsDesc) {
+        const matchesDesc = (ev.matches || []).slice().reverse();
+        for (const m of matchesDesc) {
+            const pids = (m.participants || []).map(resolveSuperstarIdFromRef).filter(Boolean);
+            if (!pids.includes(superstarId)) continue;
+            const result = String(m.result || "").trim();
+            if (!result || isPromoResult(result) || isDQResult(result) || isDrawRecordResult(result) || normalizeNameForCompare(result) === "no result") {
+                if (kind) break outer; else continue;
+            }
+            let won = false, lost = false;
+            if (isTeamResultValue(result)) {
+                const teams = inferMatchTeams(m.matchType, pids, normalizedParticipantTeams(m));
+                const winning = teams.find(g => g.key === parseTeamResultValue(result));
+                if (winning?.participants.includes(superstarId)) won = true;
+                else if (winning?.participants.length) lost = true;
+            } else {
+                const winId = resolveSuperstarIdFromRef(result);
+                if (winId === superstarId) won = true;
+                else if (winId && pids.includes(winId)) lost = true;
+            }
+            const thisKind = won ? "win" : lost ? "loss" : null;
+            if (!thisKind) { if (kind) break outer; else continue; }
+            if (!kind) { kind = thisKind; count = 1; continue; }
+            if (kind === thisKind) count += 1;
+            else break outer;
+        }
+    }
+    return { kind, count };
+}
+
 function rankingRowsHTML(rows, startRank = 1) {
     return rows.map((entry, idx) => {
         const ss = entry.superstar;
@@ -1434,7 +2017,7 @@ async function openShowChampionsModal(showId) {
               ${primaryHolder
                 ? `<button type="button" class="show-board-row-portrait-btn" data-open-ss="${primaryHolder.id}">${holderVisualHTML(primaryHolder, { compact: true })}</button>`
                 : `<div class="show-board-holder-fallback compact">?</div>`
-              }
+            }
             </div>
             ${primaryHolder ? `
               <button type="button" class="show-board-row-champion" data-open-ss="${primaryHolder.id}">
@@ -1465,7 +2048,7 @@ async function openShowChampionsModal(showId) {
                     </button>
                   `).join("")
                 : `<div class="show-board-holder-fallback compact">?</div><div class="show-board-holder-fallback compact">?</div>`
-              }
+            }
             </div>
             ${holders.length ? `
               <div class="show-board-tag-champion">
@@ -1519,10 +2102,10 @@ async function openShowChampionsModal(showId) {
                   ${mensTagChampionship ? buildTagRowHTML(mensTagChampionship) : ""}
                   ${womensTagChampionship ? buildTagRowHTML(womensTagChampionship) : ""}
                   ${otherChampionships.map(championship => {
-                      return championshipBoardSlotKey(championship).includes("tag")
-                          ? buildTagRowHTML(championship)
-                          : buildSinglesRowHTML(championship);
-                  }).join("")}
+            return championshipBoardSlotKey(championship).includes("tag")
+                ? buildTagRowHTML(championship)
+                : buildSinglesRowHTML(championship);
+        }).join("")}
                 </div>
               </div>
             </div>
@@ -1659,8 +2242,11 @@ function upsertEvent(event) {
     saveSoon();
 }
 function deleteEvent(eventId) {
+    const ev = state.events.find(e => e.id === eventId);
+    const snapshot = snapshotState();
     state.events = state.events.filter(e => e.id !== eventId);
     saveSoon();
+    if (ev) offerUndo(`${ev.name || "Event"} deleted.`, snapshot);
 }
 
 // -------------------- ROUTER --------------------
@@ -1713,8 +2299,347 @@ function closeModal(result) {
 $("#modalCancel").addEventListener("click", () => closeModal({ ok: false }));
 $("#modalOk").addEventListener("click", () => closeModal({ ok: true }));
 
+// -------------------- TOAST + UNDO --------------------
+let toastContainer = null;
+function ensureToastContainer() {
+    if (toastContainer && document.body.contains(toastContainer)) return toastContainer;
+    toastContainer = document.createElement("div");
+    toastContainer.className = "toast-stack";
+    toastContainer.setAttribute("aria-live", "polite");
+    document.body.appendChild(toastContainer);
+    return toastContainer;
+}
+function showToast({ message, tone = "info", actionLabel = "", onAction = null, duration = 4200 }) {
+    const root = ensureToastContainer();
+    const toast = document.createElement("div");
+    toast.className = `toast toast-${tone}`;
+    const msgEl = document.createElement("div");
+    msgEl.className = "toast-message";
+    msgEl.textContent = message;
+    toast.appendChild(msgEl);
+    if (actionLabel && onAction) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "toast-action";
+        btn.textContent = actionLabel;
+        btn.addEventListener("click", () => {
+            try { onAction(); } finally { dismiss(); }
+        });
+        toast.appendChild(btn);
+    }
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "toast-close";
+    closeBtn.setAttribute("aria-label", "Dismiss");
+    closeBtn.textContent = "×";
+    closeBtn.addEventListener("click", () => dismiss());
+    toast.appendChild(closeBtn);
+    root.appendChild(toast);
+    requestAnimationFrame(() => toast.classList.add("is-visible"));
+    let dismissed = false;
+    let dismissTimer = null;
+    function dismiss() {
+        if (dismissed) return;
+        dismissed = true;
+        clearTimeout(dismissTimer);
+        toast.classList.remove("is-visible");
+        toast.classList.add("is-leaving");
+        setTimeout(() => toast.remove(), 240);
+    }
+    if (duration > 0) dismissTimer = setTimeout(dismiss, duration);
+    return { dismiss };
+}
+function showSaveErrorToast() {
+    showToast({
+        message: "Couldn't save to local storage. Export your universe now to avoid losing data.",
+        tone: "danger",
+        actionLabel: "Export",
+        duration: 9000,
+        onAction: () => { try { exportUniverseJSON(); } catch (e) { /* noop */ } }
+    });
+}
+function showBackupReminderToast() {
+    showToast({
+        message: "You've made a lot of changes. Want to back up your universe?",
+        tone: "info",
+        actionLabel: "Export",
+        duration: 7000,
+        onAction: () => { try { exportUniverseJSON(); } catch (e) { /* noop */ } }
+    });
+}
+
+// Snapshot-based undo. snapshot() before destructive op, then offer Undo to restore.
+function deepClone(obj) {
+    return JSON.parse(JSON.stringify(obj));
+}
+function snapshotState() {
+    return deepClone(state);
+}
+function restoreFromSnapshot(snapshot) {
+    if (!snapshot) return;
+    state = normalizeStateData(snapshot);
+    saveSoon();
+    renderAll();
+}
+function offerUndo(message, snapshot) {
+    showToast({
+        message,
+        tone: "info",
+        actionLabel: "Undo",
+        duration: 6000,
+        onAction: () => restoreFromSnapshot(snapshot),
+    });
+}
+
 // -------------------- DASHBOARD --------------------
+// -------------------- DASHBOARD: HERO + BOOKING ASSIST + TITLE REIGNS --------------------
+function renderUniverseDayHero() {
+    const root = $("#universeDayBody");
+    if (!root) return;
+    const universeISO = getUniverseCurrentISO();
+    const start = parseISO(universeISO);
+    const dayName = start.toLocaleDateString(undefined, { weekday: "long" });
+    const dateLabel = start.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+
+    // Find shows scheduled for today
+    const dow = universeISO ? parseISO(universeISO).getDay() : -1; // Sun=0..Sat=6
+    const todaysShows = (state.weeklySchedule || [])
+        .filter(row => row.weekday === dow)
+        .map(row => getShow(row.showId))
+        .filter(Boolean);
+    const todaysEvents = state.events.filter(e => e.date === universeISO);
+
+    const eventsLine = todaysEvents.length
+        ? todaysEvents.map(e => {
+            const ids = eventShowIds(e);
+            const tag = e.type === "ppv" ? "PLE" : "WK";
+            return `<span class="universe-day-event-pill" data-open-event-detail="${e.id}">
+                <span class="universe-day-event-tag">${tag}</span>
+                <span>${escapeHTML(e.name || "(Unnamed)")}</span>
+            </span>`;
+        }).join("")
+        : (todaysShows.length
+            ? `<span class="muted tiny">${todaysShows.map(s => escapeHTML(s.name)).join(" • ")} scheduled today, no events booked yet.</span>`
+            : `<span class="muted tiny">No shows scheduled for ${dayName}.</span>`);
+
+    const startISO = getUniverseStartISO();
+    const startDays = startISO ? Math.max(0, Math.round((parseISO(universeISO) - parseISO(startISO)) / 86400000)) : 0;
+
+    root.innerHTML = `
+        <div class="universe-day-grid">
+            <div class="universe-day-meta">
+                <div class="universe-day-label">Universe Day</div>
+                <div class="universe-day-date">${escapeHTML(dayName)}</div>
+                <div class="universe-day-sub">${escapeHTML(dateLabel)} • Day ${startDays} of your universe</div>
+            </div>
+            <div class="universe-day-events">${eventsLine}</div>
+            <div class="universe-day-actions">
+                <button type="button" class="btn universe-day-progress" id="universeDayProgress">
+                    <span>Progress to Next Day</span>
+                </button>
+                <button type="button" class="btn secondary" id="universeDayOpenToday">Open Today's Events</button>
+            </div>
+        </div>
+    `;
+
+    $("#universeDayProgress")?.addEventListener("click", () => {
+        const before = universeISO;
+        setUniverseDateCompleted(before, true);
+        const next = parseISO(before);
+        next.setDate(next.getDate() + 1);
+        calSelectedISO = toISODateLocal(next);
+        calCursor = new Date(next);
+        calCursor.setDate(1);
+        calCursor.setHours(0, 0, 0, 0);
+        saveSoon();
+        renderAll();
+        // Smooth pulse on the hero card to acknowledge the action
+        const card = $("#universeDayCard");
+        if (card) {
+            card.classList.remove("is-just-progressed");
+            void card.offsetWidth; // restart animation
+            card.classList.add("is-just-progressed");
+        }
+    });
+    $("#universeDayOpenToday")?.addEventListener("click", () => {
+        if (todaysEvents[0]) openPlanner(todaysEvents[0].id);
+        else addEventFlow(universeISO);
+    });
+    $$("[data-open-event-detail]", root).forEach(el => {
+        el.addEventListener("click", () => {
+            openCalendarEventDetails(el.dataset.openEventDetail);
+        });
+    });
+}
+
+function renderBookingAssistant() {
+    const root = $("#bookingAssistant");
+    const hint = $("#bookingAssistantHint");
+    if (!root) return;
+    const suggestions = computeBookingSuggestions();
+    if (hint) hint.textContent = suggestions.length ? `${suggestions.length} idea${suggestions.length === 1 ? "" : "s"}` : "";
+    if (!suggestions.length) {
+        root.innerHTML = `<div class="muted tiny">No booking suggestions right now. Keep advancing the universe to see ideas appear.</div>`;
+        return;
+    }
+    root.innerHTML = `
+        <div class="booking-suggestions">
+            ${suggestions.slice(0, 6).map(s => {
+        const iconClass = `booking-icon booking-icon-${s.kind}`;
+        const symbol = ({
+            fresh_matchup: "✨",
+            stalled_rivalry: "⚡",
+            missing_from_tv: "👁",
+            stale_title: "🏆",
+            hot_streak: "🔥",
+        })[s.kind] || "•";
+        const refs = [];
+        if (s.rivalryId) refs.push(`<button type="button" class="booking-ref" data-open-rivalry="${escapeAttr(s.rivalryId)}">View rivalry</button>`);
+        if (s.championshipId) refs.push(`<button type="button" class="booking-ref" data-open-championship="${escapeAttr(s.championshipId)}">View title</button>`);
+        if (Array.isArray(s.superstarIds)) {
+            s.superstarIds.forEach(id => {
+                const ss = state.superstars.find(x => x.id === id);
+                if (!ss) return;
+                refs.push(`<button type="button" class="booking-ref" data-open-ss="${escapeAttr(id)}">${escapeHTML(ss.name)}</button>`);
+            });
+        }
+        return `
+                    <div class="booking-suggestion">
+                        <div class="${iconClass}">${symbol}</div>
+                        <div class="booking-body">
+                            <div class="booking-title">${escapeHTML(s.title)}</div>
+                            <div class="booking-detail">${escapeHTML(s.detail)}</div>
+                            ${refs.length ? `<div class="booking-refs">${refs.join("")}</div>` : ""}
+                        </div>
+                    </div>
+                `;
+    }).join("")}
+        </div>
+    `;
+    $$("[data-open-rivalry]", root).forEach(btn => {
+        btn.addEventListener("click", () => {
+            setView("settings");
+            // open settings rivalries panel after a tick
+            setTimeout(() => openSettingsPanel("rivalries"), 50);
+        });
+    });
+    $$("[data-open-championship]", root).forEach(btn => {
+        btn.addEventListener("click", () => {
+            openChampionshipDetailsModal(btn.dataset.openChampionship);
+        });
+    });
+    $$("[data-open-ss]", root).forEach(btn => {
+        btn.addEventListener("click", () => {
+            openSuperstarDetails(btn.dataset.openSs);
+        });
+    });
+}
+
+function renderTitleReignsCard() {
+    const root = $("#titleReignsList");
+    if (!root) return;
+    const top = longestActiveReigns(5);
+    if (!top.length) {
+        root.innerHTML = `<div class="muted tiny">No active title reigns yet. Book a championship match to start tracking.</div>`;
+        return;
+    }
+    root.innerHTML = `
+        <div class="title-reigns-list">
+            ${top.map(({ championshipId, reign, days }) => {
+        const championship = state.championships.find(c => c.id === championshipId);
+        if (!championship) return "";
+        const holders = reign.holderIds.map(id => state.superstars.find(s => s.id === id)).filter(Boolean);
+        const photos = holders.slice(0, 2).map(h => {
+            const photo = superstarPhotoURL(h);
+            return photo
+                ? `<img class="reign-photo" src="${escapeAttr(photo)}" alt="${escapeAttr(h.name)}" />`
+                : `<div class="reign-photo-fallback">${escapeHTML(superstarInitials(h.name))}</div>`;
+        }).join("");
+        const names = holders.map(h => h.name).join(" & ");
+        return `
+                    <button type="button" class="reign-row" data-open-championship="${escapeAttr(championshipId)}">
+                        <div class="reign-photos">${photos || `<div class="reign-photo-fallback">?</div>`}</div>
+                        <div class="reign-body">
+                            <div class="reign-name">${escapeHTML(names || "Vacant")}</div>
+                            <div class="reign-belt muted tiny">${escapeHTML(championship.name)}</div>
+                        </div>
+                        <div class="reign-days">
+                            <div class="reign-days-num">${days}</div>
+                            <div class="reign-days-label">days</div>
+                        </div>
+                    </button>
+                `;
+    }).join("")}
+        </div>
+    `;
+    $$("[data-open-championship]", root).forEach(btn => {
+        btn.addEventListener("click", () => openChampionshipDetailsModal(btn.dataset.openChampionship));
+    });
+}
+
+async function openChampionshipDetailsModal(championshipId) {
+    const championship = state.championships.find(c => c.id === championshipId);
+    if (!championship) return;
+    const reigns = reignsForChampionship(championshipId).slice().reverse(); // newest first
+    const totalReigns = reigns.length;
+    const activeReign = reigns.find(r => !r.endDate);
+    const longestReign = reigns.reduce((max, r) => {
+        const days = reignDayLength(r);
+        return (!max || days > max.days) ? { reign: r, days } : max;
+    }, null);
+
+    const reignRowsHTML = reigns.length
+        ? reigns.map(reign => {
+            const days = reignDayLength(reign);
+            const holderNames = reign.holderIds
+                .map(id => state.superstars.find(s => s.id === id)?.name)
+                .filter(Boolean)
+                .join(" & ");
+            const dateRange = reign.endDate
+                ? `${reign.startDate} → ${reign.endDate}`
+                : `${reign.startDate} → present`;
+            return `
+                <div class="reign-history-row ${reign.endDate ? "" : "is-active"}">
+                    <div class="reign-history-name">${escapeHTML(holderNames || "Vacant")}${reign.isInitial ? ` <span class="muted tiny">(at universe start)</span>` : ""}</div>
+                    <div class="reign-history-meta muted tiny">${escapeHTML(dateRange)} • ${days} days</div>
+                </div>
+            `;
+        }).join("")
+        : `<div class="muted tiny">No reigns recorded yet.</div>`;
+
+    const bodyHTML = `
+        <div class="stack">
+            <div class="row gap wrap">
+                <span class="badge">${escapeHTML(championshipScopeSummary(championship))}</span>
+                <span class="badge">${totalReigns} reign${totalReigns === 1 ? "" : "s"}</span>
+                ${longestReign ? `<span class="badge">Longest: ${longestReign.days} days</span>` : ""}
+            </div>
+            ${activeReign ? `
+                <div class="card" style="padding:10px;">
+                    <div class="muted tiny">Current holder</div>
+                    <div class="item-title">${escapeHTML(activeReign.holderIds.map(id => state.superstars.find(s => s.id === id)?.name).filter(Boolean).join(" & ") || "Vacant")}</div>
+                    <div class="muted tiny">Reign: ${reignDayLength(activeReign)} days (since ${activeReign.startDate})</div>
+                </div>
+            ` : `<div class="muted tiny">Title is currently vacant or has no recorded holder.</div>`}
+            <div class="h3">Reign history</div>
+            <div class="stack" style="gap:6px;">${reignRowsHTML}</div>
+        </div>
+    `;
+
+    const modalPromise = openModal({
+        title: championship.name,
+        bodyHTML,
+        okText: "Close",
+    });
+    // Single-button close: hide Cancel
+    const cancelBtn = $("#modalCancel");
+    if (cancelBtn) cancelBtn.classList.add("hidden");
+    await modalPromise;
+    if (cancelBtn) cancelBtn.classList.remove("hidden");
+}
+
 function renderDashboard() {
+    renderTitleReignsCard();
     const tabsEl = $("#dashboardShowTabs");
     const el = $("#nextEvent");
     const rankingsEl = $("#weeklyRankings");
@@ -1848,22 +2773,22 @@ function renderDashboard() {
     rankingsEl.innerHTML = `
       <div class="rankings-shows">
         ${state.shows.map(show => {
-            const rows = rankingsByShow.get(show.id) || [];
-            return `
+        const rows = rankingsByShow.get(show.id) || [];
+        return `
               <div class="rankings-show-card">
                 <div class="item-title">
                   <span class="badge"><span class="dot" style="background:${show.color}"></span>${escapeHTML(show.name)}</span>
                 </div>
                 ${rows.length
-                    ? `<div class="rankings-list">${rankingRowsHTML(rows, 1)}</div>`
-                    : `<div class="muted tiny">No ranked superstars on this show yet.</div>`
-                }
+                ? `<div class="rankings-list">${rankingRowsHTML(rows, 1)}</div>`
+                : `<div class="muted tiny">No ranked superstars on this show yet.</div>`
+            }
                 <div class="item-actions">
                   <button class="btn secondary" data-show-more="${show.id}">Show More</button>
                 </div>
               </div>
             `;
-        }).join("")}
+    }).join("")}
       </div>
     `;
 
@@ -1925,9 +2850,12 @@ function renderShows() {
             });
             if (!ok.ok) return;
 
+            const snapshot = snapshotState();
+            const showName_ = s?.name || "Show";
             deleteShowAndUnassign(id);
             saveSoon();
             renderAll();
+            offerUndo(`${showName_} deleted.`, snapshot);
         });
     });
 }
@@ -1942,6 +2870,8 @@ async function deleteSuperstarFlow(id) {
     });
     if (!ok.ok) return false;
 
+    const snapshot = snapshotState();
+    const ssName = ss?.name || "Superstar";
     state.superstars = state.superstars.filter(x => x.id !== id);
     state.rivalries = (Array.isArray(state.rivalries) ? state.rivalries : []).map(rivalry => ({
         ...rivalry,
@@ -1951,6 +2881,7 @@ async function deleteSuperstarFlow(id) {
     renderRoster();
     renderRivalries();
     renderPlannerEventSelect();
+    offerUndo(`${ssName} deleted.`, snapshot);
     return true;
 }
 
@@ -2174,6 +3105,10 @@ async function openSuperstarDetails(id, { readOnly = false } = {}) {
     const titleText = champs.join(", ");
     const record = formatRecord(superstarRecordById(ss.id, recordMap));
     const photo = superstarPhotoURL(ss);
+    const streak = superstarCurrentStreak(ss.id);
+    const sparkPoints = superstarMomentumPoints(ss.id, 14);
+    const sparkSVG = sparkPoints.length >= 2 ? sparklineSVG(sparkPoints, { width: 120, height: 28 }) : "";
+    const ssReigns = reignsForSuperstar(ss.id);
 
     const bodyHTML = `
       <div class="stack">
@@ -2192,7 +3127,36 @@ async function openSuperstarDetails(id, { readOnly = false } = {}) {
           <span class="badge">Division: <b>${escapeHTML(ss.division)}</b></span>
           ${ss.faction ? `<span class="badge">Faction: <b>${escapeHTML(ss.faction)}</b></span>` : ""}
           ${ss.manager ? `<span class="badge">Manager: <b>${escapeHTML(ss.manager)}</b></span>` : ""}
+          ${streak.kind && streak.count >= 2 ? `<span class="badge streak-badge streak-${streak.kind}">${streak.kind === "win" ? "🔥" : "❄"} ${streak.count} ${streak.kind === "win" ? "wins" : "losses"}</span>` : ""}
         </div>
+        ${sparkSVG ? `
+          <div class="ss-momentum">
+            <div class="ss-momentum-head">
+              <span class="muted tiny">Recent momentum</span>
+              <span class="ss-momentum-detail muted tiny">Last ${sparkPoints.length} matches</span>
+            </div>
+            <div class="ss-momentum-spark">${sparkSVG}</div>
+          </div>
+        ` : ""}
+        ${ssReigns.length ? `
+          <div>
+            <div class="h3">Title History</div>
+            <div class="stack" style="gap:6px;">
+              ${ssReigns.slice().reverse().map(r => {
+            const c = state.championships.find(x => x.id === r.championshipId);
+            if (!c) return "";
+            const days = reignDayLength(r);
+            const range = r.endDate ? `${r.startDate} → ${r.endDate}` : `${r.startDate} → present`;
+            return `
+                  <div class="ss-reign-row ${r.endDate ? "" : "is-active"}">
+                    <div class="ss-reign-name">${escapeHTML(c.name)}${r.endDate ? "" : ' <span class="champ-inline">C</span>'}</div>
+                    <div class="ss-reign-meta muted tiny">${escapeHTML(range)} • ${days} days</div>
+                  </div>
+                `;
+        }).join("")}
+            </div>
+          </div>
+        ` : ""}
         <div class="ss-recent-matches">
           <div class="h3">Last 5 Matches</div>
           ${recentMatches.length
@@ -2261,9 +3225,21 @@ function renderRoster() {
 
     const search = $("#rosterSearch").value.trim().toLowerCase();
     const showFilter = $("#rosterFilter").value || "all";
+    const divisionFilter = $("#rosterDivisionFilter")?.value || "all";
+    const statusFilter = $("#rosterStatusFilter")?.value || "all";
 
     const rows = state.superstars
         .filter(ss => showFilter === "all" ? true : superstarOnShow(ss, showFilter))
+        .filter(ss => {
+            if (divisionFilter === "all") return true;
+            return normalizeSuperstarDivision(ss.division) === divisionFilter
+                || (divisionFilter === "Other" && !["World", "Midcard", "Tag", "Women"].includes(normalizeSuperstarDivision(ss.division)));
+        })
+        .filter(ss => {
+            if (statusFilter === "champions") return !!ss.isChampion;
+            if (statusFilter === "non-champions") return !ss.isChampion;
+            return true;
+        })
         .filter(ss => !search ? true : ss.name.toLowerCase().includes(search))
         .sort((a, b) => a.name.localeCompare(b.name));
 
@@ -2274,25 +3250,32 @@ function renderRoster() {
     }
 
     list.innerHTML = `
-    <div class="list">
+    <div class="list roster-list">
       ${rows.map(ss => {
         const ssShows = superstarShowNames(ss);
         const record = formatRecord(superstarRecordById(ss.id, recordMap));
         const photo = superstarPhotoURL(ss);
+        const streak = superstarCurrentStreak(ss.id);
+        const streakBadge = streak.kind && streak.count >= 3
+            ? `<span class="badge streak-badge streak-${streak.kind}">${streak.kind === "win" ? "🔥" : "❄"} ${streak.count} ${streak.kind === "win" ? "wins" : "losses"}</span>`
+            : "";
+        const sparkPoints = superstarMomentumPoints(ss.id, 10);
+        const spark = sparkPoints.length >= 2 ? sparklineSVG(sparkPoints, { width: 64, height: 18 }) : "";
         return `
           <div class="item roster-item" data-open-ss="${ss.id}" role="button" tabindex="0" aria-label="Open ${escapeAttr(ss.name)} details">
-            <div class="row gap wrap">
+            <div class="row gap roster-item-main">
               ${photo
                 ? `<img class="ss-card-photo" src="${escapeAttr(photo)}" alt="${escapeAttr(ss.name)}" />`
                 : `<div class="ss-card-fallback">${escapeHTML(superstarInitials(ss.name))}</div>`
             }
-              <div>
+              <div class="roster-item-text">
                 <div class="item-title">${escapeHTML(ss.name)}${ss.isChampion ? ` <span class="champ-inline">C</span>` : ``}</div>
                 <div class="item-sub">${escapeHTML(ssShows.join(", ") || "Unassigned")} • ${escapeHTML(ss.division)} • ${record}</div>
+                <div class="roster-item-meta">
+                  ${streakBadge}
+                  ${spark ? `<span class="roster-item-spark">${spark}</span>` : ""}
+                </div>
               </div>
-            </div>
-            <div class="row gap wrap">
-              <span class="badge">Tap for details</span>
             </div>
           </div>
         `;
@@ -2300,7 +3283,7 @@ function renderRoster() {
     </div>
   `;
 
-    $$("[data-open-ss]").forEach(el => {
+    $$("[data-open-ss]", list).forEach(el => {
         const open = () => {
             el.blur();
             openSuperstarDetails(el.dataset.openSs);
@@ -2457,9 +3440,11 @@ async function deleteRivalryFlow(rivalryId) {
         okText: "Delete",
     });
     if (!result?.ok) return;
+    const snapshot = snapshotState();
     state.rivalries = state.rivalries.filter(row => row.id !== rivalryId);
     saveSoon();
     renderRivalries();
+    offerUndo(`${rivalryDisplayTitle(rivalry)} deleted.`, snapshot);
 }
 
 function renderRivalries() {
@@ -2517,28 +3502,28 @@ function renderRivalries() {
       </div>
       <div class="list rivalry-list">
         ${rows.map(rivalry => {
-            const shows = rivalryShowNames(rivalry);
-            const participants = rivalryParticipants(rivalry);
-            const dateRange = [rivalry.startDate, rivalry.endDate].filter(Boolean).join(" to ");
-            return `
+        const shows = rivalryShowNames(rivalry);
+        const participants = rivalryParticipants(rivalry);
+        const dateRange = [rivalry.startDate, rivalry.endDate].filter(Boolean).join(" to ");
+        return `
               <div class="item rivalry-item">
                 <div class="rivalry-card-head">
                   <div class="rivalry-render-row">
                     ${participants.length
-                        ? participants.map(ss => {
-                            const photo = superstarPhotoURL(ss);
-                            return `
+                ? participants.map(ss => {
+                    const photo = superstarPhotoURL(ss);
+                    return `
                               <div class="rivalry-render">
                                 ${photo
-                                    ? `<img class="rivalry-render-photo" src="${escapeAttr(photo)}" alt="${escapeAttr(ss.name)}" />`
-                                    : `<div class="rivalry-render-fallback">${escapeHTML(superstarInitials(ss.name))}</div>`
-                                }
+                            ? `<img class="rivalry-render-photo" src="${escapeAttr(photo)}" alt="${escapeAttr(ss.name)}" />`
+                            : `<div class="rivalry-render-fallback">${escapeHTML(superstarInitials(ss.name))}</div>`
+                        }
                                 <div class="rivalry-render-name">${escapeHTML(ss.name)}</div>
                               </div>
                             `;
-                        }).join(`<div class="rivalry-vs">VS</div>`)
-                        : `<div class="muted tiny">No participants selected</div>`
-                    }
+                }).join(`<div class="rivalry-vs">VS</div>`)
+                : `<div class="muted tiny">No participants selected</div>`
+            }
                   </div>
                   <span class="rivalry-status rivalry-status-${escapeAttr(normalizeRivalryStatus(rivalry.status).toLowerCase().replaceAll(" ", "-"))}">${escapeHTML(normalizeRivalryStatus(rivalry.status))}</span>
                 </div>
@@ -2549,6 +3534,37 @@ function renderRivalries() {
                 </div>
                 ${rivalry.summary ? `<div class="rivalry-story">${escapeHTML(rivalry.summary).replace(/\n/g, "<br>")}</div>` : ""}
                 ${rivalry.notes ? `<div class="rivalry-notes">${escapeHTML(rivalry.notes).replace(/\n/g, "<br>")}</div>` : ""}
+                ${(() => {
+                const timeline = matchesForRivalry(rivalry);
+                if (!timeline.length) return "";
+                const score = (() => {
+                    const wins = new Map();
+                    timeline.forEach(t => {
+                        if (!t.winnerLabel || t.winnerLabel === "Draw" || t.winnerLabel === "DQ") return;
+                        wins.set(t.winnerLabel, (wins.get(t.winnerLabel) || 0) + 1);
+                    });
+                    const arr = [...wins.entries()];
+                    if (!arr.length) return "";
+                    return arr.map(([n, w]) => `${n}: ${w}`).join(" • ");
+                })();
+                return `
+                        <div class="rivalry-timeline">
+                            <div class="rivalry-timeline-head">
+                                <span class="rivalry-timeline-title">Series so far</span>
+                                ${score ? `<span class="rivalry-timeline-score">${escapeHTML(score)}</span>` : ""}
+                            </div>
+                            <ol class="rivalry-timeline-list">
+                                ${timeline.slice(-5).map(t => `
+                                    <li class="rivalry-timeline-row" data-open-event-detail="${escapeAttr(t.eventId)}">
+                                        <span class="rivalry-timeline-date">${escapeHTML(t.date)}</span>
+                                        <span class="rivalry-timeline-winner">${t.isPromo ? "Promo" : (t.winnerLabel ? `Winner: ${escapeHTML(t.winnerLabel)}` : "TBD")}</span>
+                                        <span class="rivalry-timeline-event muted tiny">${escapeHTML(t.eventName || "")}</span>
+                                    </li>
+                                `).join("")}
+                            </ol>
+                        </div>
+                    `;
+            })()}
                 <div class="item-actions rivalry-actions">
                   <button class="btn secondary" data-edit-rivalry="${rivalry.id}">Edit</button>
                   <button class="btn danger" data-delete-rivalry="${rivalry.id}">${deletingId === rivalry.id ? "Cancel Delete" : "Delete"}</button>
@@ -2564,7 +3580,7 @@ function renderRivalries() {
                 ` : ""}
               </div>
             `;
-        }).join("")}
+    }).join("")}
       </div>
     `;
 
@@ -2615,6 +3631,12 @@ function renderRivalries() {
         btn.addEventListener("click", () => {
             settingsUiState.rivalries.deletingId = null;
             renderRivalriesSettingsPanel();
+        });
+    });
+    $$("[data-open-event-detail]", list).forEach(el => {
+        el.addEventListener("click", (e) => {
+            e.stopPropagation();
+            openCalendarEventDetails(el.dataset.openEventDetail);
         });
     });
 }
@@ -2685,7 +3707,6 @@ async function openAddSuperstarFlow(draft = null) {
 }
 
 // -------------------- CALENDAR --------------------
-const CALENDAR_DAYS_PER_MONTH = 28;
 let calSelectedISO = getUniverseCurrentISO();
 let calCursor = parseISO(calSelectedISO); calCursor.setDate(1); calCursor.setHours(0, 0, 0, 0);
 
@@ -2728,10 +3749,18 @@ function renderCalendar() {
             ? `<span class="cal-more">+${events.length - visibleEvents.length}</span>`
             : "";
 
+        const isSelected = iso === calSelectedISO;
+        const isStart = iso === startISO;
+        const isNow = iso === universeCurrentISO;
+        const cellClasses = [
+            "cal-cell",
+            done ? "is-done" : "",
+            isSelected ? "is-selected" : "",
+            isNow ? "is-universe-now" : "",
+        ].filter(Boolean).join(" ");
         cells.push(`
-      <div class="cal-cell ${done ? "is-done" : ""}" data-date="${iso}"
-        style="outline:${iso === calSelectedISO ? '2px solid rgba(255,255,255,.25)' : 'none'}">
-        <div class="cal-date">${day}${iso === startISO ? ` <span class="cal-day-state">START</span>` : ``}${iso === universeCurrentISO ? ` <span class="cal-day-state">NOW</span>` : ``}</div>
+      <div class="${cellClasses}" data-date="${iso}">
+        <div class="cal-date">${day}${isStart ? ` <span class="cal-day-state">START</span>` : ``}${isNow ? ` <span class="cal-day-state">NOW</span>` : ``}</div>
         <div class="cal-badges">${badges}${overflow}</div>
       </div>
     `);
@@ -3161,9 +4190,21 @@ async function addEventFlow(dateISO = calSelectedISO) {
     const date = $("#evDate").value;
     const type = $("#evType").value;
     const showId = $("#evShow").value || null;
-    const showIds = type === "ppv"
+    let showIds = type === "ppv"
         ? Array.from(selectedPpvShowIds)
         : (showId ? [showId] : []);
+    // A PLE with zero shows selected defaults to every show — friendlier than failing silently
+    if (type === "ppv" && showIds.length === 0) {
+        showIds = state.shows.map(s => s.id);
+        if (showIds.length === 0) {
+            showToast({
+                message: "Add at least one show before creating a PLE.",
+                tone: "danger",
+                duration: 5000,
+            });
+            return;
+        }
+    }
     const fallbackWeeklyShowName = (() => {
         const label = showName(showId);
         if (!label || label === "No show" || label === "Unknown show") return "Weekly Show";
@@ -3216,35 +4257,35 @@ function renumberPlannerMatches(matches) {
 
 function capturePlannerRowPositions() {
     const positions = new Map();
-    $$("#matchesBody tr[data-match-id]").forEach(tr => {
-        const matchId = String(tr.dataset.matchId || "");
+    $$("#matchesBody tr[data-match-id], #plannerCardList .planner-card[data-match-id]").forEach(el => {
+        const matchId = String(el.dataset.matchId || "");
         if (!matchId) return;
-        positions.set(matchId, tr.getBoundingClientRect().top);
+        positions.set(matchId, el.getBoundingClientRect().top);
     });
     return positions;
 }
 
 function animatePlannerRows(fromPositions) {
     if (!(fromPositions instanceof Map) || fromPositions.size === 0) return;
-    const rows = $$("#matchesBody tr[data-match-id]");
-    rows.forEach(tr => {
-        const matchId = String(tr.dataset.matchId || "");
+    const rows = $$("#matchesBody tr[data-match-id], #plannerCardList .planner-card[data-match-id]");
+    rows.forEach(el => {
+        const matchId = String(el.dataset.matchId || "");
         const oldTop = fromPositions.get(matchId);
         if (typeof oldTop !== "number") return;
-        const newTop = tr.getBoundingClientRect().top;
+        const newTop = el.getBoundingClientRect().top;
         const deltaY = oldTop - newTop;
         if (Math.abs(deltaY) < 1) return;
-        tr.style.transition = "none";
-        tr.style.transform = `translateY(${deltaY}px)`;
+        el.style.transition = "none";
+        el.style.transform = `translateY(${deltaY}px)`;
         requestAnimationFrame(() => {
-            tr.style.transition = "transform 220ms cubic-bezier(0.22, 1, 0.36, 1)";
-            tr.style.transform = "translateY(0)";
+            el.style.transition = "transform 220ms cubic-bezier(0.22, 1, 0.36, 1)";
+            el.style.transform = "translateY(0)";
             const clear = () => {
-                tr.style.transition = "";
-                tr.style.transform = "";
-                tr.removeEventListener("transitionend", clear);
+                el.style.transition = "";
+                el.style.transform = "";
+                el.removeEventListener("transitionend", clear);
             };
-            tr.addEventListener("transitionend", clear);
+            el.addEventListener("transitionend", clear);
         });
     });
 }
@@ -3258,6 +4299,49 @@ function movePlannerMatch(matches, fromIndex, toIndex) {
     const [movedMatch] = matches.splice(fromIndex, 1);
     matches.splice(toIndex, 0, movedMatch);
     return true;
+}
+
+// Capture & restore focus across re-renders so typing in inputs/selects doesn't lose focus.
+function capturePlannerFocus() {
+    const active = document.activeElement;
+    if (!active) return null;
+    const row = active.closest?.("[data-row]");
+    if (!row) return null;
+    const field = active.dataset?.field || "";
+    const slot = active.dataset?.slot || "";
+    const teamKey = active.dataset?.teamKey || "";
+    const isInput = active.tagName === "INPUT" || active.tagName === "TEXTAREA";
+    const selStart = isInput ? active.selectionStart : null;
+    const selEnd = isInput ? active.selectionEnd : null;
+    const layout = active.closest?.(".planner-card") ? "card" : "table";
+    return { rowIndex: row.dataset.row, field, slot, teamKey, selStart, selEnd, layout };
+}
+function restorePlannerFocus(capture) {
+    if (!capture) return;
+    const layoutRoot = capture.layout === "card"
+        ? document.getElementById("plannerCardList")
+        : document.getElementById("matchesBody");
+    if (!layoutRoot) return;
+    const sel = `[data-row="${capture.rowIndex}"]`;
+    const row = layoutRoot.querySelector(sel);
+    if (!row) return;
+    let target = null;
+    if (capture.field) {
+        if (capture.slot !== "") {
+            target = row.querySelector(`[data-field="${capture.field}"][data-slot="${capture.slot}"]`);
+        } else if (capture.teamKey) {
+            target = row.querySelector(`[data-field="${capture.field}"][data-team-key="${capture.teamKey}"]`);
+        } else {
+            target = row.querySelector(`[data-field="${capture.field}"]`);
+        }
+    }
+    if (!target) return;
+    try {
+        target.focus({ preventScroll: true });
+        if (capture.selStart != null && typeof target.setSelectionRange === "function") {
+            target.setSelectionRange(capture.selStart, capture.selEnd ?? capture.selStart);
+        }
+    } catch (e) { /* ignore */ }
 }
 
 function renderPlannerEventSelect() {
@@ -3469,10 +4553,12 @@ function renderPlanner(fromPositions = null) {
     renderPlannerEventSelect();
     const meta = $("#plannerMeta");
     const body = $("#matchesBody");
+    const cardList = $("#plannerCardList");
 
     if (!plannerEventId) {
         meta.textContent = "Create an event to start planning.";
         body.innerHTML = "";
+        if (cardList) cardList.innerHTML = "";
         return;
     }
 
@@ -3480,6 +4566,7 @@ function renderPlanner(fromPositions = null) {
     if (!ev) {
         meta.textContent = "Event not found.";
         body.innerHTML = "";
+        if (cardList) cardList.innerHTML = "";
         return;
     }
     if (ensurePlannerMatchIds(ev)) upsertEvent(ev);
@@ -3577,18 +4664,18 @@ function renderPlanner(fromPositions = null) {
             ? `
               <div class="stack" style="gap:6px;">
                 ${teamGroups.map(group => {
-                    const teamLabelValue = teamLabel(group.key);
-                    const optionValues = factionOptionsForParticipants(group.participants);
-                    const currentName = String(teamNameMap[group.key] || "");
-                    if (currentName && !optionValues.includes(currentName)) optionValues.push(currentName);
-                    optionValues.sort((a, b) => a.localeCompare(b));
-                    return `
+                const teamLabelValue = teamLabel(group.key);
+                const optionValues = factionOptionsForParticipants(group.participants);
+                const currentName = String(teamNameMap[group.key] || "");
+                if (currentName && !optionValues.includes(currentName)) optionValues.push(currentName);
+                optionValues.sort((a, b) => a.localeCompare(b));
+                return `
                       <select class="cell-input small" data-field="teamName" data-team-key="${escapeAttr(group.key)}">
                         <option value="">${escapeHTML(teamLabelValue)}</option>
                         ${optionValues.map(name => `<option value="${escapeAttr(name)}">${escapeHTML(name)}</option>`).join("")}
                       </select>
                     `;
-                }).join("")}
+            }).join("")}
               </div>
             `
             : "";
@@ -3619,7 +4706,7 @@ function renderPlanner(fromPositions = null) {
           </div>
         </td>
         <td>
-          <input class="cell-input small" data-field="matchType" value="${escapeAttr(m.matchType || "")}" placeholder="1v1 / tag / promo…" />
+          <input class="cell-input small" data-field="matchType" value="${escapeAttr(m.matchType || "")}" placeholder="1v1 / tag / promo…" list="matchTypePresets" />
         </td>
         <td>
           <div class="planner-note-cell">
@@ -3657,22 +4744,195 @@ function renderPlanner(fromPositions = null) {
       </tr>
     `;
     }).join("");
+
+    // Mobile card layout — same data attributes as the table rows so handlers Just Work
+    if (cardList) {
+        const PLANNER_MATCH_TYPE_PRESETS = ["1v1", "Tag Team", "Triple Threat", "Fatal 4-Way", "6-Man Tag", "Triple Threat Tag", "Fatal 4-Way Tag", "Steel Cage", "Hell in a Cell", "Ladder Match", "TLC", "Royal Rumble", "Promo"];
+        const datalistHTML = `<datalist id="matchTypePresets">${PLANNER_MATCH_TYPE_PRESETS.map(p => `<option value="${escapeHTML(p)}"></option>`).join("")}</datalist>`;
+        cardList.innerHTML = datalistHTML + ev.matches.map((m, idx) => {
+            const slotCount = participantSlotCount(m);
+            const participants = Array.isArray(m.participants) ? m.participants.filter(Boolean) : [];
+            const championshipOptionsHTML = [
+                `<option value="">None</option>`,
+                ...eligibleChampionshipsForShowIds(eventShows, { participantIds: participants })
+                    .map(c => `<option value="${escapeAttr(c.id)}">${escapeHTML(c.name)}</option>`)
+            ].join("");
+            const participantTeams = normalizedParticipantTeams(m);
+            const teamGroups = inferMatchTeams(m.matchType, participants, participantTeams);
+            const isTeamBased = isTeamOrHandicapMatch(m.matchType, participants.length);
+            const isTagTeam = isTagTeamMatchType(m.matchType);
+            const teamNameMap = normalizedTeamNames(m);
+            const winningTeamKey = parseTeamResultValue(m.result);
+            const winningTeam = teamGroups.find(group => group.key === winningTeamKey) || null;
+            const teamOptionCount = Math.max(
+                2,
+                slotCount,
+                ...Object.values(participantTeams).map(teamKeyIndex),
+                ...teamGroups.map(group => teamKeyIndex(group.key)),
+            );
+            const participantTeamOptions = Array.from({ length: teamOptionCount }, (_, teamIdx) => {
+                const teamKey = `T${teamIdx + 1}`;
+                return `<option value="${teamKey}">${escapeHTML(teamLabel(teamKey))}</option>`;
+            }).join("");
+            const specialResultOptions = `<option value="DQ">DQ</option><option value="Promo">Promo</option>`;
+            const winnerOptions = isTeamBased
+                ? [
+                    ...teamGroups.map(group => `<option value="${escapeAttr(teamResultValue(group.key))}">${escapeHTML(teamDisplayName(m, group.key, group.participants))}</option>`),
+                    specialResultOptions,
+                ].join("")
+                : [
+                    ...participants.map(pid => {
+                        const name = superstarNameById(pid) || pid;
+                        return `<option value="${escapeAttr(pid)}">${escapeHTML(name)}</option>`;
+                    }),
+                    specialResultOptions,
+                ].join("");
+            const showPinBy = isTeamBased;
+            const pinPool = showPinBy
+                ? (winningTeam?.participants?.length ? winningTeam.participants : participants)
+                : participants;
+            const pinByOptions = pinPool.map(pid => {
+                const name = superstarNameById(pid) || pid;
+                return `<option value="${escapeAttr(pid)}">${escapeHTML(name)}</option>`;
+            }).join("");
+
+            const participantCards = Array.from({ length: slotCount }).map((_, slotIdx) => {
+                const participantId = participants[slotIdx] || "";
+                const teamValue = participantId ? (participantTeams[participantId] || "") : "";
+                const escortName = participantId ? participantEscortName(m, participantId) : "";
+                return `
+                    <div class="planner-card-participant">
+                        <div class="planner-card-participant-row">
+                            <select class="cell-input" data-field="participant" data-slot="${slotIdx}">
+                                <option value="">${slotIdx < 2 ? "(select superstar)" : "(optional)"}</option>
+                                ${optionsHTML}
+                            </select>
+                            <button type="button"
+                                class="btn secondary planner-card-iconbtn"
+                                data-open-escort="${slotIdx}"
+                                ${participantId ? "" : "disabled"}
+                                title="Set ringside accompaniment"
+                                aria-label="Set ringside accompaniment">+</button>
+                        </div>
+                        ${isTeamBased ? `
+                            <select class="cell-input planner-card-team-pick" data-field="participantTeam" data-slot="${slotIdx}">
+                                <option value="">(no team)</option>
+                                ${participantTeamOptions}
+                            </select>
+                        ` : ""}
+                        ${escortName ? `<div class="planner-card-escort muted tiny">With ${escapeHTML(escortName)}</div>` : ""}
+                    </div>
+                `;
+            }).join("");
+
+            const teamNameFields = isTagTeam && teamGroups.length
+                ? teamGroups.map(group => {
+                    const teamLabelValue = teamLabel(group.key);
+                    const optionValues = factionOptionsForParticipants(group.participants);
+                    const currentName = String(teamNameMap[group.key] || "");
+                    if (currentName && !optionValues.includes(currentName)) optionValues.push(currentName);
+                    optionValues.sort((a, b) => a.localeCompare(b));
+                    return `
+                        <select class="cell-input" data-field="teamName" data-team-key="${escapeAttr(group.key)}">
+                            <option value="">${escapeHTML(teamLabelValue)} name</option>
+                            ${optionValues.map(name => `<option value="${escapeAttr(name)}">${escapeHTML(name)}</option>`).join("")}
+                        </select>
+                    `;
+                }).join("")
+                : "";
+
+            const storyline = String(m.storyline || "");
+            const rivalryNotes = String(m.rivalryNotes || "");
+            const storylinePreview = storyline ? storyline.slice(0, 80) + (storyline.length > 80 ? "…" : "") : "Add storyline";
+            const rivalryPreview = rivalryNotes ? rivalryNotes.slice(0, 80) + (rivalryNotes.length > 80 ? "…" : "") : "Add rivalry notes";
+            const championshipBadge = m.championshipId ? championshipName(m.championshipId) : "";
+
+            return `
+                <div class="planner-card" data-row="${idx}" data-match-id="${escapeAttr(m.id || "")}">
+                    <div class="planner-card-head">
+                        <button type="button" class="planner-card-drag" data-drag-handle aria-label="Drag to reorder">⠿</button>
+                        <div class="planner-card-num">Match ${idx + 1}</div>
+                        ${championshipBadge ? `<div class="planner-card-belt">${escapeHTML(championshipBadge)}</div>` : ""}
+                        <div class="planner-card-spacer"></div>
+                        <button type="button" class="planner-card-iconbtn danger" data-del-row="${idx}" aria-label="Delete match">×</button>
+                    </div>
+
+                    <div class="planner-card-section">
+                        <label class="planner-card-label">Match Type</label>
+                        <input class="cell-input" data-field="matchType" value="${escapeAttr(m.matchType || "")}" placeholder="1v1, tag, ladder…" list="matchTypePresets" />
+                    </div>
+
+                    <div class="planner-card-section">
+                        <div class="planner-card-section-head">
+                            <label class="planner-card-label">Participants</label>
+                            <div class="planner-card-section-actions">
+                                <button type="button" class="planner-card-iconbtn small" data-add-participant="${idx}" aria-label="Add slot">+</button>
+                                ${slotCount > MIN_PARTICIPANT_SLOTS ? `<button type="button" class="planner-card-iconbtn small" data-remove-participant="${idx}" aria-label="Remove slot">−</button>` : ""}
+                            </div>
+                        </div>
+                        <div class="planner-card-participants">${participantCards}</div>
+                    </div>
+
+                    ${teamNameFields ? `
+                        <div class="planner-card-section">
+                            <label class="planner-card-label">Team Names</label>
+                            <div class="planner-card-team-names">${teamNameFields}</div>
+                        </div>
+                    ` : ""}
+
+                    <div class="planner-card-section">
+                        <label class="planner-card-label">Championship</label>
+                        <select class="cell-input" data-field="championshipId">${championshipOptionsHTML}</select>
+                    </div>
+
+                    <div class="planner-card-section">
+                        <label class="planner-card-label">Result</label>
+                        <select class="cell-input" data-field="result">
+                            <option value="">(no winner yet)</option>
+                            ${winnerOptions}
+                        </select>
+                        ${showPinBy ? `
+                            <select class="cell-input" data-field="pinBy" style="margin-top:6px;">
+                                <option value="">(who got the pin)</option>
+                                ${pinByOptions}
+                            </select>
+                        ` : ""}
+                    </div>
+
+                    <div class="planner-card-section planner-card-notes">
+                        <button type="button" class="planner-card-note" data-open-note="storyline">
+                            <div class="planner-card-note-label">Storyline</div>
+                            <div class="planner-card-note-preview ${storyline ? "" : "is-empty"}">${escapeHTML(storylinePreview)}</div>
+                        </button>
+                        <button type="button" class="planner-card-note" data-open-note="rivalryNotes">
+                            <div class="planner-card-note-label">Rivalry Notes</div>
+                            <div class="planner-card-note-preview ${rivalryNotes ? "" : "is-empty"}">${escapeHTML(rivalryPreview)}</div>
+                        </button>
+                    </div>
+                </div>
+            `;
+        }).join("");
+    }
+
     animatePlannerRows(fromPositions);
 
-    // Set selected values after render (avoids brittle string replacement)
-    $$("#matchesBody tr").forEach(tr => {
-        const row = Number(tr.dataset.row);
+    // Set selected values after render (avoids brittle string replacement).
+    // This works for both the table rows and the mobile cards because both
+    // share the same data attributes.
+    const applyRowValues = (rowEl) => {
+        const row = Number(rowEl.dataset.row);
         const match = ev.matches[row];
+        if (!match) return;
         const p = match.participants || [];
         const participantTeams = normalizedParticipantTeams(match);
-        $$('[data-field="participant"]', tr).forEach((el, slotIdx) => {
+        $$('[data-field="participant"]', rowEl).forEach((el, slotIdx) => {
             el.value = p[slotIdx] || "";
         });
-        $$('[data-field="participantTeam"]', tr).forEach((el, slotIdx) => {
+        $$('[data-field="participantTeam"]', rowEl).forEach((el, slotIdx) => {
             const participantId = p[slotIdx] || "";
             el.value = participantId ? (participantTeams[participantId] || "") : "";
         });
-        const resultSelect = tr.querySelector('[data-field="result"]');
+        const resultSelect = rowEl.querySelector('[data-field="result"]');
         if (resultSelect) {
             const resultValue = String(match.result || "");
             const normalizedTeamResult = parseTeamResultValue(resultValue);
@@ -3687,42 +4947,33 @@ function renderPlanner(fromPositions = null) {
                     if (!opt.value) return false;
                     return normalizeNameForCompare(superstarNameById(opt.value)) === normalizedResult;
                 });
-                if (matchedOption) {
-                    resultSelect.value = matchedOption.value;
-                } else {
-                    resultSelect.value = "";
-                }
+                resultSelect.value = matchedOption ? matchedOption.value : "";
             }
         }
-        $$('[data-field="teamName"]', tr).forEach(select => {
+        $$('[data-field="teamName"]', rowEl).forEach(select => {
             const teamKey = normalizeTeamKey(select.dataset.teamKey);
             const teamNameValue = String(normalizedTeamNames(match)[teamKey] || "");
             const options = Array.from(select.options).map(opt => opt.value);
-            const nextValue = options.includes(teamNameValue) ? teamNameValue : "";
-            select.value = nextValue;
+            select.value = options.includes(teamNameValue) ? teamNameValue : "";
         });
-        $$('[data-open-escort]', tr).forEach((btn, slotIdx) => {
+        $$('[data-open-escort]', rowEl).forEach((btn, slotIdx) => {
             const participantId = p[slotIdx] || "";
             btn.disabled = !participantId;
-            btn.title = participantId ? "Add ringside accompaniment" : "Select a superstar first";
+            btn.title = participantId ? "Set ringside accompaniment" : "Select a superstar first";
         });
-        const pinBySelect = tr.querySelector('[data-field="pinBy"]');
+        const pinBySelect = rowEl.querySelector('[data-field="pinBy"]');
         if (pinBySelect) {
             const pinByValue = String(match.pinBy || "");
-            if (pinByValue && Array.from(pinBySelect.options).some(opt => opt.value === pinByValue)) {
-                pinBySelect.value = pinByValue;
-            } else {
-                pinBySelect.value = "";
-            }
+            pinBySelect.value = (pinByValue && Array.from(pinBySelect.options).some(opt => opt.value === pinByValue)) ? pinByValue : "";
         }
-        const championshipSelect = tr.querySelector('[data-field="championshipId"]');
+        const championshipSelect = rowEl.querySelector('[data-field="championshipId"]');
         if (championshipSelect) {
             const championshipId = String(match.championshipId || "");
-            championshipSelect.value = Array.from(championshipSelect.options).some(opt => opt.value === championshipId)
-                ? championshipId
-                : "";
+            championshipSelect.value = Array.from(championshipSelect.options).some(opt => opt.value === championshipId) ? championshipId : "";
         }
-    });
+    };
+    $$("#matchesBody tr").forEach(applyRowValues);
+    if (cardList) $$(".planner-card", cardList).forEach(applyRowValues);
 
     $$("#matchesBody tr").forEach(tr => {
         tr.addEventListener("dragstart", (e) => {
@@ -3771,7 +5022,7 @@ function renderPlanner(fromPositions = null) {
 
         tr.addEventListener("dragend", () => {
             plannerDragSourceRow = null;
-            $$("#matchesBody tr").forEach(rowEl => {
+            $$("#matchesBody tr, #plannerCardList .planner-card").forEach(rowEl => {
                 rowEl.classList.remove("planner-row-dragging");
                 rowEl.classList.remove("planner-row-drop-target");
             });
@@ -3779,7 +5030,7 @@ function renderPlanner(fromPositions = null) {
     });
 
     const clearTouchDragClasses = () => {
-        $$("#matchesBody tr").forEach(rowEl => {
+        $$("#matchesBody tr, #plannerCardList .planner-card").forEach(rowEl => {
             rowEl.classList.remove("planner-row-dragging");
             rowEl.classList.remove("planner-row-drop-target");
         });
@@ -3788,22 +5039,22 @@ function renderPlanner(fromPositions = null) {
     const getTouchDropRow = (x, y) => {
         const target = document.elementFromPoint(x, y);
         if (!target) return null;
-        return target.closest("#matchesBody tr");
+        return target.closest("#matchesBody tr, #plannerCardList .planner-card");
     };
 
     $$("[data-drag-handle]").forEach(handle => {
         handle.addEventListener("pointerdown", (e) => {
             if (e.pointerType !== "touch") return;
-            const tr = handle.closest("tr");
-            if (!tr) return;
+            const rowEl = handle.closest("[data-row]");
+            if (!rowEl) return;
             e.preventDefault();
             plannerTouchDragState = {
                 pointerId: e.pointerId,
-                fromIndex: Number(tr.dataset.row),
-                overIndex: Number(tr.dataset.row),
+                fromIndex: Number(rowEl.dataset.row),
+                overIndex: Number(rowEl.dataset.row),
             };
             clearTouchDragClasses();
-            tr.classList.add("planner-row-dragging");
+            rowEl.classList.add("planner-row-dragging");
             handle.setPointerCapture(e.pointerId);
         });
 
@@ -3817,7 +5068,7 @@ function renderPlanner(fromPositions = null) {
             plannerTouchDragState.overIndex = overIndex;
             clearTouchDragClasses();
             overRow.classList.add("planner-row-drop-target");
-            const sourceRow = $(`#matchesBody tr[data-row="${plannerTouchDragState.fromIndex}"]`);
+            const sourceRow = document.querySelector(`[data-row="${plannerTouchDragState.fromIndex}"]`);
             sourceRow?.classList.add("planner-row-dragging");
         });
 
@@ -3847,7 +5098,7 @@ function renderPlanner(fromPositions = null) {
         const target = e.target;
         if (!target || !target.matches("[data-field]")) return;
 
-        const tr = target.closest("tr");
+        const tr = target.closest("[data-row]");
         if (!tr) return;
 
         const row = Number(tr.dataset.row);
@@ -3855,6 +5106,12 @@ function renderPlanner(fromPositions = null) {
 
         const ev2 = getEvent(plannerEventId);
         if (!ev2 || !ev2.matches[row]) return;
+
+        const reRender = () => {
+            const capture = capturePlannerFocus();
+            renderPlanner();
+            requestAnimationFrame(() => restorePlannerFocus(capture));
+        };
 
         if (field === "participant") {
             const participantInputs = $$('[data-field="participant"]', tr);
@@ -3888,7 +5145,7 @@ function renderPlanner(fromPositions = null) {
             ev2.matches[row].participantSlots = participantSlotCount(ev2.matches[row]);
             reconcilePlannerMatchTeams(ev2.matches[row]);
             upsertEvent(ev2); // debounced via saveSoon
-            renderPlanner();
+            reRender();
             return;
         } else if (field === "participantTeam") {
             const slot = Number(target.dataset.slot);
@@ -3904,13 +5161,13 @@ function renderPlanner(fromPositions = null) {
             ev2.matches[row].participantTeams = teams;
             reconcilePlannerMatchTeams(ev2.matches[row]);
             upsertEvent(ev2); // debounced via saveSoon
-            renderPlanner();
+            reRender();
             return;
         } else if (field === "result") {
             ev2.matches[row].result = target.value;
             reconcilePlannerMatchTeams(ev2.matches[row]);
             upsertEvent(ev2); // debounced via saveSoon
-            renderPlanner();
+            reRender();
             return;
         } else if (field === "teamName") {
             const names = normalizedTeamNames(ev2.matches[row]);
@@ -3921,7 +5178,7 @@ function renderPlanner(fromPositions = null) {
             else names[key] = nextName;
             ev2.matches[row].teamNames = names;
             upsertEvent(ev2);
-            renderPlanner();
+            reRender();
             return;
         } else if (field === "pinBy") {
             ev2.matches[row].pinBy = target.value;
@@ -3930,8 +5187,8 @@ function renderPlanner(fromPositions = null) {
             if (field === "matchType") {
                 reconcilePlannerMatchTeams(ev2.matches[row]);
                 upsertEvent(ev2); // debounced via saveSoon
-                // Avoid re-rendering on every keystroke on mobile; refresh once field is committed.
-                if (e.type === "change") renderPlanner();
+                // Avoid re-rendering on every keystroke; refresh once field is committed.
+                if (e.type === "change") reRender();
                 return;
             }
         }
@@ -3940,22 +5197,26 @@ function renderPlanner(fromPositions = null) {
     };
     body.oninput = handlePlannerRowEdit;
     body.onchange = handlePlannerRowEdit;
+    if (cardList) {
+        cardList.oninput = handlePlannerRowEdit;
+        cardList.onchange = handlePlannerRowEdit;
+    }
 
     // Note editor buttons
     $$("[data-open-note]").forEach(btn => {
         btn.addEventListener("click", async () => {
-            const tr = btn.closest("tr");
-            if (!tr) return;
-            const row = Number(tr.dataset.row);
+            const rowEl = btn.closest("[data-row]");
+            if (!rowEl) return;
+            const row = Number(rowEl.dataset.row);
             const field = String(btn.dataset.openNote || "");
             await openPlannerNoteModal({ row, field });
         });
     });
     $$("[data-open-escort]").forEach(btn => {
         btn.addEventListener("click", async () => {
-            const tr = btn.closest("tr");
-            if (!tr) return;
-            const row = Number(tr.dataset.row);
+            const rowEl = btn.closest("[data-row]");
+            if (!rowEl) return;
+            const row = Number(rowEl.dataset.row);
             const slot = Number(btn.dataset.openEscort);
             await openPlannerEscortModal({ row, slot });
         });
@@ -4396,8 +5657,8 @@ function renderWeeklySettingsPanel() {
         : `
             <div class="list">
               ${state.shows.map(s => {
-                const selected = weeklyMap.has(s.id) ? String(weeklyMap.get(s.id)) : "-1";
-                return `
+            const selected = weeklyMap.has(s.id) ? String(weeklyMap.get(s.id)) : "-1";
+            return `
                   <div class="item">
                     <div class="row space gap wrap">
                       <span class="badge"><span class="dot" style="background:${s.color}"></span>${escapeHTML(s.name)}</span>
@@ -4408,7 +5669,7 @@ function renderWeeklySettingsPanel() {
                     </div>
                   </div>
                 `;
-              }).join("")}
+        }).join("")}
             </div>
         `;
 
@@ -4516,9 +5777,9 @@ function renderShowsSettingsPanel() {
           ${!state.shows.length ? `<div class="item"><div class="muted tiny">No shows yet. Add one above.</div></div>` : `
             <div class="list">
               ${state.shows.map(show => {
-                const isEditing = settingsUiState.shows.editingId === show.id;
-                const isDeleting = settingsUiState.shows.deletingId === show.id;
-                return `
+        const isEditing = settingsUiState.shows.editingId === show.id;
+        const isDeleting = settingsUiState.shows.deletingId === show.id;
+        return `
                   <div class="item">
                     <div class="item-title">
                       <span class="badge"><span class="dot" style="background:${show.color}"></span>${escapeHTML(show.name)}</span>
@@ -4548,7 +5809,7 @@ function renderShowsSettingsPanel() {
                     ` : ""}
                   </div>
                 `;
-              }).join("")}
+    }).join("")}
             </div>
           `}
         </div>
@@ -4730,9 +5991,9 @@ function renderChampionshipSettingsPanel() {
           ${!state.championships.length ? `<div class="item"><div class="muted tiny">No championships yet. Add one above.</div></div>` : `
             <div class="list championship-settings-list">
               ${state.championships.map(championship => {
-                const isEditing = settingsUiState.championships.editingId === championship.id;
-                const isDeleting = settingsUiState.championships.deletingId === championship.id;
-                return `
+        const isEditing = settingsUiState.championships.editingId === championship.id;
+        const isDeleting = settingsUiState.championships.deletingId === championship.id;
+        return `
                   <div class="item championship-settings-item ${isEditing ? "is-editing" : ""}">
                     <div class="championship-settings-item-head">
                       <div class="championship-settings-item-copy">
@@ -4772,10 +6033,10 @@ function renderChampionshipSettingsPanel() {
                           </div>
                           <div class="championship-settings-show-grid">
                             ${renderShowAssignmentOptions({
-                                inputClass: "settingsEditTitleShowItem",
-                                selectedShowIds: Array.isArray(championship.showIds) ? championship.showIds : [],
-                                dataTitleId: championship.id,
-                            })}
+            inputClass: "settingsEditTitleShowItem",
+            selectedShowIds: Array.isArray(championship.showIds) ? championship.showIds : [],
+            dataTitleId: championship.id,
+        })}
                           </div>
                         </div>
                         <div class="championship-settings-editor-actions">
@@ -4794,7 +6055,7 @@ function renderChampionshipSettingsPanel() {
                     ` : ""}
                   </div>
                 `;
-              }).join("")}
+    }).join("")}
             </div>
           `}
         </div>
@@ -5545,6 +6806,8 @@ $("#openAddSSModal").addEventListener("click", () => {
 });
 
 $("#rosterSearch").addEventListener("input", () => renderRoster());
+$("#rosterDivisionFilter")?.addEventListener("change", () => renderRoster());
+$("#rosterStatusFilter")?.addEventListener("change", () => renderRoster());
 $("#calPrev").addEventListener("click", () => { calCursor.setMonth(calCursor.getMonth() - 1); renderCalendar(); });
 $("#calNext").addEventListener("click", () => { calCursor.setMonth(calCursor.getMonth() + 1); renderCalendar(); });
 $("#calToday").addEventListener("click", () => {

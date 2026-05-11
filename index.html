@@ -65,6 +65,12 @@
                         <div class="card-title dashboard-card-title">Weekly Rankings</div>
                         <div id="weeklyRankings" class="card-body"></div>
                     </div>
+
+                    <!-- Active Title Reigns -->
+                    <div class="card title-reigns-card">
+                        <div class="card-title dashboard-card-title">Longest Active Reigns</div>
+                        <div id="titleReignsList" class="card-body"></div>
+                    </div>
                 </div>
             </section>
 
@@ -125,7 +131,11 @@
 
                 <div id="plannerMeta" class="muted"></div>
 
-                <div class="table-wrap" role="region" aria-label="Planner table">
+                <!-- Mobile-friendly card layout (rendered when viewport is small) -->
+                <div id="plannerCardList" class="planner-card-list" aria-label="Match cards"></div>
+
+                <!-- Desktop / wide-screen table (hidden on small screens) -->
+                <div class="table-wrap planner-table-wrap" role="region" aria-label="Planner table">
                     <table class="table" id="matchesTable">
                         <thead>
                             <tr>
@@ -169,6 +179,19 @@
                         <div class="row gap wrap roster-header-actions">
                             <div class="row gap wrap roster-filters">
                                 <select id="rosterFilter" class="input"></select>
+                                <select id="rosterDivisionFilter" class="input">
+                                    <option value="all">All divisions</option>
+                                    <option value="World">World</option>
+                                    <option value="Midcard">Midcard</option>
+                                    <option value="Tag">Tag</option>
+                                    <option value="Women">Women</option>
+                                    <option value="Other">Other</option>
+                                </select>
+                                <select id="rosterStatusFilter" class="input">
+                                    <option value="all">Everyone</option>
+                                    <option value="champions">Champions only</option>
+                                    <option value="non-champions">Non-champions</option>
+                                </select>
                                 <input id="rosterSearch" class="input" placeholder="Search…" />
                             </div>
                             <button id="openAddSSModal" class="btn">Add Superstar</button>
@@ -203,7 +226,7 @@
                 </div>
             </div>
 
-            <footer class="footer muted">HTML/CSS/JS • LocalStorage • v4.8.0</footer>
+            <footer class="footer muted">HTML/CSS/JS • LocalStorage • v4.8.1</footer>
 
             <!-- Bottom nav (mobile) -->
             <nav class="bottom-nav" aria-label="Bottom navigation">
