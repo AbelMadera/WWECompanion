@@ -591,8 +591,15 @@ function superstarChampionshipNames(superstar) {
 function superstarPhotoURL(superstar) {
     const raw = String(superstar?.photo ?? "").trim();
     if (!raw) return "";
-    // Allow only http(s) and data URIs — anything else (javascript:, file:, vbscript:) is dropped
+    // Reject dangerous schemes outright (javascript:, vbscript:, file:, non-image data:)
+    if (/^javascript:/i.test(raw)) return "";
+    if (/^vbscript:/i.test(raw)) return "";
+    if (/^file:/i.test(raw)) return "";
+    if (/^data:/i.test(raw) && !/^data:image\//i.test(raw)) return "";
+    // http(s) and data:image/ are explicitly allowed
     if (/^(https?:\/\/|data:image\/)/i.test(raw)) return raw;
+    // Any other string with no scheme is treated as a relative path (e.g. images/superstars/cody.png)
+    if (!/^[a-z][a-z0-9+.-]*:/i.test(raw)) return raw;
     return "";
 }
 function superstarInitials(name) {
@@ -2017,7 +2024,7 @@ async function openShowChampionsModal(showId) {
               ${primaryHolder
                 ? `<button type="button" class="show-board-row-portrait-btn" data-open-ss="${primaryHolder.id}">${holderVisualHTML(primaryHolder, { compact: true })}</button>`
                 : `<div class="show-board-holder-fallback compact">?</div>`
-            }
+              }
             </div>
             ${primaryHolder ? `
               <button type="button" class="show-board-row-champion" data-open-ss="${primaryHolder.id}">
@@ -2048,7 +2055,7 @@ async function openShowChampionsModal(showId) {
                     </button>
                   `).join("")
                 : `<div class="show-board-holder-fallback compact">?</div><div class="show-board-holder-fallback compact">?</div>`
-            }
+              }
             </div>
             ${holders.length ? `
               <div class="show-board-tag-champion">
@@ -2102,10 +2109,10 @@ async function openShowChampionsModal(showId) {
                   ${mensTagChampionship ? buildTagRowHTML(mensTagChampionship) : ""}
                   ${womensTagChampionship ? buildTagRowHTML(womensTagChampionship) : ""}
                   ${otherChampionships.map(championship => {
-            return championshipBoardSlotKey(championship).includes("tag")
-                ? buildTagRowHTML(championship)
-                : buildSinglesRowHTML(championship);
-        }).join("")}
+                      return championshipBoardSlotKey(championship).includes("tag")
+                          ? buildTagRowHTML(championship)
+                          : buildSinglesRowHTML(championship);
+                  }).join("")}
                 </div>
               </div>
             </div>
@@ -2250,7 +2257,7 @@ function deleteEvent(eventId) {
 }
 
 // -------------------- ROUTER --------------------
-const views = ["dashboard", "calendar", "planner", "shows", "roster", "settings"];
+const views = ["dashboard", "calendar", "planner", "roster", "settings"];
 let currentView = "dashboard";
 
 function setActiveNav(view) {
@@ -2485,25 +2492,25 @@ function renderBookingAssistant() {
     root.innerHTML = `
         <div class="booking-suggestions">
             ${suggestions.slice(0, 6).map(s => {
-        const iconClass = `booking-icon booking-icon-${s.kind}`;
-        const symbol = ({
-            fresh_matchup: "✨",
-            stalled_rivalry: "⚡",
-            missing_from_tv: "👁",
-            stale_title: "🏆",
-            hot_streak: "🔥",
-        })[s.kind] || "•";
-        const refs = [];
-        if (s.rivalryId) refs.push(`<button type="button" class="booking-ref" data-open-rivalry="${escapeAttr(s.rivalryId)}">View rivalry</button>`);
-        if (s.championshipId) refs.push(`<button type="button" class="booking-ref" data-open-championship="${escapeAttr(s.championshipId)}">View title</button>`);
-        if (Array.isArray(s.superstarIds)) {
-            s.superstarIds.forEach(id => {
-                const ss = state.superstars.find(x => x.id === id);
-                if (!ss) return;
-                refs.push(`<button type="button" class="booking-ref" data-open-ss="${escapeAttr(id)}">${escapeHTML(ss.name)}</button>`);
-            });
-        }
-        return `
+                const iconClass = `booking-icon booking-icon-${s.kind}`;
+                const symbol = ({
+                    fresh_matchup: "✨",
+                    stalled_rivalry: "⚡",
+                    missing_from_tv: "👁",
+                    stale_title: "🏆",
+                    hot_streak: "🔥",
+                })[s.kind] || "•";
+                const refs = [];
+                if (s.rivalryId) refs.push(`<button type="button" class="booking-ref" data-open-rivalry="${escapeAttr(s.rivalryId)}">View rivalry</button>`);
+                if (s.championshipId) refs.push(`<button type="button" class="booking-ref" data-open-championship="${escapeAttr(s.championshipId)}">View title</button>`);
+                if (Array.isArray(s.superstarIds)) {
+                    s.superstarIds.forEach(id => {
+                        const ss = state.superstars.find(x => x.id === id);
+                        if (!ss) return;
+                        refs.push(`<button type="button" class="booking-ref" data-open-ss="${escapeAttr(id)}">${escapeHTML(ss.name)}</button>`);
+                    });
+                }
+                return `
                     <div class="booking-suggestion">
                         <div class="${iconClass}">${symbol}</div>
                         <div class="booking-body">
@@ -2513,7 +2520,7 @@ function renderBookingAssistant() {
                         </div>
                     </div>
                 `;
-    }).join("")}
+            }).join("")}
         </div>
     `;
     $$("[data-open-rivalry]", root).forEach(btn => {
@@ -2546,17 +2553,17 @@ function renderTitleReignsCard() {
     root.innerHTML = `
         <div class="title-reigns-list">
             ${top.map(({ championshipId, reign, days }) => {
-        const championship = state.championships.find(c => c.id === championshipId);
-        if (!championship) return "";
-        const holders = reign.holderIds.map(id => state.superstars.find(s => s.id === id)).filter(Boolean);
-        const photos = holders.slice(0, 2).map(h => {
-            const photo = superstarPhotoURL(h);
-            return photo
-                ? `<img class="reign-photo" src="${escapeAttr(photo)}" alt="${escapeAttr(h.name)}" />`
-                : `<div class="reign-photo-fallback">${escapeHTML(superstarInitials(h.name))}</div>`;
-        }).join("");
-        const names = holders.map(h => h.name).join(" & ");
-        return `
+                const championship = state.championships.find(c => c.id === championshipId);
+                if (!championship) return "";
+                const holders = reign.holderIds.map(id => state.superstars.find(s => s.id === id)).filter(Boolean);
+                const photos = holders.slice(0, 2).map(h => {
+                    const photo = superstarPhotoURL(h);
+                    return photo
+                        ? `<img class="reign-photo" src="${escapeAttr(photo)}" alt="${escapeAttr(h.name)}" />`
+                        : `<div class="reign-photo-fallback">${escapeHTML(superstarInitials(h.name))}</div>`;
+                }).join("");
+                const names = holders.map(h => h.name).join(" & ");
+                return `
                     <button type="button" class="reign-row" data-open-championship="${escapeAttr(championshipId)}">
                         <div class="reign-photos">${photos || `<div class="reign-photo-fallback">?</div>`}</div>
                         <div class="reign-body">
@@ -2569,7 +2576,7 @@ function renderTitleReignsCard() {
                         </div>
                     </button>
                 `;
-    }).join("")}
+            }).join("")}
         </div>
     `;
     $$("[data-open-championship]", root).forEach(btn => {
@@ -2773,22 +2780,22 @@ function renderDashboard() {
     rankingsEl.innerHTML = `
       <div class="rankings-shows">
         ${state.shows.map(show => {
-        const rows = rankingsByShow.get(show.id) || [];
-        return `
+            const rows = rankingsByShow.get(show.id) || [];
+            return `
               <div class="rankings-show-card">
                 <div class="item-title">
                   <span class="badge"><span class="dot" style="background:${show.color}"></span>${escapeHTML(show.name)}</span>
                 </div>
                 ${rows.length
-                ? `<div class="rankings-list">${rankingRowsHTML(rows, 1)}</div>`
-                : `<div class="muted tiny">No ranked superstars on this show yet.</div>`
-            }
+                    ? `<div class="rankings-list">${rankingRowsHTML(rows, 1)}</div>`
+                    : `<div class="muted tiny">No ranked superstars on this show yet.</div>`
+                }
                 <div class="item-actions">
                   <button class="btn secondary" data-show-more="${show.id}">Show More</button>
                 </div>
               </div>
             `;
-    }).join("")}
+        }).join("")}
       </div>
     `;
 
@@ -2810,55 +2817,6 @@ function renderDashboard() {
     });
 }
 
-// -------------------- SHOWS --------------------
-function renderShows() {
-    populateShowSelects();
-
-    const list = $("#showsList");
-    if (state.shows.length === 0) {
-        list.innerHTML = `<div class="muted">No shows yet. Add RAW/SmackDown/NXT/etc.</div>`;
-        return;
-    }
-
-    list.innerHTML = `
-    <div class="list">
-      ${state.shows.map(s => `
-        <div class="item">
-          <div class="item-title">
-            <span class="badge"><span class="dot" style="background:${s.color}"></span>${escapeHTML(s.name)}</span>
-          </div>
-          <div class="item-sub">${rosterForShow(s.id).length} superstars</div>
-          <div class="item-actions">
-            <button class="btn danger" data-del-show="${s.id}">Delete</button>
-          </div>
-        </div>
-      `).join("")}
-    </div>
-  `;
-
-    $$("[data-del-show]").forEach(btn => {
-        btn.addEventListener("click", async () => {
-            const id = btn.dataset.delShow;
-            const s = getShow(id);
-            const ok = await openModal({
-                title: "Delete show?",
-                bodyHTML: `
-          <div>Delete <b>${escapeHTML(s?.name || "this show")}</b>?</div>
-          <div class="muted tiny">Superstars assigned to it become unassigned. Existing events keep their showId but will display as “Unknown”.</div>
-        `,
-                okText: "Delete"
-            });
-            if (!ok.ok) return;
-
-            const snapshot = snapshotState();
-            const showName_ = s?.name || "Show";
-            deleteShowAndUnassign(id);
-            saveSoon();
-            renderAll();
-            offerUndo(`${showName_} deleted.`, snapshot);
-        });
-    });
-}
 
 // -------------------- ROSTER --------------------
 async function deleteSuperstarFlow(id) {
@@ -3143,17 +3101,17 @@ async function openSuperstarDetails(id, { readOnly = false } = {}) {
             <div class="h3">Title History</div>
             <div class="stack" style="gap:6px;">
               ${ssReigns.slice().reverse().map(r => {
-            const c = state.championships.find(x => x.id === r.championshipId);
-            if (!c) return "";
-            const days = reignDayLength(r);
-            const range = r.endDate ? `${r.startDate} → ${r.endDate}` : `${r.startDate} → present`;
-            return `
+                const c = state.championships.find(x => x.id === r.championshipId);
+                if (!c) return "";
+                const days = reignDayLength(r);
+                const range = r.endDate ? `${r.startDate} → ${r.endDate}` : `${r.startDate} → present`;
+                return `
                   <div class="ss-reign-row ${r.endDate ? "" : "is-active"}">
                     <div class="ss-reign-name">${escapeHTML(c.name)}${r.endDate ? "" : ' <span class="champ-inline">C</span>'}</div>
                     <div class="ss-reign-meta muted tiny">${escapeHTML(range)} • ${days} days</div>
                   </div>
                 `;
-        }).join("")}
+              }).join("")}
             </div>
           </div>
         ` : ""}
@@ -3502,28 +3460,28 @@ function renderRivalries() {
       </div>
       <div class="list rivalry-list">
         ${rows.map(rivalry => {
-        const shows = rivalryShowNames(rivalry);
-        const participants = rivalryParticipants(rivalry);
-        const dateRange = [rivalry.startDate, rivalry.endDate].filter(Boolean).join(" to ");
-        return `
+            const shows = rivalryShowNames(rivalry);
+            const participants = rivalryParticipants(rivalry);
+            const dateRange = [rivalry.startDate, rivalry.endDate].filter(Boolean).join(" to ");
+            return `
               <div class="item rivalry-item">
                 <div class="rivalry-card-head">
                   <div class="rivalry-render-row">
                     ${participants.length
-                ? participants.map(ss => {
-                    const photo = superstarPhotoURL(ss);
-                    return `
+                        ? participants.map(ss => {
+                            const photo = superstarPhotoURL(ss);
+                            return `
                               <div class="rivalry-render">
                                 ${photo
-                            ? `<img class="rivalry-render-photo" src="${escapeAttr(photo)}" alt="${escapeAttr(ss.name)}" />`
-                            : `<div class="rivalry-render-fallback">${escapeHTML(superstarInitials(ss.name))}</div>`
-                        }
+                                    ? `<img class="rivalry-render-photo" src="${escapeAttr(photo)}" alt="${escapeAttr(ss.name)}" />`
+                                    : `<div class="rivalry-render-fallback">${escapeHTML(superstarInitials(ss.name))}</div>`
+                                }
                                 <div class="rivalry-render-name">${escapeHTML(ss.name)}</div>
                               </div>
                             `;
-                }).join(`<div class="rivalry-vs">VS</div>`)
-                : `<div class="muted tiny">No participants selected</div>`
-            }
+                        }).join(`<div class="rivalry-vs">VS</div>`)
+                        : `<div class="muted tiny">No participants selected</div>`
+                    }
                   </div>
                   <span class="rivalry-status rivalry-status-${escapeAttr(normalizeRivalryStatus(rivalry.status).toLowerCase().replaceAll(" ", "-"))}">${escapeHTML(normalizeRivalryStatus(rivalry.status))}</span>
                 </div>
@@ -3535,19 +3493,19 @@ function renderRivalries() {
                 ${rivalry.summary ? `<div class="rivalry-story">${escapeHTML(rivalry.summary).replace(/\n/g, "<br>")}</div>` : ""}
                 ${rivalry.notes ? `<div class="rivalry-notes">${escapeHTML(rivalry.notes).replace(/\n/g, "<br>")}</div>` : ""}
                 ${(() => {
-                const timeline = matchesForRivalry(rivalry);
-                if (!timeline.length) return "";
-                const score = (() => {
-                    const wins = new Map();
-                    timeline.forEach(t => {
-                        if (!t.winnerLabel || t.winnerLabel === "Draw" || t.winnerLabel === "DQ") return;
-                        wins.set(t.winnerLabel, (wins.get(t.winnerLabel) || 0) + 1);
-                    });
-                    const arr = [...wins.entries()];
-                    if (!arr.length) return "";
-                    return arr.map(([n, w]) => `${n}: ${w}`).join(" • ");
-                })();
-                return `
+                    const timeline = matchesForRivalry(rivalry);
+                    if (!timeline.length) return "";
+                    const score = (() => {
+                        const wins = new Map();
+                        timeline.forEach(t => {
+                            if (!t.winnerLabel || t.winnerLabel === "Draw" || t.winnerLabel === "DQ") return;
+                            wins.set(t.winnerLabel, (wins.get(t.winnerLabel) || 0) + 1);
+                        });
+                        const arr = [...wins.entries()];
+                        if (!arr.length) return "";
+                        return arr.map(([n, w]) => `${n}: ${w}`).join(" • ");
+                    })();
+                    return `
                         <div class="rivalry-timeline">
                             <div class="rivalry-timeline-head">
                                 <span class="rivalry-timeline-title">Series so far</span>
@@ -3564,7 +3522,7 @@ function renderRivalries() {
                             </ol>
                         </div>
                     `;
-            })()}
+                })()}
                 <div class="item-actions rivalry-actions">
                   <button class="btn secondary" data-edit-rivalry="${rivalry.id}">Edit</button>
                   <button class="btn danger" data-delete-rivalry="${rivalry.id}">${deletingId === rivalry.id ? "Cancel Delete" : "Delete"}</button>
@@ -3580,7 +3538,7 @@ function renderRivalries() {
                 ` : ""}
               </div>
             `;
-    }).join("")}
+        }).join("")}
       </div>
     `;
 
@@ -4664,18 +4622,18 @@ function renderPlanner(fromPositions = null) {
             ? `
               <div class="stack" style="gap:6px;">
                 ${teamGroups.map(group => {
-                const teamLabelValue = teamLabel(group.key);
-                const optionValues = factionOptionsForParticipants(group.participants);
-                const currentName = String(teamNameMap[group.key] || "");
-                if (currentName && !optionValues.includes(currentName)) optionValues.push(currentName);
-                optionValues.sort((a, b) => a.localeCompare(b));
-                return `
+                    const teamLabelValue = teamLabel(group.key);
+                    const optionValues = factionOptionsForParticipants(group.participants);
+                    const currentName = String(teamNameMap[group.key] || "");
+                    if (currentName && !optionValues.includes(currentName)) optionValues.push(currentName);
+                    optionValues.sort((a, b) => a.localeCompare(b));
+                    return `
                       <select class="cell-input small" data-field="teamName" data-team-key="${escapeAttr(group.key)}">
                         <option value="">${escapeHTML(teamLabelValue)}</option>
                         ${optionValues.map(name => `<option value="${escapeAttr(name)}">${escapeHTML(name)}</option>`).join("")}
                       </select>
                     `;
-            }).join("")}
+                }).join("")}
               </div>
             `
             : "";
@@ -5388,6 +5346,11 @@ const settingsUiState = {
         deletingId: null,
         draft: null,
     },
+    bulkPhotos: {
+        results: null,
+        scanning: false,
+        message: null,
+    },
 };
 
 function settingsStatusHTML(id, message) {
@@ -5432,6 +5395,13 @@ function resetSettingsPanelState(panelKey) {
         settingsUiState.rivalries.deletingId = null;
         settingsUiState.rivalries.draft = null;
     }
+
+    if (panelKey === "bulkPhotos") {
+        settingsUiState.bulkPhotos = settingsUiState.bulkPhotos || {};
+        settingsUiState.bulkPhotos.results = null;
+        settingsUiState.bulkPhotos.scanning = false;
+        settingsUiState.bulkPhotos.message = null;
+    }
 }
 
 async function openSettingsPanel(panelKey) {
@@ -5440,6 +5410,7 @@ async function openSettingsPanel(panelKey) {
         shows: { title: "Manage Shows", render: renderShowsSettingsPanel },
         championships: { title: "Manage Championships", render: renderChampionshipSettingsPanel },
         rivalries: { title: "Rivalries & Storylines", render: renderRivalriesSettingsPanel },
+        bulkPhotos: { title: "Bulk Photo Scan", render: renderBulkPhotosPanel },
         data: { title: "Import, Export, and Reset", render: renderDataSettingsPanel },
     };
     const panel = panels[panelKey];
@@ -5499,6 +5470,13 @@ function renderSettingsTools() {
         <span class="settings-launch-meta">
           <span class="pill">${state.rivalries.length} total</span>
           <span class="pill">${activeRivalryCount} active</span>
+        </span>
+      </button>
+      <button class="settings-launch" data-settings-open="bulkPhotos">
+        <span class="settings-launch-title">Bulk Photo Scan</span>
+        <span class="settings-launch-copy">Auto-assign superstar photos from your local <code>images/superstars/</code> folder in one tap.</span>
+        <span class="settings-launch-meta">
+          <span class="pill">${state.superstars.length} superstars</span>
         </span>
       </button>
       <button class="settings-launch" data-settings-open="data">
@@ -5657,8 +5635,8 @@ function renderWeeklySettingsPanel() {
         : `
             <div class="list">
               ${state.shows.map(s => {
-            const selected = weeklyMap.has(s.id) ? String(weeklyMap.get(s.id)) : "-1";
-            return `
+                const selected = weeklyMap.has(s.id) ? String(weeklyMap.get(s.id)) : "-1";
+                return `
                   <div class="item">
                     <div class="row space gap wrap">
                       <span class="badge"><span class="dot" style="background:${s.color}"></span>${escapeHTML(s.name)}</span>
@@ -5669,7 +5647,7 @@ function renderWeeklySettingsPanel() {
                     </div>
                   </div>
                 `;
-        }).join("")}
+              }).join("")}
             </div>
         `;
 
@@ -5777,9 +5755,9 @@ function renderShowsSettingsPanel() {
           ${!state.shows.length ? `<div class="item"><div class="muted tiny">No shows yet. Add one above.</div></div>` : `
             <div class="list">
               ${state.shows.map(show => {
-        const isEditing = settingsUiState.shows.editingId === show.id;
-        const isDeleting = settingsUiState.shows.deletingId === show.id;
-        return `
+                const isEditing = settingsUiState.shows.editingId === show.id;
+                const isDeleting = settingsUiState.shows.deletingId === show.id;
+                return `
                   <div class="item">
                     <div class="item-title">
                       <span class="badge"><span class="dot" style="background:${show.color}"></span>${escapeHTML(show.name)}</span>
@@ -5790,10 +5768,12 @@ function renderShowsSettingsPanel() {
                       <button class="btn danger" data-settings-del-show="${show.id}">${isDeleting ? "Cancel Delete" : "Delete"}</button>
                     </div>
                     ${isEditing ? `
-                      <div class="settings-inline-edit">
+                      <div class="settings-inline-edit stack">
                         <div class="row gap wrap">
-                          <input class="input grow" data-settings-show-name="${show.id}" value="${escapeAttr(show.name)}" />
+                          <input class="input grow" data-settings-show-name="${show.id}" value="${escapeAttr(show.name)}" placeholder="Show name" />
                           <input class="input" type="color" data-settings-show-color="${show.id}" value="${escapeAttr(show.color || "#d00000")}" />
+                        </div>
+                        <div class="row gap wrap">
                           <button class="btn" data-settings-save-show="${show.id}">Save</button>
                         </div>
                       </div>
@@ -5809,7 +5789,7 @@ function renderShowsSettingsPanel() {
                     ` : ""}
                   </div>
                 `;
-    }).join("")}
+              }).join("")}
             </div>
           `}
         </div>
@@ -5991,9 +5971,9 @@ function renderChampionshipSettingsPanel() {
           ${!state.championships.length ? `<div class="item"><div class="muted tiny">No championships yet. Add one above.</div></div>` : `
             <div class="list championship-settings-list">
               ${state.championships.map(championship => {
-        const isEditing = settingsUiState.championships.editingId === championship.id;
-        const isDeleting = settingsUiState.championships.deletingId === championship.id;
-        return `
+                const isEditing = settingsUiState.championships.editingId === championship.id;
+                const isDeleting = settingsUiState.championships.deletingId === championship.id;
+                return `
                   <div class="item championship-settings-item ${isEditing ? "is-editing" : ""}">
                     <div class="championship-settings-item-head">
                       <div class="championship-settings-item-copy">
@@ -6033,10 +6013,10 @@ function renderChampionshipSettingsPanel() {
                           </div>
                           <div class="championship-settings-show-grid">
                             ${renderShowAssignmentOptions({
-            inputClass: "settingsEditTitleShowItem",
-            selectedShowIds: Array.isArray(championship.showIds) ? championship.showIds : [],
-            dataTitleId: championship.id,
-        })}
+                                inputClass: "settingsEditTitleShowItem",
+                                selectedShowIds: Array.isArray(championship.showIds) ? championship.showIds : [],
+                                dataTitleId: championship.id,
+                            })}
                           </div>
                         </div>
                         <div class="championship-settings-editor-actions">
@@ -6055,7 +6035,7 @@ function renderChampionshipSettingsPanel() {
                     ` : ""}
                   </div>
                 `;
-    }).join("")}
+              }).join("")}
             </div>
           `}
         </div>
@@ -6185,6 +6165,411 @@ function renderChampionshipSettingsPanel() {
         };
     });
 }
+
+// -------------------- BULK PHOTO SCAN --------------------
+// Generates many candidate filename slugs per name and tests each via fetch HEAD.
+// File found = assign. The folder is treated as the source of truth: existing
+// path values are overwritten when the scan finds a match. External http(s) URLs
+// without a local match are preserved.
+
+const SUPERSTAR_PHOTO_FOLDER = "images/superstars/";
+const SCAN_EXTENSIONS = ["png", "jpg", "jpeg", "webp"];
+
+// Strip diacritics: "Andradé" → "Andrade"
+function stripDiacritics(s) {
+    return String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+// Generate a comprehensive set of candidate filename stems for a name.
+// Returns an ordered list (most-specific first).
+function generateFilenameCandidates(name) {
+    const cleaned = stripDiacritics(String(name || "")).trim();
+    if (!cleaned) return [];
+    // Words after splitting on whitespace and stripping punctuation
+    const words = cleaned.split(/\s+/).map(w => w.replace(/['.,!?]/g, "")).filter(Boolean);
+    if (!words.length) return [];
+
+    const out = [];
+    const add = (s) => { if (s && !out.includes(s)) out.push(s); };
+
+    const fullLower = words.join(" ").toLowerCase();
+    const fullKebab = words.join("-").toLowerCase();
+    const fullUnderscore = words.join("_").toLowerCase();
+    const fullMashed = words.join("").toLowerCase();
+    const fullTitle = words.map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join("-");
+    const fullTitleUnderscore = words.map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join("_");
+    const fullTitleMashed = words.map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join("");
+    const fullUpper = words.join("-").toUpperCase();
+    const fullAsIs = words.join("-"); // preserves user's case from name
+
+    // Strict kebab (most common in your folder)
+    add(fullKebab);
+    // Original-case kebab (matches "Bron-Breakker")
+    add(fullAsIs);
+    // Title case kebab (matches "Bron-Breakker", "Charlie-Dempsey")
+    add(fullTitle);
+    // Single-word name with various cases (matches "Bayley.png", "Asuka.png")
+    if (words.length === 1) {
+        add(words[0].toLowerCase());
+        add(words[0].charAt(0).toUpperCase() + words[0].slice(1).toLowerCase());
+        add(words[0].toUpperCase());
+    }
+    // Underscore variants (matches "Apollo_Crews")
+    add(fullUnderscore);
+    add(fullTitleUnderscore);
+    // No-separator mashed (matches "CMPunk")
+    add(fullMashed);
+    add(fullTitleMashed);
+    // All caps (matches "CHAD-GABLE", "CHELSEA")
+    add(fullUpper);
+    if (words.length === 1) add(words[0].toUpperCase());
+
+    // "Each word capitalized + mashed" — matches "CMPunk" if name is "CM Punk"
+    // (preserves original case of each word, then mashes)
+    const wordsPreserved = words.map(w => {
+        // If word is all caps already (2+ letters), keep it; else title-case
+        if (w.length >= 2 && w === w.toUpperCase()) return w;
+        return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+    });
+    add(wordsPreserved.join(""));
+    add(wordsPreserved.join("-"));
+    add(wordsPreserved.join("_"));
+
+    // First-name-only fallback (matches "Charlotte.png" for "Charlotte Flair")
+    if (words.length > 1) {
+        add(words[0].toLowerCase());
+        add(words[0].charAt(0).toUpperCase() + words[0].slice(1).toLowerCase());
+    }
+
+    // Last-name-only fallback
+    if (words.length > 1) {
+        const last = words[words.length - 1];
+        add(last.toLowerCase());
+        add(last.charAt(0).toUpperCase() + last.slice(1).toLowerCase());
+    }
+
+    return out;
+}
+
+// Test whether a candidate path exists. Returns the URL if it does, "" otherwise.
+async function probeFile(url) {
+    try {
+        const res = await fetch(url, { method: "HEAD", cache: "no-cache" });
+        if (res.ok) return url;
+    } catch (e) { /* network/CORS error — treat as not found */ }
+    return "";
+}
+
+// Try every (candidate × extension) combination for a single name in the given folder.
+async function findFileForName(name, folder) {
+    const candidates = generateFilenameCandidates(name);
+    for (const stem of candidates) {
+        for (const ext of SCAN_EXTENSIONS) {
+            const url = `${folder}${stem}.${ext}`;
+            const found = await probeFile(url);
+            if (found) return found;
+        }
+    }
+    return "";
+}
+
+// Fuzzy candidate generator — generates whole-word subsequences and prefix/suffix
+// wrappers. Used in Pass 2 of the scan for superstars whose exact name didn't match.
+// Designed to find files like "lady-flammer.png" for "Flammer" or "hijo-del-vikingo.png"
+// for "El Hijo del Vikingo" — but NEVER cross word boundaries (so "Bron" can't grab
+// "bronson-reed.png" because "bron" is part of "bronson", not a whole word).
+const FUZZY_PREFIX_WRAPPERS = ["lady", "the", "big", "little", "mr", "mrs", "ms", "el", "la", "dr"];
+const FUZZY_SUFFIX_WRAPPERS = ["jr", "sr", "ii", "iii"];
+
+function generateFuzzyCandidates(name) {
+    const cleaned = stripDiacritics(String(name || "")).trim();
+    if (!cleaned) return [];
+    const words = cleaned.split(/\s+/).map(w => w.replace(/['.,!?"]/g, "")).filter(Boolean);
+    if (!words.length) return [];
+
+    // Build every contiguous subsequence of words (length ≥ 1), but skip the full sequence
+    // (already covered by the strict pass).
+    const subsequences = [];
+    for (let len = words.length - 1; len >= 1; len--) {
+        for (let start = 0; start + len <= words.length; start++) {
+            subsequences.push(words.slice(start, start + len));
+        }
+    }
+    // For single-word names, also include the word itself wrapped by prefixes/suffixes.
+    if (words.length === 1) {
+        subsequences.push(words.slice()); // the single word itself
+    }
+
+    const out = [];
+    const add = (s) => { if (s && !out.includes(s)) out.push(s); };
+
+    // First pass: emit all bare subsequence forms (no wrappers).
+    // This ensures `hijo-del-vikingo` is tried before any wrapped variant of any subsequence.
+    const baseFormsForSeq = (seq) => {
+        const lower = seq.map(w => w.toLowerCase());
+        const title = seq.map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
+        const upper = seq.map(w => w.toUpperCase());
+        const preserved = seq.map(w => {
+            if (w.length >= 2 && w === w.toUpperCase()) return w;
+            return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+        });
+        return [
+            lower.join("-"),
+            lower.join("_"),
+            lower.join(""),
+            title.join("-"),
+            title.join("_"),
+            title.join(""),
+            upper.join("-"),
+            preserved.join("-"),
+            preserved.join("_"),
+            preserved.join(""),
+            seq.join("-"), // preserve original case
+        ];
+    };
+
+    // Pass 1: bare forms for each subsequence
+    for (const seq of subsequences) {
+        for (const form of baseFormsForSeq(seq)) add(form);
+    }
+
+    // Pass 2: prefix/suffix wrappers for each subsequence
+    for (const seq of subsequences) {
+        const baseForms = baseFormsForSeq(seq);
+        for (const base of baseForms) {
+            if (!base) continue;
+            for (const pre of FUZZY_PREFIX_WRAPPERS) {
+                add(`${pre}-${base}`);
+                add(`${pre}_${base}`);
+                add(`${pre.charAt(0).toUpperCase() + pre.slice(1)}-${base}`);
+            }
+            for (const suf of FUZZY_SUFFIX_WRAPPERS) {
+                add(`${base}-${suf}`);
+                add(`${base}_${suf}`);
+            }
+        }
+    }
+
+    return out;
+}
+
+async function findFileForNameFuzzy(name, folder, claimedPaths) {
+    // Cap candidates to keep scan times reasonable — 4-word names can otherwise
+    // produce thousands of variants. The most-likely candidates come first
+    // (longer subsequences before shorter), so capping at 80 still catches the
+    // common cases (lady-flammer, hijo-del-vikingo, etc.) without blowing up.
+    const candidates = generateFuzzyCandidates(name).slice(0, 80);
+    for (const stem of candidates) {
+        for (const ext of SCAN_EXTENSIONS) {
+            const url = `${folder}${stem}.${ext}`;
+            if (claimedPaths.has(url)) continue; // another superstar already claimed this file
+            const found = await probeFile(url);
+            if (found) return found;
+        }
+    }
+    return "";
+}
+
+async function scanSuperstarPhotos() {
+    const results = {
+        found: [],   // { id, name, previousPath, newPath, fuzzy }
+        missing: [], // { id, name, previousPath }
+    };
+    const total = state.superstars.length;
+    let completed = 0;
+
+    // Helper to update progress UI
+    const updateProgress = (label = "") => {
+        const el = document.getElementById("bulkPhotoProgress");
+        if (el) el.textContent = `${label}Scanning ${completed} of ${total}…`;
+    };
+    updateProgress();
+
+    // === Pass 1: strict matching ===
+    // Each superstar tries only exact-name candidates. Locks the file in if found.
+    const claimedPaths = new Set();
+    const unmatched = [];
+    const passOneFound = new Map(); // id -> { previousPath, newPath }
+
+    const queue = state.superstars.slice();
+    while (queue.length) {
+        const batch = queue.splice(0, 4);
+        await Promise.all(batch.map(async (ss) => {
+            const previousPath = String(ss.photo || "").trim();
+            const newPath = await findFileForName(ss.name, SUPERSTAR_PHOTO_FOLDER);
+            if (newPath) {
+                passOneFound.set(ss.id, { previousPath, newPath });
+                claimedPaths.add(newPath);
+            } else {
+                unmatched.push({ id: ss.id, name: ss.name, previousPath });
+            }
+            completed += 1;
+            updateProgress();
+        }));
+    }
+
+    // Commit Pass 1 results
+    passOneFound.forEach((data, id) => {
+        const ss = state.superstars.find(s => s.id === id);
+        if (!ss) return;
+        results.found.push({ id, name: ss.name, ...data, fuzzy: false });
+    });
+
+    // === Pass 2: fuzzy matching for unmatched superstars ===
+    // Process longer names first — they're more specific and should claim their files
+    // before shorter names (which could otherwise greedily steal).
+    unmatched.sort((a, b) => b.name.length - a.name.length);
+    completed = 0;
+    const fuzzyTotal = unmatched.length;
+    const updateFuzzyProgress = () => {
+        const el = document.getElementById("bulkPhotoProgress");
+        if (el) el.textContent = `Fuzzy pass: ${completed} of ${fuzzyTotal}…`;
+    };
+    if (fuzzyTotal > 0) updateFuzzyProgress();
+
+    // Fuzzy pass runs sequentially (not parallel) so each superstar can see claims
+    // from the previous one. Longer names get first dibs.
+    for (const item of unmatched) {
+        const newPath = await findFileForNameFuzzy(item.name, SUPERSTAR_PHOTO_FOLDER, claimedPaths);
+        if (newPath) {
+            claimedPaths.add(newPath);
+            results.found.push({ id: item.id, name: item.name, previousPath: item.previousPath, newPath, fuzzy: true });
+        } else {
+            results.missing.push({ id: item.id, name: item.name, previousPath: item.previousPath });
+        }
+        completed += 1;
+        updateFuzzyProgress();
+    }
+
+    return results;
+}
+
+function renderBulkPhotosPanel() {
+    const body = $("#modalBody");
+    if (!body) return;
+    const state_ = settingsUiState.bulkPhotos;
+
+    body.innerHTML = `
+        <div class="stack">
+            <div class="muted tiny">
+                Scans your local <code>${SUPERSTAR_PHOTO_FOLDER}</code> folder and auto-assigns matching photos. The folder is treated as the source of truth — any superstar with a matching file gets that path. Unmatched superstars keep their existing photo URL (so external http URLs are preserved).
+            </div>
+
+            <div class="bulk-scan-card">
+                <div class="bulk-scan-head">
+                    <div>
+                        <div class="bulk-scan-title">Superstar Photos</div>
+                        <div class="muted tiny">Scans <code>${SUPERSTAR_PHOTO_FOLDER}</code> for ${state.superstars.length} superstars.</div>
+                    </div>
+                    <button class="btn" id="bulkScanSuperstars" ${state_.scanning ? "disabled" : ""}>
+                        ${state_.scanning ? "Scanning…" : "Scan Superstars"}
+                    </button>
+                </div>
+                ${state_.scanning ? `<div id="bulkPhotoProgress" class="muted tiny">Starting scan…</div>` : ""}
+                ${state_.results?.superstars ? renderSuperstarScanResults(state_.results.superstars) : ""}
+            </div>
+
+            <div class="muted tiny">
+                Tip: Filenames can be in any case (<code>cody-rhodes.png</code>, <code>Bayley.png</code>, <code>CMPunk.png</code>). The scanner tries many variations including kebab-case, underscores, title case, and mashed. A fuzzy pass also catches files with extra wrapper words like <code>lady-flammer.png</code>.
+            </div>
+        </div>
+    `;
+
+    $("#bulkScanSuperstars")?.addEventListener("click", async () => {
+        settingsUiState.bulkPhotos.scanning = true;
+        renderBulkPhotosPanel();
+        try {
+            const results = await scanSuperstarPhotos();
+            settingsUiState.bulkPhotos.results = settingsUiState.bulkPhotos.results || {};
+            settingsUiState.bulkPhotos.results.superstars = results;
+        } catch (e) {
+            showToast({ message: "Scan failed: " + (e?.message || "unknown error"), tone: "danger" });
+        }
+        settingsUiState.bulkPhotos.scanning = false;
+        renderBulkPhotosPanel();
+    });
+
+    $("#bulkApplySuperstars")?.addEventListener("click", () => {
+        const results = settingsUiState.bulkPhotos.results?.superstars;
+        if (!results) return;
+        const snapshot = snapshotState();
+        let changed = 0;
+        results.found.forEach(({ id, newPath }) => {
+            const ss = state.superstars.find(x => x.id === id);
+            if (!ss) return;
+            ss.photo = newPath;
+            changed += 1;
+        });
+        saveSoon();
+        renderAll();
+        offerUndo(`${changed} superstar photo${changed === 1 ? "" : "s"} updated.`, snapshot);
+        // Clear the result so the buttons hide
+        delete settingsUiState.bulkPhotos.results.superstars;
+        renderBulkPhotosPanel();
+    });
+}
+
+function renderSuperstarScanResults(results) {
+    const foundCount = results.found.length;
+    const missingCount = results.missing.length;
+    const strictFound = results.found.filter(r => !r.fuzzy);
+    const fuzzyFound = results.found.filter(r => r.fuzzy);
+    return `
+        <div class="bulk-scan-results">
+            <div class="bulk-scan-summary">
+                <span class="pill bulk-pill-found">${foundCount} found</span>
+                ${fuzzyFound.length > 0 ? `<span class="pill bulk-pill-fuzzy">${fuzzyFound.length} fuzzy</span>` : ""}
+                <span class="pill bulk-pill-missing">${missingCount} missing</span>
+            </div>
+            ${fuzzyFound.length > 0 ? `
+                <details class="bulk-scan-details" open>
+                    <summary>Fuzzy matches — please review (${fuzzyFound.length})</summary>
+                    <div class="muted tiny" style="margin:4px 0 6px;">These were matched by a partial-name search. Spot-check them before applying.</div>
+                    <ul class="bulk-scan-list">
+                        ${fuzzyFound.map(r => `
+                            <li class="bulk-scan-list-row">
+                                <span class="bulk-scan-name">${escapeHTML(r.name)}</span>
+                                <span class="bulk-scan-path muted tiny">${escapeHTML(r.newPath)}</span>
+                            </li>
+                        `).join("")}
+                    </ul>
+                </details>
+            ` : ""}
+            ${strictFound.length > 0 ? `
+                <details class="bulk-scan-details">
+                    <summary>Exact matches (${strictFound.length})</summary>
+                    <ul class="bulk-scan-list">
+                        ${strictFound.slice(0, 100).map(r => `
+                            <li class="bulk-scan-list-row">
+                                <span class="bulk-scan-name">${escapeHTML(r.name)}</span>
+                                <span class="bulk-scan-path muted tiny">${escapeHTML(r.newPath)}</span>
+                            </li>
+                        `).join("")}
+                        ${strictFound.length > 100 ? `<li class="muted tiny">… and ${strictFound.length - 100} more</li>` : ""}
+                    </ul>
+                </details>
+            ` : ""}
+            ${missingCount > 0 ? `
+                <details class="bulk-scan-details">
+                    <summary>Needs manual setup (${missingCount})</summary>
+                    <ul class="bulk-scan-list">
+                        ${results.missing.slice(0, 100).map(r => `
+                            <li class="bulk-scan-list-row">
+                                <span class="bulk-scan-name">${escapeHTML(r.name)}</span>
+                                <span class="bulk-scan-path muted tiny">${r.previousPath ? escapeHTML(r.previousPath) : "<em>no photo</em>"}</span>
+                            </li>
+                        `).join("")}
+                        ${results.missing.length > 100 ? `<li class="muted tiny">… and ${results.missing.length - 100} more</li>` : ""}
+                    </ul>
+                </details>
+            ` : ""}
+            <div class="row gap wrap">
+                ${foundCount > 0 ? `<button class="btn" id="bulkApplySuperstars">Apply ${foundCount} Photo${foundCount === 1 ? "" : "s"}</button>` : ""}
+            </div>
+        </div>
+    `;
+}
+
 
 function renderDataSettingsPanel() {
     const root = $("#modalBody");
@@ -6779,7 +7164,6 @@ function renderAll() {
     if (currentView === "dashboard") renderDashboard();
     if (currentView === "calendar") renderCalendar();
     if (currentView === "planner") renderPlanner();
-    if (currentView === "shows") renderShows();
     if (currentView === "roster") renderRoster();
     if (currentView === "settings") renderSettingsTools();
 }
@@ -6789,16 +7173,6 @@ function renderAll() {
 $$(".nav-btn").forEach(btn => btn.addEventListener("click", () => setView(btn.dataset.view)));
 // Mobile bottom nav
 $$(".bnav-btn").forEach(btn => btn.addEventListener("click", () => setView(btn.dataset.view)));
-
-$("#addShow").addEventListener("click", () => {
-    const name = $("#showName").value.trim();
-    const color = $("#showColor").value || "#d00000";
-    const result = addShowByNameColor(name, color);
-    if (!result.ok) return;
-    saveSoon();
-    $("#showName").value = "";
-    renderAll();
-});
 
 $("#openAddSSModal").addEventListener("click", () => {
     addSuperstarShowIds = new Set();

@@ -31,7 +31,6 @@
                 <button class="nav-btn active" data-view="dashboard">Dashboard</button>
                 <button class="nav-btn" data-view="calendar">Calendar</button>
                 <button class="nav-btn" data-view="planner">Planner</button>
-                <button class="nav-btn" data-view="shows">Shows</button>
                 <button class="nav-btn" data-view="roster">Roster</button>
                 <button class="nav-btn" data-view="settings">Settings</button>
             </nav>
@@ -123,6 +122,7 @@
                             <select id="plannerEventSelect" class="input"></select>
                             <div class="row gap wrap planner-toolbar-actions">
                                 <button id="addMatchRow" class="btn">Add Row</button>
+                                <button id="sharePosterBtn" class="btn secondary" title="Share match card or PLE poster">📸 Share</button>
                                 <span id="saveState" class="pill muted">Saved</span>
                             </div>
                         </div>
@@ -151,23 +151,6 @@
                         </thead>
                         <tbody id="matchesBody"></tbody>
                     </table>
-                </div>
-            </section>
-
-            <!-- SHOWS -->
-            <section id="view-shows" class="view hidden">
-                <div class="card">
-                    <div class="card-title">Add Show</div>
-                    <div class="card-body row gap wrap">
-                        <input id="showName" class="input grow" placeholder="Show name (RAW, SmackDown, NXT…)" />
-                        <input id="showColor" class="input" type="color" value="#d00000" title="Color" />
-                        <button id="addShow" class="btn">Add</button>
-                    </div>
-                </div>
-
-                <div class="card">
-                    <div class="card-title">Shows</div>
-                    <div id="showsList" class="card-body"></div>
                 </div>
             </section>
 
@@ -226,7 +209,7 @@
                 </div>
             </div>
 
-            <footer class="footer muted">HTML/CSS/JS • LocalStorage • v4.8.2</footer>
+            <footer class="footer muted">HTML/CSS/JS • LocalStorage • v4.9.0</footer>
 
             <!-- Bottom nav (mobile) -->
             <nav class="bottom-nav" aria-label="Bottom navigation">
