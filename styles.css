@@ -3555,9 +3555,3 @@ textarea.cell-input {
     font-size: 11px;
 }
 
-.bulk-pill-fuzzy {
-    background: rgba(155, 155, 255, .14);
-    border-color: rgba(155, 155, 255, .35);
-    color: #b9b9ff;
-    font-weight: 800;
-}

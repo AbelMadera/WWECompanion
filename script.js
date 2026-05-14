@@ -6182,72 +6182,39 @@ function stripDiacritics(s) {
 
 // Generate a comprehensive set of candidate filename stems for a name.
 // Returns an ordered list (most-specific first).
+// Generate filename candidates following the convention:
+//   - Single-word name → "Name.png" (try a few case variants)
+//   - Multi-word name  → "First-Last.png" (kebab, try a few case variants)
+//
+// We only try case variants — the structure itself is locked. If your file
+// doesn't match the convention, rename the file.
 function generateFilenameCandidates(name) {
     const cleaned = stripDiacritics(String(name || "")).trim();
     if (!cleaned) return [];
-    // Words after splitting on whitespace and stripping punctuation
-    const words = cleaned.split(/\s+/).map(w => w.replace(/['.,!?]/g, "")).filter(Boolean);
+    const words = cleaned.split(/\s+/).map(w => w.replace(/['.,!?"]/g, "")).filter(Boolean);
     if (!words.length) return [];
 
     const out = [];
     const add = (s) => { if (s && !out.includes(s)) out.push(s); };
 
-    const fullLower = words.join(" ").toLowerCase();
-    const fullKebab = words.join("-").toLowerCase();
-    const fullUnderscore = words.join("_").toLowerCase();
-    const fullMashed = words.join("").toLowerCase();
-    const fullTitle = words.map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join("-");
-    const fullTitleUnderscore = words.map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join("_");
-    const fullTitleMashed = words.map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join("");
-    const fullUpper = words.join("-").toUpperCase();
-    const fullAsIs = words.join("-"); // preserves user's case from name
-
-    // Strict kebab (most common in your folder)
-    add(fullKebab);
-    // Original-case kebab (matches "Bron-Breakker")
-    add(fullAsIs);
-    // Title case kebab (matches "Bron-Breakker", "Charlie-Dempsey")
-    add(fullTitle);
-    // Single-word name with various cases (matches "Bayley.png", "Asuka.png")
     if (words.length === 1) {
-        add(words[0].toLowerCase());
-        add(words[0].charAt(0).toUpperCase() + words[0].slice(1).toLowerCase());
-        add(words[0].toUpperCase());
+        const w = words[0];
+        // "Name.png" — lowercase, Title-case, UPPERCASE, original-case
+        add(w.toLowerCase());
+        add(w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
+        add(w.toUpperCase());
+        add(w); // original
+    } else {
+        // "First-Last.png" — join all words with hyphens, try a few case variants
+        const lower = words.map(w => w.toLowerCase()).join("-");
+        const title = words.map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join("-");
+        const upper = words.map(w => w.toUpperCase()).join("-");
+        const original = words.join("-"); // preserves original case
+        add(lower);
+        add(title);
+        add(upper);
+        add(original);
     }
-    // Underscore variants (matches "Apollo_Crews")
-    add(fullUnderscore);
-    add(fullTitleUnderscore);
-    // No-separator mashed (matches "CMPunk")
-    add(fullMashed);
-    add(fullTitleMashed);
-    // All caps (matches "CHAD-GABLE", "CHELSEA")
-    add(fullUpper);
-    if (words.length === 1) add(words[0].toUpperCase());
-
-    // "Each word capitalized + mashed" — matches "CMPunk" if name is "CM Punk"
-    // (preserves original case of each word, then mashes)
-    const wordsPreserved = words.map(w => {
-        // If word is all caps already (2+ letters), keep it; else title-case
-        if (w.length >= 2 && w === w.toUpperCase()) return w;
-        return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
-    });
-    add(wordsPreserved.join(""));
-    add(wordsPreserved.join("-"));
-    add(wordsPreserved.join("_"));
-
-    // First-name-only fallback (matches "Charlotte.png" for "Charlotte Flair")
-    if (words.length > 1) {
-        add(words[0].toLowerCase());
-        add(words[0].charAt(0).toUpperCase() + words[0].slice(1).toLowerCase());
-    }
-
-    // Last-name-only fallback
-    if (words.length > 1) {
-        const last = words[words.length - 1];
-        add(last.toLowerCase());
-        add(last.charAt(0).toUpperCase() + last.slice(1).toLowerCase());
-    }
-
     return out;
 }
 
@@ -6273,124 +6240,21 @@ async function findFileForName(name, folder) {
     return "";
 }
 
-// Fuzzy candidate generator — generates whole-word subsequences and prefix/suffix
-// wrappers. Used in Pass 2 of the scan for superstars whose exact name didn't match.
-// Designed to find files like "lady-flammer.png" for "Flammer" or "hijo-del-vikingo.png"
-// for "El Hijo del Vikingo" — but NEVER cross word boundaries (so "Bron" can't grab
-// "bronson-reed.png" because "bron" is part of "bronson", not a whole word).
-const FUZZY_PREFIX_WRAPPERS = ["lady", "the", "big", "little", "mr", "mrs", "ms", "el", "la", "dr"];
-const FUZZY_SUFFIX_WRAPPERS = ["jr", "sr", "ii", "iii"];
-
-function generateFuzzyCandidates(name) {
-    const cleaned = stripDiacritics(String(name || "")).trim();
-    if (!cleaned) return [];
-    const words = cleaned.split(/\s+/).map(w => w.replace(/['.,!?"]/g, "")).filter(Boolean);
-    if (!words.length) return [];
-
-    // Build every contiguous subsequence of words (length ≥ 1), but skip the full sequence
-    // (already covered by the strict pass).
-    const subsequences = [];
-    for (let len = words.length - 1; len >= 1; len--) {
-        for (let start = 0; start + len <= words.length; start++) {
-            subsequences.push(words.slice(start, start + len));
-        }
-    }
-    // For single-word names, also include the word itself wrapped by prefixes/suffixes.
-    if (words.length === 1) {
-        subsequences.push(words.slice()); // the single word itself
-    }
-
-    const out = [];
-    const add = (s) => { if (s && !out.includes(s)) out.push(s); };
-
-    // First pass: emit all bare subsequence forms (no wrappers).
-    // This ensures `hijo-del-vikingo` is tried before any wrapped variant of any subsequence.
-    const baseFormsForSeq = (seq) => {
-        const lower = seq.map(w => w.toLowerCase());
-        const title = seq.map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
-        const upper = seq.map(w => w.toUpperCase());
-        const preserved = seq.map(w => {
-            if (w.length >= 2 && w === w.toUpperCase()) return w;
-            return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
-        });
-        return [
-            lower.join("-"),
-            lower.join("_"),
-            lower.join(""),
-            title.join("-"),
-            title.join("_"),
-            title.join(""),
-            upper.join("-"),
-            preserved.join("-"),
-            preserved.join("_"),
-            preserved.join(""),
-            seq.join("-"), // preserve original case
-        ];
-    };
-
-    // Pass 1: bare forms for each subsequence
-    for (const seq of subsequences) {
-        for (const form of baseFormsForSeq(seq)) add(form);
-    }
-
-    // Pass 2: prefix/suffix wrappers for each subsequence
-    for (const seq of subsequences) {
-        const baseForms = baseFormsForSeq(seq);
-        for (const base of baseForms) {
-            if (!base) continue;
-            for (const pre of FUZZY_PREFIX_WRAPPERS) {
-                add(`${pre}-${base}`);
-                add(`${pre}_${base}`);
-                add(`${pre.charAt(0).toUpperCase() + pre.slice(1)}-${base}`);
-            }
-            for (const suf of FUZZY_SUFFIX_WRAPPERS) {
-                add(`${base}-${suf}`);
-                add(`${base}_${suf}`);
-            }
-        }
-    }
-
-    return out;
-}
-
-async function findFileForNameFuzzy(name, folder, claimedPaths) {
-    // Cap candidates to keep scan times reasonable — 4-word names can otherwise
-    // produce thousands of variants. The most-likely candidates come first
-    // (longer subsequences before shorter), so capping at 80 still catches the
-    // common cases (lady-flammer, hijo-del-vikingo, etc.) without blowing up.
-    const candidates = generateFuzzyCandidates(name).slice(0, 80);
-    for (const stem of candidates) {
-        for (const ext of SCAN_EXTENSIONS) {
-            const url = `${folder}${stem}.${ext}`;
-            if (claimedPaths.has(url)) continue; // another superstar already claimed this file
-            const found = await probeFile(url);
-            if (found) return found;
-        }
-    }
-    return "";
-}
-
 async function scanSuperstarPhotos() {
     const results = {
-        found: [],   // { id, name, previousPath, newPath, fuzzy }
+        found: [],   // { id, name, previousPath, newPath }
         missing: [], // { id, name, previousPath }
     };
     const total = state.superstars.length;
     let completed = 0;
 
-    // Helper to update progress UI
-    const updateProgress = (label = "") => {
+    const updateProgress = () => {
         const el = document.getElementById("bulkPhotoProgress");
-        if (el) el.textContent = `${label}Scanning ${completed} of ${total}…`;
+        if (el) el.textContent = `Scanning ${completed} of ${total}…`;
     };
     updateProgress();
 
-    // === Pass 1: strict matching ===
-    // Each superstar tries only exact-name candidates. Locks the file in if found.
-    const claimedPaths = new Set();
-    const unmatched = [];
-    const passOneFound = new Map(); // id -> { previousPath, newPath }
-
+    // Run in batches of 4 in parallel to avoid hammering the server
     const queue = state.superstars.slice();
     while (queue.length) {
         const batch = queue.splice(0, 4);
@@ -6398,49 +6262,14 @@ async function scanSuperstarPhotos() {
             const previousPath = String(ss.photo || "").trim();
             const newPath = await findFileForName(ss.name, SUPERSTAR_PHOTO_FOLDER);
             if (newPath) {
-                passOneFound.set(ss.id, { previousPath, newPath });
-                claimedPaths.add(newPath);
+                results.found.push({ id: ss.id, name: ss.name, previousPath, newPath });
             } else {
-                unmatched.push({ id: ss.id, name: ss.name, previousPath });
+                results.missing.push({ id: ss.id, name: ss.name, previousPath });
             }
             completed += 1;
             updateProgress();
         }));
     }
-
-    // Commit Pass 1 results
-    passOneFound.forEach((data, id) => {
-        const ss = state.superstars.find(s => s.id === id);
-        if (!ss) return;
-        results.found.push({ id, name: ss.name, ...data, fuzzy: false });
-    });
-
-    // === Pass 2: fuzzy matching for unmatched superstars ===
-    // Process longer names first — they're more specific and should claim their files
-    // before shorter names (which could otherwise greedily steal).
-    unmatched.sort((a, b) => b.name.length - a.name.length);
-    completed = 0;
-    const fuzzyTotal = unmatched.length;
-    const updateFuzzyProgress = () => {
-        const el = document.getElementById("bulkPhotoProgress");
-        if (el) el.textContent = `Fuzzy pass: ${completed} of ${fuzzyTotal}…`;
-    };
-    if (fuzzyTotal > 0) updateFuzzyProgress();
-
-    // Fuzzy pass runs sequentially (not parallel) so each superstar can see claims
-    // from the previous one. Longer names get first dibs.
-    for (const item of unmatched) {
-        const newPath = await findFileForNameFuzzy(item.name, SUPERSTAR_PHOTO_FOLDER, claimedPaths);
-        if (newPath) {
-            claimedPaths.add(newPath);
-            results.found.push({ id: item.id, name: item.name, previousPath: item.previousPath, newPath, fuzzy: true });
-        } else {
-            results.missing.push({ id: item.id, name: item.name, previousPath: item.previousPath });
-        }
-        completed += 1;
-        updateFuzzyProgress();
-    }
-
     return results;
 }
 
@@ -6470,7 +6299,7 @@ function renderBulkPhotosPanel() {
             </div>
 
             <div class="muted tiny">
-                Tip: Filenames can be in any case (<code>cody-rhodes.png</code>, <code>Bayley.png</code>, <code>CMPunk.png</code>). The scanner tries many variations including kebab-case, underscores, title case, and mashed. A fuzzy pass also catches files with extra wrapper words like <code>lady-flammer.png</code>.
+                Tip: Filenames must match one of these formats — <code>firstName-lastName.png</code> for multi-word names (e.g. <code>cody-rhodes.png</code>) or <code>Name.png</code> for single-word names (e.g. <code>Bayley.png</code>). Case-insensitive. Files that don't match the convention need to be renamed.
             </div>
         </div>
     `;
@@ -6512,45 +6341,28 @@ function renderBulkPhotosPanel() {
 function renderSuperstarScanResults(results) {
     const foundCount = results.found.length;
     const missingCount = results.missing.length;
-    const strictFound = results.found.filter(r => !r.fuzzy);
-    const fuzzyFound = results.found.filter(r => r.fuzzy);
     return `
         <div class="bulk-scan-results">
             <div class="bulk-scan-summary">
                 <span class="pill bulk-pill-found">${foundCount} found</span>
-                ${fuzzyFound.length > 0 ? `<span class="pill bulk-pill-fuzzy">${fuzzyFound.length} fuzzy</span>` : ""}
                 <span class="pill bulk-pill-missing">${missingCount} missing</span>
             </div>
-            ${fuzzyFound.length > 0 ? `
-                <details class="bulk-scan-details" open>
-                    <summary>Fuzzy matches — please review (${fuzzyFound.length})</summary>
-                    <div class="muted tiny" style="margin:4px 0 6px;">These were matched by a partial-name search. Spot-check them before applying.</div>
-                    <ul class="bulk-scan-list">
-                        ${fuzzyFound.map(r => `
-                            <li class="bulk-scan-list-row">
-                                <span class="bulk-scan-name">${escapeHTML(r.name)}</span>
-                                <span class="bulk-scan-path muted tiny">${escapeHTML(r.newPath)}</span>
-                            </li>
-                        `).join("")}
-                    </ul>
-                </details>
-            ` : ""}
-            ${strictFound.length > 0 ? `
+            ${foundCount > 0 ? `
                 <details class="bulk-scan-details">
-                    <summary>Exact matches (${strictFound.length})</summary>
+                    <summary>Show found (${foundCount})</summary>
                     <ul class="bulk-scan-list">
-                        ${strictFound.slice(0, 100).map(r => `
+                        ${results.found.slice(0, 100).map(r => `
                             <li class="bulk-scan-list-row">
                                 <span class="bulk-scan-name">${escapeHTML(r.name)}</span>
                                 <span class="bulk-scan-path muted tiny">${escapeHTML(r.newPath)}</span>
                             </li>
                         `).join("")}
-                        ${strictFound.length > 100 ? `<li class="muted tiny">… and ${strictFound.length - 100} more</li>` : ""}
+                        ${results.found.length > 100 ? `<li class="muted tiny">… and ${results.found.length - 100} more</li>` : ""}
                     </ul>
                 </details>
             ` : ""}
             ${missingCount > 0 ? `
-                <details class="bulk-scan-details">
+                <details class="bulk-scan-details" open>
                     <summary>Needs manual setup (${missingCount})</summary>
                     <ul class="bulk-scan-list">
                         ${results.missing.slice(0, 100).map(r => `
