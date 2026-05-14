@@ -3555,3 +3555,56 @@ textarea.cell-input {
     font-size: 11px;
 }
 
+
+/* =========================================================
+   v5.4 — Mobile polish: prevent iOS focus-zoom, blend status bar
+   ========================================================= */
+
+/* iOS zooms in when focused text input has font-size < 16px.
+   Force 16px on text inputs/textareas/selects to prevent this entirely.
+   (Excluding buttons — they have their own deliberate sizes.) */
+input[type="text"],
+input[type="email"],
+input[type="password"],
+input[type="number"],
+input[type="tel"],
+input[type="url"],
+input[type="search"],
+input[type="date"],
+input[type="time"],
+input[type="datetime-local"],
+input[type="month"],
+input[type="week"],
+input:not([type]),
+select,
+textarea,
+.cell-input,
+.cell-input.small {
+    font-size: 16px;
+}
+
+/* Prevent accidental text-selection-zoom on long-press for buttons/labels */
+button,
+.btn,
+.pill,
+.badge,
+.nav-btn,
+.bottom-nav-btn,
+.settings-launch {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+/* Disable pinch-zoom gestures on iOS Safari (works alongside viewport meta) */
+html {
+    touch-action: pan-x pan-y;
+}
+
+/* Extend the app background up under the iOS status bar.
+   Combined with theme-color and apple-mobile-web-app-status-bar-style: black-translucent,
+   the status bar blends with the app instead of showing as a black band. */
+html,
+body {
+    background-color: var(--bg);
+}
