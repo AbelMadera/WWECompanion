@@ -272,6 +272,41 @@ function normalizeStateData(sourceState) {
             .filter(Boolean)
         : [];
 
+    // === Title reign records (stored, set in stone, manually editable) ===
+    // Each reign is an immutable snapshot of a championship being held:
+    //   { id, championshipId, holderIds[], holderNames[], startDate, endDate (null = current), eventId?, isInitial }
+    // Migration: if no titleReigns array exists in saved state, we'll seed it
+    // from match history on first save (see seedTitleReignsFromHistory below).
+    normalized.titleReigns = Array.isArray(normalized.titleReigns)
+        ? normalized.titleReigns
+            .map(r => {
+                const championshipId = String(r?.championshipId || "").trim();
+                if (!championshipId) return null;
+                const holderIds = Array.isArray(r?.holderIds)
+                    ? r.holderIds.map(String).filter(Boolean)
+                    : (r?.holderId ? [String(r.holderId)] : []);
+                if (!holderIds.length) return null;
+                // Holder names are snapshot at time of reign — preserve even if wrestler is deleted later.
+                const holderNames = Array.isArray(r?.holderNames) && r.holderNames.length
+                    ? r.holderNames.map(String)
+                    : holderIds.map(id => {
+                        const ss = normalized.superstars.find(s => s.id === id);
+                        return ss?.name || "(unknown)";
+                    });
+                return {
+                    id: String(r?.id || uid("rgn")),
+                    championshipId,
+                    holderIds,
+                    holderNames,
+                    startDate: isISODate(r?.startDate) ? r.startDate : (normalized.universeStartDate || todayISO()),
+                    endDate: isISODate(r?.endDate) ? r.endDate : null,
+                    eventId: String(r?.eventId || "") || null,
+                    isInitial: !!r?.isInitial,
+                };
+            })
+            .filter(Boolean)
+        : [];
+
     normalized.weeklySchedule = Array.isArray(normalized.weeklySchedule)
         ? normalized.weeklySchedule
             .map(row => ({
@@ -376,6 +411,24 @@ const store = {
 
 let state = store.load();
 state = normalizeStateData(state);
+
+// One-time migration: if we have a started universe but no stored reigns,
+// derive them from history once and save them as set-in-stone records.
+(function migrateTitleReignsOnce() {
+    if (!Array.isArray(state.titleReigns)) state.titleReigns = [];
+    if (state.titleReigns.length > 0) return; // already migrated
+    const hasHistory = (state.completedDates || []).length > 0 || (state.events || []).some(e => Array.isArray(e?.matches) && e.matches.length);
+    const hasChampionships = (state.championships || []).length > 0;
+    if (!hasHistory || !hasChampionships) return;
+    try {
+        state.titleReigns = seedTitleReignsFromHistory();
+        state.updatedAt = Date.now();
+    } catch (e) {
+        console.error("Title reign migration failed:", e);
+        state.titleReigns = [];
+    }
+})();
+
 let addSuperstarShowIds = new Set();
 
 // Debounced saving (smooth typing)
@@ -447,6 +500,28 @@ function setUniverseDateCompleted(iso, done) {
     if (done) set.add(iso);
     else set.delete(iso);
     state.completedDates = Array.from(set).sort();
+}
+
+// When a day is marked done, walk all championship matches on that date and
+// record reign changes into state.titleReigns. This is the only "live" path
+// that creates reigns — once a reign exists, it stays until manually edited.
+//
+// Unmarking a day does NOT roll back its reigns automatically. That preserves
+// the "set in stone" guarantee. To roll back, the user must edit/delete the
+// reign manually in the championship editor.
+function applyReignChangesForDate(iso) {
+    if (!isISODate(iso)) return 0;
+    let recorded = 0;
+    const evs = state.events
+        .filter(e => e.date === iso && Array.isArray(e.matches))
+        .sort((a, b) => String(a.id).localeCompare(String(b.id))); // stable order
+    for (const ev of evs) {
+        // Process matches in their planner order (top to bottom)
+        for (const match of ev.matches) {
+            if (maybeRecordReignChangeFromMatch(match, ev)) recorded += 1;
+        }
+    }
+    return recorded;
 }
 function getUniverseCurrentISO() {
     const startISO = getUniverseStartISO();
@@ -1350,18 +1425,48 @@ function computeWeeklyRankings(topN = 3) {
 // Walk every match across already-completed events in chronological order.
 // Whenever a championship match has a winner different from the current
 // holder of that title, log a title change.
+// === Title reign storage (set in stone) ===
+// state.titleReigns is the source of truth for who held what and when. Reigns are
+// created when a championship match completes with a winner that differs from the
+// current holder(s), or manually via the championship editor. They are NEVER
+// silently recomputed from match history — once stored, they stay until manually
+// edited or deleted.
+
 let _titleReignsCache = null;
 let _titleReignsCacheKey = "";
 function titleReignsCacheKey() {
-    return `${state.updatedAt || 0}:${state.events.length}:${state.championships.length}:${state.superstars.length}:${(state.completedDates || []).length}`;
+    return `${state.updatedAt || 0}:${(state.titleReigns || []).length}`;
 }
 function computeTitleReigns() {
     const key = titleReignsCacheKey();
     if (_titleReignsCache && _titleReignsCacheKey === key) return _titleReignsCache;
-    // Map championshipId -> array of reigns: { championshipId, holderId, holderName, startDate, endDate?, lostTo?, lostEventId?, eventId }
     const reignsByChampionship = new Map();
     state.championships.forEach(c => reignsByChampionship.set(c.id, []));
+    const reigns = Array.isArray(state.titleReigns) ? state.titleReigns : [];
+    // Sort by startDate ascending so reign 1 = first chronologically, last = most recent.
+    const sorted = reigns.slice().sort((a, b) => {
+        const cmp = String(a.startDate).localeCompare(String(b.startDate));
+        if (cmp !== 0) return cmp;
+        // Same date: initial reigns first, then by id stability
+        if (a.isInitial && !b.isInitial) return -1;
+        if (!a.isInitial && b.isInitial) return 1;
+        return String(a.id).localeCompare(String(b.id));
+    });
+    for (const r of sorted) {
+        const bucket = reignsByChampionship.get(r.championshipId);
+        if (bucket) bucket.push(r);
+    }
+    _titleReignsCache = reignsByChampionship;
+    _titleReignsCacheKey = key;
+    return reignsByChampionship;
+}
 
+// === Seeding migration ===
+// Runs once when the app loads with an empty state.titleReigns but pre-existing
+// universe history. Walks every completed match and produces reign records that
+// match the old derivation logic. After this, state.titleReigns is the truth.
+function seedTitleReignsFromHistory() {
+    const out = [];
     const universeCurrentISO = getUniverseCurrentISO();
     const processedEvents = state.events
         .filter(e => isISODate(e?.date))
@@ -1369,8 +1474,7 @@ function computeTitleReigns() {
         .slice()
         .sort((a, b) => a.date.localeCompare(b.date));
 
-    // Initialise from current holders if we have nothing recorded — gives an "in progress" reign starting at universe start.
-    const startingHolders = new Map(); // championshipId -> holderId(s) before any match
+    const startingHolders = new Map();
     state.championships.forEach(c => {
         const holders = state.superstars.filter(ss => parseChampionships(ss.championships).includes(c.id));
         if (holders.length) startingHolders.set(c.id, holders.map(h => h.id));
@@ -1379,29 +1483,25 @@ function computeTitleReigns() {
     const superstarNameToId = new Map(state.superstars.map(ss => [normalizeNameForCompare(ss.name), ss.id]));
     const superstarNameById = new Map(state.superstars.map(ss => [ss.id, ss.name]));
 
-    // currentHolders: championshipId -> [holderId,...] (singles = 1, tag = 2+)
     const currentHolders = new Map();
-    // We'll populate by replaying. For singles titles, only one holder at a time.
-    // For tag titles, multiple holders. We treat "winners" of a tag title match as the new holders.
-
+    const openReignByChamp = new Map(); // championshipId -> last open reign object
     const startISO = getUniverseStartISO();
-    // Seed: pretend each starting holder won the title on universe start.
     state.championships.forEach(c => {
         const initial = startingHolders.get(c.id) || [];
         if (initial.length) {
             currentHolders.set(c.id, initial.slice());
-            const reigns = reignsByChampionship.get(c.id);
-            reigns.push({
+            const reign = {
+                id: uid("rgn"),
                 championshipId: c.id,
                 holderIds: initial.slice(),
                 holderNames: initial.map(id => superstarNameById.get(id)).filter(Boolean),
                 startDate: startISO,
                 endDate: null,
-                lostToIds: null,
-                lostEventId: null,
                 eventId: null,
                 isInitial: true,
-            });
+            };
+            out.push(reign);
+            openReignByChamp.set(c.id, reign);
         }
     });
 
@@ -1415,14 +1515,13 @@ function computeTitleReigns() {
             const resultValue = String(match?.result || "").trim();
             if (!resultValue) continue;
             if (isPromoResult(resultValue)) continue;
-            if (isDQResult(resultValue)) continue; // Most title matches must be won via pin/sub — DQ keeps title
+            if (isDQResult(resultValue)) continue;
             if (isDrawRecordResult(resultValue)) continue;
             if (normalizeNameForCompare(resultValue) === "no result") continue;
 
             const participantIds = resolveMatchParticipantIds(match, superstarNameToId);
             if (!participantIds.length) continue;
 
-            // Determine winner ids (could be team for tag matches)
             let newHolderIds = [];
             if (isTeamResultValue(resultValue)) {
                 const teams = inferMatchTeams(match?.matchType, participantIds, normalizedParticipantTeams(match));
@@ -1439,38 +1538,106 @@ function computeTitleReigns() {
             const prevSet = new Set(prevHolders);
             const newSet = new Set(newHolderIds);
             const sameHolders = prevSet.size === newSet.size && [...prevSet].every(x => newSet.has(x));
-            if (sameHolders) continue; // Successful defence — no title change
+            if (sameHolders) continue;
 
-            // Title change!
-            const reigns = reignsByChampionship.get(championshipId);
-            // Close out the previous reign
-            if (reigns.length) {
-                const last = reigns[reigns.length - 1];
-                if (!last.endDate) {
-                    last.endDate = ev.date;
-                    last.lostToIds = newHolderIds.slice();
-                    last.lostEventId = ev.id;
-                }
+            // Close out previous open reign
+            const prev = openReignByChamp.get(championshipId);
+            if (prev && !prev.endDate) {
+                prev.endDate = ev.date;
             }
             // Open new reign
-            reigns.push({
+            const reign = {
+                id: uid("rgn"),
                 championshipId,
                 holderIds: newHolderIds.slice(),
                 holderNames: newHolderIds.map(id => superstarNameById.get(id)).filter(Boolean),
                 startDate: ev.date,
                 endDate: null,
-                lostToIds: null,
-                lostEventId: null,
                 eventId: ev.id,
                 isInitial: false,
-            });
+            };
+            out.push(reign);
+            openReignByChamp.set(championshipId, reign);
             currentHolders.set(championshipId, newHolderIds.slice());
         }
     }
+    return out;
+}
 
-    _titleReignsCache = reignsByChampionship;
-    _titleReignsCacheKey = key;
-    return reignsByChampionship;
+// === Live reign maintenance ===
+// Call this whenever a championship match's result changes. It compares the match's
+// outcome to the latest known reign for that championship and either:
+//   - Opens a new reign + closes the previous one (title change), or
+//   - Does nothing (successful defence / no result / etc.)
+// IMPORTANT: This is called from completion paths. It does NOT retroactively walk
+// history — that's seedTitleReignsFromHistory's job (one-time only).
+function maybeRecordReignChangeFromMatch(match, event) {
+    if (!match || !event) return false;
+    const championshipId = String(match?.championshipId || "").trim();
+    if (!championshipId) return false;
+    const championship = state.championships.find(c => c.id === championshipId);
+    if (!championship) return false;
+    const resultValue = String(match?.result || "").trim();
+    if (!resultValue) return false;
+    if (isPromoResult(resultValue)) return false;
+    if (isDQResult(resultValue)) return false;
+    if (isDrawRecordResult(resultValue)) return false;
+    if (normalizeNameForCompare(resultValue) === "no result") return false;
+
+    const superstarNameToId = new Map(state.superstars.map(ss => [normalizeNameForCompare(ss.name), ss.id]));
+    const superstarNameById = new Map(state.superstars.map(ss => [ss.id, ss.name]));
+    const participantIds = resolveMatchParticipantIds(match, superstarNameToId);
+    if (!participantIds.length) return false;
+
+    let newHolderIds = [];
+    if (isTeamResultValue(resultValue)) {
+        const teams = inferMatchTeams(match?.matchType, participantIds, normalizedParticipantTeams(match));
+        const winningTeamKey = parseTeamResultValue(resultValue);
+        const winningTeam = teams.find(g => g.key === winningTeamKey);
+        if (winningTeam) newHolderIds = winningTeam.participants.slice();
+    } else {
+        const winId = resolveMatchWinnerId(match, participantIds, superstarNameById);
+        if (winId) newHolderIds = [winId];
+    }
+    if (!newHolderIds.length) return false;
+
+    // Latest reign for this championship
+    const allReigns = (state.titleReigns || []).filter(r => r.championshipId === championshipId);
+    const latestOpen = allReigns.filter(r => !r.endDate).sort((a, b) => String(b.startDate).localeCompare(String(a.startDate)))[0];
+    const prevHolders = latestOpen ? latestOpen.holderIds : [];
+    const prevSet = new Set(prevHolders);
+    const newSet = new Set(newHolderIds);
+    const sameHolders = prevSet.size === newSet.size && [...prevSet].every(x => newSet.has(x));
+    if (sameHolders) return false;
+
+    // Close out previous open reign on this date
+    if (latestOpen) {
+        latestOpen.endDate = event.date;
+    }
+    // Add new reign
+    state.titleReigns.push({
+        id: uid("rgn"),
+        championshipId,
+        holderIds: newHolderIds.slice(),
+        holderNames: newHolderIds.map(id => superstarNameById.get(id) || "(unknown)"),
+        startDate: event.date,
+        endDate: null,
+        eventId: event.id,
+        isInitial: false,
+    });
+    // Update superstars' championships field to reflect new holder
+    state.superstars.forEach(ss => {
+        const has = parseChampionships(ss.championships).includes(championshipId);
+        const shouldHave = newHolderIds.includes(ss.id);
+        if (has && !shouldHave) {
+            ss.championships = parseChampionships(ss.championships).filter(cid => cid !== championshipId);
+            ss.isChampion = (ss.championships || []).length > 0;
+        } else if (!has && shouldHave) {
+            ss.championships = [...new Set([...parseChampionships(ss.championships), championshipId])];
+            ss.isChampion = true;
+        }
+    });
+    return true;
 }
 function reignsForChampionship(championshipId) {
     return computeTitleReigns().get(championshipId) || [];
@@ -2452,6 +2619,7 @@ function renderUniverseDayHero() {
     $("#universeDayProgress")?.addEventListener("click", () => {
         const before = universeISO;
         setUniverseDateCompleted(before, true);
+        applyReignChangesForDate(before);
         const next = parseISO(before);
         next.setDate(next.getDate() + 1);
         calSelectedISO = toISODateLocal(next);
@@ -2598,17 +2766,22 @@ async function openChampionshipDetailsModal(championshipId) {
     const reignRowsHTML = reigns.length
         ? reigns.map(reign => {
             const days = reignDayLength(reign);
-            const holderNames = reign.holderIds
-                .map(id => state.superstars.find(s => s.id === id)?.name)
-                .filter(Boolean)
-                .join(" & ");
+            // Use stored holderNames so reigns survive wrestler deletion / show changes
+            const storedNames = (reign.holderNames && reign.holderNames.length)
+                ? reign.holderNames
+                : reign.holderIds.map(id => state.superstars.find(s => s.id === id)?.name).filter(Boolean);
+            const holderNames = storedNames.join(" & ") || "Vacant";
             const dateRange = reign.endDate
                 ? `${reign.startDate} → ${reign.endDate}`
                 : `${reign.startDate} → present`;
             return `
                 <div class="reign-history-row ${reign.endDate ? "" : "is-active"}">
-                    <div class="reign-history-name">${escapeHTML(holderNames || "Vacant")}${reign.isInitial ? ` <span class="muted tiny">(at universe start)</span>` : ""}</div>
+                    <div class="reign-history-name">${escapeHTML(holderNames)}${reign.isInitial ? ` <span class="muted tiny">(at universe start)</span>` : ""}</div>
                     <div class="reign-history-meta muted tiny">${escapeHTML(dateRange)} • ${days} days</div>
+                    <div class="reign-history-actions">
+                        <button type="button" class="btn secondary tiny" data-edit-reign="${escapeAttr(reign.id)}">Edit</button>
+                        <button type="button" class="btn danger tiny" data-delete-reign="${escapeAttr(reign.id)}">Delete</button>
+                    </div>
                 </div>
             `;
         }).join("")
@@ -2624,7 +2797,7 @@ async function openChampionshipDetailsModal(championshipId) {
             ${activeReign ? `
                 <div class="card" style="padding:10px;">
                     <div class="muted tiny">Current holder</div>
-                    <div class="item-title">${escapeHTML(activeReign.holderIds.map(id => state.superstars.find(s => s.id === id)?.name).filter(Boolean).join(" & ") || "Vacant")}</div>
+                    <div class="item-title">${escapeHTML(((activeReign.holderNames && activeReign.holderNames.length) ? activeReign.holderNames : activeReign.holderIds.map(id => state.superstars.find(s => s.id === id)?.name).filter(Boolean)).join(" & ") || "Vacant")}</div>
                     <div class="muted tiny">Reign: ${reignDayLength(activeReign)} days (since ${activeReign.startDate})</div>
                 </div>
             ` : `<div class="muted tiny">Title is currently vacant or has no recorded holder.</div>`}
@@ -2641,8 +2814,147 @@ async function openChampionshipDetailsModal(championshipId) {
     // Single-button close: hide Cancel
     const cancelBtn = $("#modalCancel");
     if (cancelBtn) cancelBtn.classList.add("hidden");
+
+    // Wire up reign edit/delete buttons
+    const body = $("#modalBody");
+    if (body) {
+        $$("[data-edit-reign]", body).forEach(btn => {
+            btn.addEventListener("click", async () => {
+                const reignId = btn.dataset.editReign;
+                if (await openEditReignModal(reignId)) {
+                    // Re-open the championship details to show the updated list
+                    closeModal({ ok: false });
+                    setTimeout(() => openChampionshipDetailsModal(championshipId), 0);
+                }
+            });
+        });
+        $$("[data-delete-reign]", body).forEach(btn => {
+            btn.addEventListener("click", () => {
+                const reignId = btn.dataset.deleteReign;
+                const reign = state.titleReigns.find(r => r.id === reignId);
+                if (!reign) return;
+                const names = (reign.holderNames || []).join(" & ") || "Vacant";
+                if (!confirm(`Delete this reign?\n\n${names} (${reign.startDate} → ${reign.endDate || "present"})\n\nThis cannot be undone via this dialog — use the undo toast immediately if needed.`)) return;
+                const snapshot = snapshotState();
+                state.titleReigns = state.titleReigns.filter(r => r.id !== reignId);
+                // If we just deleted an active reign, also strip the championship from the holder
+                if (!reign.endDate) {
+                    reign.holderIds.forEach(holderId => {
+                        const ss = state.superstars.find(s => s.id === holderId);
+                        if (!ss) return;
+                        const champs = parseChampionships(ss.championships).filter(cid => cid !== reign.championshipId);
+                        ss.championships = champs;
+                        ss.isChampion = champs.length > 0;
+                    });
+                }
+                state.updatedAt = Date.now();
+                saveSoon();
+                offerUndo("Reign deleted.", snapshot);
+                closeModal({ ok: false });
+                setTimeout(() => openChampionshipDetailsModal(championshipId), 0);
+            });
+        });
+    }
+
     await modalPromise;
     if (cancelBtn) cancelBtn.classList.remove("hidden");
+}
+
+// Edit a reign: change start date, end date, holder.
+// Returns true if changes were saved, false on cancel.
+async function openEditReignModal(reignId) {
+    const reign = state.titleReigns.find(r => r.id === reignId);
+    if (!reign) return false;
+    const championship = state.championships.find(c => c.id === reign.championshipId);
+    const eligibleHolders = state.superstars.slice().sort((a, b) => a.name.localeCompare(b.name));
+
+    const holdersOptions = eligibleHolders.map(ss => `
+        <label class="row gap" style="align-items:center;">
+            <input type="checkbox" class="edit-reign-holder" value="${escapeAttr(ss.id)}" ${reign.holderIds.includes(ss.id) ? "checked" : ""}/>
+            <span>${escapeHTML(ss.name)}</span>
+        </label>
+    `).join("");
+
+    const bodyHTML = `
+        <div class="stack">
+            <div class="muted tiny">Editing reign for ${escapeHTML(championship?.name || "championship")}</div>
+            <label class="muted tiny">Start date</label>
+            <input id="editReignStart" class="input" type="date" value="${escapeAttr(reign.startDate || "")}" />
+            <label class="muted tiny">End date (leave empty if still active)</label>
+            <input id="editReignEnd" class="input" type="date" value="${escapeAttr(reign.endDate || "")}" />
+            <label class="muted tiny">Holder(s)</label>
+            <div class="stack" style="gap:4px;max-height:240px;overflow:auto;padding:8px;background:rgba(0,0,0,.15);border-radius:8px;">
+                ${holdersOptions}
+            </div>
+        </div>
+    `;
+    const result = await openModal({
+        title: "Edit Reign",
+        bodyHTML,
+        okText: "Save",
+    });
+    if (!result.ok) return false;
+
+    const startEl = $("#editReignStart");
+    const endEl = $("#editReignEnd");
+    const newStart = String(startEl?.value || "").trim();
+    const newEnd = String(endEl?.value || "").trim();
+    const newHolderIds = $$(".edit-reign-holder:checked").map(el => el.value);
+
+    if (!isISODate(newStart)) {
+        showToast({ message: "Start date is required.", tone: "danger" });
+        return false;
+    }
+    if (newEnd && !isISODate(newEnd)) {
+        showToast({ message: "End date isn't valid.", tone: "danger" });
+        return false;
+    }
+    if (newEnd && newEnd < newStart) {
+        showToast({ message: "End date must be on or after start date.", tone: "danger" });
+        return false;
+    }
+    if (!newHolderIds.length) {
+        showToast({ message: "Pick at least one holder.", tone: "danger" });
+        return false;
+    }
+
+    const snapshot = snapshotState();
+    const wasActive = !reign.endDate;
+    const target = state.titleReigns.find(r => r.id === reignId);
+    if (!target) return false;
+    target.startDate = newStart;
+    target.endDate = newEnd || null;
+    target.holderIds = newHolderIds.slice();
+    target.holderNames = newHolderIds.map(id => state.superstars.find(s => s.id === id)?.name || "(unknown)");
+
+    // If this reign is active, sync superstar.championships to match
+    if (!target.endDate) {
+        // Anyone who currently has this championship but isn't in the new holder list — remove
+        state.superstars.forEach(ss => {
+            const has = parseChampionships(ss.championships).includes(target.championshipId);
+            const shouldHave = newHolderIds.includes(ss.id);
+            if (has && !shouldHave) {
+                ss.championships = parseChampionships(ss.championships).filter(cid => cid !== target.championshipId);
+                ss.isChampion = (ss.championships || []).length > 0;
+            } else if (!has && shouldHave) {
+                ss.championships = [...new Set([...parseChampionships(ss.championships), target.championshipId])];
+                ss.isChampion = true;
+            }
+        });
+    } else if (wasActive && newEnd) {
+        // Was active, now closed — remove championship from all holders
+        target.holderIds.forEach(holderId => {
+            const ss = state.superstars.find(s => s.id === holderId);
+            if (!ss) return;
+            ss.championships = parseChampionships(ss.championships).filter(cid => cid !== target.championshipId);
+            ss.isChampion = (ss.championships || []).length > 0;
+        });
+    }
+
+    state.updatedAt = Date.now();
+    saveSoon();
+    offerUndo("Reign updated.", snapshot);
+    return true;
 }
 
 function renderDashboard() {
@@ -2932,6 +3244,11 @@ async function editSuperstarFlow(id) {
 
     if (!newName) return false;
 
+    // Snapshot championship holdings before applying the edit so we can detect
+    // which championships changed for this superstar and update reigns.
+    const oldChamps = new Set(parseChampionships(ss.championships));
+    const newChampsSet = new Set(newChamps);
+
     state.superstars = state.superstars.map(x => x.id === id ? {
         ...x,
         name: newName,
@@ -2944,6 +3261,34 @@ async function editSuperstarFlow(id) {
         faction: newFaction,
         manager: newManager,
     } : x);
+
+    // Reconcile reigns with the new holdings — only when there's a real change.
+    const universeISO = getUniverseCurrentISO();
+    const addedChamps = [...newChampsSet].filter(c => !oldChamps.has(c));
+    const removedChamps = [...oldChamps].filter(c => !newChampsSet.has(c));
+    for (const championshipId of addedChamps) {
+        // Close any existing open reign for this championship
+        const open = state.titleReigns.filter(r => r.championshipId === championshipId && !r.endDate);
+        open.forEach(r => { r.endDate = universeISO; });
+        // Open a new reign for this superstar starting today (universe current)
+        state.titleReigns.push({
+            id: uid("rgn"),
+            championshipId,
+            holderIds: [id],
+            holderNames: [newName],
+            startDate: universeISO,
+            endDate: null,
+            eventId: null,
+            isInitial: false,
+        });
+    }
+    for (const championshipId of removedChamps) {
+        // Close their open reign for this championship if any
+        const open = state.titleReigns
+            .filter(r => r.championshipId === championshipId && !r.endDate && r.holderIds.includes(id));
+        open.forEach(r => { r.endDate = universeISO; });
+    }
+
     saveSoon();
     renderRoster();
     renderPlanner();
@@ -4530,7 +4875,10 @@ function renderPlanner(fromPositions = null) {
     if (ensurePlannerMatchIds(ev)) upsertEvent(ev);
 
     const metaShows = eventShowNames(ev);
-    meta.textContent = `${ev.date} • ${ev.type.toUpperCase()} • ${metaShows.length ? metaShows.join(" + ") : showName(ev.showId)} • ${ev.matches.length} rows`;
+    const isEventLocked = isUniverseDateCompleted(ev.date);
+    meta.textContent = `${ev.date} • ${ev.type.toUpperCase()} • ${metaShows.length ? metaShows.join(" + ") : showName(ev.showId)} • ${ev.matches.length} rows${isEventLocked ? " • 🔒 Locked (day done)" : ""}`;
+    const lockBanner = $("#plannerLockBanner");
+    if (lockBanner) lockBanner.classList.toggle("hidden", !isEventLocked);
 
     const optionsHTML = plannerRosterOptions(ev);
     const eventShows = eventShowIds(ev);
@@ -4642,7 +4990,7 @@ function renderPlanner(fromPositions = null) {
             : "";
 
         return `
-      <tr data-row="${idx}" data-match-id="${escapeAttr(m.id || "")}" draggable="true">
+      <tr data-row="${idx}" data-match-id="${escapeAttr(m.id || "")}" draggable="${isEventLocked ? "false" : "true"}" class="${isEventLocked ? "planner-row-locked" : ""}">
         <td>
           <div class="stack" style="gap:6px;">
             <button
@@ -4806,7 +5154,7 @@ function renderPlanner(fromPositions = null) {
             const championshipBadge = m.championshipId ? championshipName(m.championshipId) : "";
 
             return `
-                <div class="planner-card" data-row="${idx}" data-match-id="${escapeAttr(m.id || "")}">
+                <div class="planner-card ${isEventLocked ? "planner-row-locked" : ""}" data-row="${idx}" data-match-id="${escapeAttr(m.id || "")}">
                     <div class="planner-card-head">
                         <button type="button" class="planner-card-drag" data-drag-handle aria-label="Drag to reorder">⠿</button>
                         <div class="planner-card-num">Match ${idx + 1}</div>
@@ -5059,11 +5407,22 @@ function renderPlanner(fromPositions = null) {
         const tr = target.closest("[data-row]");
         if (!tr) return;
 
+        const ev2 = getEvent(plannerEventId);
+        if (!ev2) return;
+
+        // Block edits to matches on completed days. The "Mark Day Done" toggle
+        // in the calendar is the only way to unlock.
+        if (isUniverseDateCompleted(ev2.date)) {
+            showToast({ message: "This day is marked done — unmark it on the calendar to edit.", tone: "danger" });
+            // Revert the visible change by re-rendering from state
+            renderPlanner();
+            return;
+        }
+
         const row = Number(tr.dataset.row);
         const field = target.dataset.field;
 
-        const ev2 = getEvent(plannerEventId);
-        if (!ev2 || !ev2.matches[row]) return;
+        if (!ev2.matches[row]) return;
 
         const reRender = () => {
             const capture = capturePlannerFocus();
@@ -5229,6 +5588,10 @@ function renderPlanner(fromPositions = null) {
             const idx = Number(btn.dataset.delRow);
             const ev2 = getEvent(plannerEventId);
             if (!ev2) return;
+            if (isUniverseDateCompleted(ev2.date)) {
+                showToast({ message: "This day is marked done — unmark it on the calendar to delete matches.", tone: "danger" });
+                return;
+            }
             ev2.matches.splice(idx, 1);
             renumberPlannerMatches(ev2.matches);
             upsertEvent(ev2);
@@ -5241,6 +5604,11 @@ function addMatchRow() {
     if (!plannerEventId) return;
     const ev = getEvent(plannerEventId);
     if (!ev) return;
+
+    if (isUniverseDateCompleted(ev.date)) {
+        showToast({ message: "This day is marked done — unmark it on the calendar to add matches.", tone: "danger" });
+        return;
+    }
 
     ev.matches.push({
         id: uid("match"),
@@ -7028,6 +7396,10 @@ $("#calToggleDone")?.addEventListener("click", () => {
     if (!isISODate(calSelectedISO)) return;
     const done = isUniverseDateCompleted(calSelectedISO);
     setUniverseDateCompleted(calSelectedISO, !done);
+    if (!done) {
+        // Just marked as done — record any reign changes from this day's matches
+        applyReignChangesForDate(calSelectedISO);
+    }
     saveSoon();
     renderCalendar();
     renderDashboard();
@@ -7035,6 +7407,7 @@ $("#calToggleDone")?.addEventListener("click", () => {
 $("#calProgressDay")?.addEventListener("click", () => {
     if (!isISODate(calSelectedISO)) return;
     setUniverseDateCompleted(calSelectedISO, true);
+    applyReignChangesForDate(calSelectedISO);
     const next = parseISO(calSelectedISO);
     next.setDate(next.getDate() + 1);
     calSelectedISO = toISODateLocal(next);

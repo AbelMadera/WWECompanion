@@ -3655,3 +3655,88 @@ textarea,
     -webkit-user-select: text;
     user-select: text;
 }
+
+/* =========================================================
+   Locked planner rows (matches on days marked done)
+   ========================================================= */
+.planner-lock-banner {
+    background: rgba(255, 180, 80, .12);
+    border: 1px solid rgba(255, 180, 80, .35);
+    color: #ffd29a;
+    border-radius: 12px;
+    padding: 10px 14px;
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 8px;
+}
+.planner-lock-banner.hidden {
+    display: none;
+}
+/* Visually mute locked rows + disable pointer events on their controls */
+.planner-row-locked {
+    opacity: 0.72;
+    position: relative;
+}
+.planner-row-locked .cell-input,
+.planner-row-locked select,
+.planner-row-locked input,
+.planner-row-locked textarea,
+.planner-row-locked .planner-card-iconbtn,
+.planner-row-locked .planner-card-note,
+.planner-row-locked [data-del-row],
+.planner-row-locked .planner-drag-handle {
+    pointer-events: none;
+    cursor: not-allowed;
+}
+/* Add a subtle lock indicator in the corner of locked cards */
+.planner-card.planner-row-locked::before {
+    content: "🔒";
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    font-size: 14px;
+    opacity: 0.6;
+    pointer-events: none;
+}
+/* And on table rows, a left-edge indicator */
+.planner-row-locked > td:first-child {
+    border-left: 3px solid rgba(255, 180, 80, .5);
+}
+
+/* Reign history rows (championship details modal) — add edit/delete buttons */
+.reign-history-row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    grid-template-rows: auto auto;
+    gap: 4px 12px;
+    padding: 10px 12px;
+    background: rgba(255, 255, 255, .03);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    align-items: center;
+}
+.reign-history-row.is-active {
+    border-color: rgba(255, 215, 107, .35);
+    background: rgba(255, 215, 107, .06);
+}
+.reign-history-name {
+    font-weight: 700;
+    grid-column: 1;
+    grid-row: 1;
+}
+.reign-history-meta {
+    grid-column: 1;
+    grid-row: 2;
+}
+.reign-history-actions {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    display: flex;
+    gap: 6px;
+    align-self: center;
+}
+.btn.tiny {
+    padding: 4px 10px;
+    font-size: 12px;
+    min-height: 0;
+}
