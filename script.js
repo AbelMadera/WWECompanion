@@ -1023,27 +1023,35 @@ function toISODateDaysAgo(daysAgo) {
     d.setDate(d.getDate() - daysAgo);
     return toISODateLocal(d);
 }
+// === Weekly rankings: momentum model ===
+// Replaces the old Elo system. Each match contributes points that DECAY with age
+// (half-life in weeks), scaled by match importance (title / main event / PLE).
+// Every point contribution is recorded with a human-readable label so the
+// superstar info modal (opened from the rankings table) can explain the ranking.
 const WEEKLY_RANKING_POINTS = {
-    baseScore: 1000,
-    championStartBonus: 15,
-    eloK: 20,
+    baseScore: 100,           // everyone starts here so numbers stay readable
+    championBonus: 20,        // flat bonus for currently holding a title
+    activeChampionBonus: 12,  // extra if they've defended within the recency window
     winPoints: 12,
-    appearancePoints: 1.5,
-    drawPoints: 4,
-    dqPoints: 2,
+    lossPoints: -5,
+    drawPoints: 0,            // draws don't exist in this universe, but guard anyway
+    dqWinPoints: 4,           // winning by DQ — less than a clean win
+    dqLossPoints: -2,
     promoPoints: 3,
-    lossPoints: 0.75,
-    pinBonus: 2,
-    top10WinBonus: 4,
-    top5WinBonus: 7,
-    streakBonusPerWin: 2,
-    maxStreakBonus: 8,
-    mainEventBonus: 0.25,
-    ppvMultiplier: 1.3,
-    titleMultiplier: 1.55,
-    titlePpvMultiplier: 1.75,
-    teamMatchPointMultiplier: 0.72,
-    teamMatchEloMultiplier: 0.42,
+    appearancePoints: 1,
+    pinBonus: 3,              // scoring the pin/submission yourself
+    mainEventBonus: 5,        // being in the main event
+    titleMatchBonus: 8,       // competing in a championship match
+    beatTop5Bonus: 10,        // defeated a current top-5 ranked wrestler
+    beatTop10Bonus: 5,        // defeated a current top-10 ranked wrestler
+    streakBonusPerWin: 2,     // momentum from a win streak
+    maxStreakBonus: 12,
+    // Recency: a match's contribution is multiplied by 0.5^(weeksAgo / halfLifeWeeks)
+    halfLifeWeeks: 5,
+    // Importance multipliers (applied on top of base points)
+    ppvMultiplier: 1.4,
+    titleMultiplier: 1.0,     // title handled via flat bonus instead now
+    teamMatchMultiplier: 0.8, // team match points are slightly diluted per person
 };
 function resolveMatchParticipantIds(match, superstarNameToId) {
     const ids = [];
@@ -1098,146 +1106,76 @@ function forEachTeamPairing(teamGroups, callback) {
     }
 }
 function matchImportanceMultiplier(event, matchIndex, matchesLength, match) {
-    const isMainEvent = matchIndex === (matchesLength - 1);
     const isPpv = event.type === "ppv";
-    const titleHint = `${match?.matchType || ""} ${match?.storyline || ""}`.toLowerCase();
-    const isTitle = /title|championship|champ\b/.test(titleHint);
     let multiplier = 1.0;
-    if (isTitle && isPpv) multiplier = WEEKLY_RANKING_POINTS.titlePpvMultiplier;
-    else if (isTitle) multiplier = WEEKLY_RANKING_POINTS.titleMultiplier;
-    else if (isPpv) multiplier = WEEKLY_RANKING_POINTS.ppvMultiplier;
-    if (isMainEvent) multiplier += WEEKLY_RANKING_POINTS.mainEventBonus;
+    if (isPpv) multiplier = WEEKLY_RANKING_POINTS.ppvMultiplier;
     return multiplier;
 }
-function computeWeeklyRankings(topN = 3) {
-    const rules = WEEKLY_RANKING_POINTS;
-    const records = computeSuperstarRecords();
+// True if a match is a championship match (real championship attached).
+function matchIsTitleMatch(match) {
+    return !!String(match?.championshipId || "").trim();
+}
+// True if a match is the main event (last match on the card).
+function matchIsMainEvent(matchIndex, matchesLength) {
+    return matchIndex === (matchesLength - 1);
+}
+// Recency decay factor for a match on `dateISO`, relative to the universe's
+// current day. Half-life is configurable. Returns a value in (0, 1].
+function rankingRecencyWeight(dateISO) {
+    const current = parseISO(getUniverseCurrentISO());
+    const matchDate = parseISO(dateISO);
+    if (!current || !matchDate) return 1;
+    const msPerWeek = 7 * 24 * 60 * 60 * 1000;
+    const weeksAgo = Math.max(0, (current - matchDate) / msPerWeek);
+    const halfLife = WEEKLY_RANKING_POINTS.halfLifeWeeks || 5;
+    return Math.pow(0.5, weeksAgo / halfLife);
+}
+// === Momentum-based weekly rankings ===
+// Walks completed match history. Each contribution is recency-decayed and
+// importance-scaled. Every contribution is recorded per-superstar in a breakdown
+// list so the info modal can explain the ranking.
+//
+// Returns: Map<showId, Array<{ superstar, score, breakdown, wins, losses, streak }>>
+// breakdown entries: { label, points, date }
+let _weeklyRankingsCache = null;
+let _weeklyRankingsCacheKey = "";
+function weeklyRankingsCacheKey() {
+    return `${state.updatedAt || 0}:${state.events.length}:${state.superstars.length}:${(state.completedDates || []).length}`;
+}
 
-    const superstarNameToId = new Map(
-        state.superstars.map(ss => [normalizeNameForCompare(ss.name), ss.id])
-    );
-    const superstarNameById = new Map(
-        state.superstars.map(ss => [ss.id, ss.name])
-    );
-    const showIdsBySuperstar = new Map(
-        state.superstars.map(ss => {
-            const ids = Array.isArray(ss?.showIds) && ss.showIds.length
-                ? ss.showIds.map(id => String(id ?? "").trim()).filter(Boolean)
-                : (ss?.showId ? [String(ss.showId).trim()] : []);
-            return [ss.id, Array.from(new Set(ids))];
-        })
-    );
-    const eloRatings = new Map();
-    const bonusPoints = new Map();
+function computeWeeklyRankingsFull() {
+    const key = weeklyRankingsCacheKey();
+    if (_weeklyRankingsCache && _weeklyRankingsCacheKey === key) return _weeklyRankingsCache;
+
+    const rules = WEEKLY_RANKING_POINTS;
+    const superstarNameToId = new Map(state.superstars.map(ss => [normalizeNameForCompare(ss.name), ss.id]));
+    const superstarNameById = new Map(state.superstars.map(ss => [ss.id, ss.name]));
+
+    // Per-superstar accumulators
+    const scores = new Map();      // id -> running score
+    const breakdowns = new Map();  // id -> [{label, points, date}]
     const wins = new Map();
-    const appearances = new Map();
-    const winStreaks = new Map();
+    const losses = new Map();
+    const streaks = new Map();      // current win streak (chronological)
+    const lastTitleDefenseISO = new Map(); // id -> most recent date they were in a title match
 
     state.superstars.forEach(ss => {
-        eloRatings.set(
-            ss.id,
-            rules.baseScore + (ss.isChampion ? rules.championStartBonus : 0)
-        );
-        bonusPoints.set(ss.id, 0);
+        scores.set(ss.id, rules.baseScore);
+        breakdowns.set(ss.id, []);
         wins.set(ss.id, 0);
-        appearances.set(ss.id, 0);
-        winStreaks.set(ss.id, 0);
+        losses.set(ss.id, 0);
+        streaks.set(ss.id, 0);
     });
 
-    const compositeScore = (superstarId) => {
-        if (!eloRatings.has(superstarId)) return rules.baseScore;
-        return (eloRatings.get(superstarId) ?? rules.baseScore) + (bonusPoints.get(superstarId) ?? 0);
-    };
-    const addBonusPoints = (superstarId, points) => {
-        if (!bonusPoints.has(superstarId)) return;
-        bonusPoints.set(superstarId, (bonusPoints.get(superstarId) || 0) + points);
-    };
-    const scaledBonus = (points, multiplier = 1) => points * multiplier;
-    const addEloDelta = (superstarId, delta) => {
-        if (!eloRatings.has(superstarId)) return;
-        eloRatings.set(superstarId, (eloRatings.get(superstarId) ?? rules.baseScore) + delta);
-    };
-    const applyHeadToHeadElo = (a, b, scoreA, scoreB, multiplier = 1) => {
-        if (!eloRatings.has(a) || !eloRatings.has(b)) return;
-        const ra = eloRatings.get(a) ?? rules.baseScore;
-        const rb = eloRatings.get(b) ?? rules.baseScore;
-        const ea = 1 / (1 + Math.pow(10, (rb - ra) / 400));
-        const eb = 1 - ea;
-        const kEff = rules.eloK * multiplier;
-        addEloDelta(a, kEff * (scoreA - ea));
-        addEloDelta(b, kEff * (scoreB - eb));
-    };
-    const noteAppearance = (participantIds) => {
-        participantIds.forEach(id => {
-            appearances.set(id, (appearances.get(id) || 0) + 1);
-        });
-    };
-    const teamScoreMultiplier = (teamGroups, matchMultiplier) => {
-        if (!(Array.isArray(teamGroups) && teamGroups.length >= 2)) return matchMultiplier;
-        return matchMultiplier * rules.teamMatchPointMultiplier;
-    };
-    const teamEloMultiplier = (teamGroups, matchMultiplier) => {
-        if (!(Array.isArray(teamGroups) && teamGroups.length >= 2)) return matchMultiplier;
-        return matchMultiplier * rules.teamMatchEloMultiplier / Math.max(1, teamGroups.length - 1);
-    };
-    const awardParticipationPoints = (participantIds, matchMultiplier, teamGroups = []) => {
-        const effectiveMultiplier = teamScoreMultiplier(teamGroups, matchMultiplier);
-        participantIds.forEach(id => addBonusPoints(id, scaledBonus(rules.appearancePoints, effectiveMultiplier)));
-    };
-    const buildShowRankContext = () => {
-        const byShow = new Map();
-        state.shows.forEach(show => {
-            const rows = state.superstars
-                .filter(ss => superstarOnShow(ss, show.id))
-                .slice()
-                .sort((a, b) => {
-                    const scoreDiff = compositeScore(b.id) - compositeScore(a.id);
-                    if (scoreDiff !== 0) return scoreDiff;
-                    const winDiff = (wins.get(b.id) ?? 0) - (wins.get(a.id) ?? 0);
-                    if (winDiff !== 0) return winDiff;
-                    return a.name.localeCompare(b.name);
-                });
-
-            const positions = new Map();
-            rows.forEach((ss, idx) => positions.set(ss.id, idx + 1));
-            byShow.set(show.id, { positions, size: rows.length });
-        });
-        return byShow;
-    };
-    const defeatedOpponentBonuses = (defeatedIds, rankContext) => {
-        let bestRankBonus = 0;
-        let bestStreakBonus = 0;
-
-        defeatedIds.forEach(defeatedId => {
-            if ((appearances.get(defeatedId) || 0) > 0) {
-                const showIds = showIdsBySuperstar.get(defeatedId) || [];
-                showIds.forEach(showId => {
-                    const context = rankContext.get(showId);
-                    const rank = context?.positions.get(defeatedId);
-                    if (!rank || !context) return;
-                    if (context.size >= 5 && rank <= 5) {
-                        bestRankBonus = Math.max(bestRankBonus, rules.top5WinBonus);
-                    } else if (context.size >= 10 && rank <= 10) {
-                        bestRankBonus = Math.max(bestRankBonus, rules.top10WinBonus);
-                    }
-                });
-            }
-
-            const streak = winStreaks.get(defeatedId) || 0;
-            if (streak >= 2) {
-                bestStreakBonus = Math.max(
-                    bestStreakBonus,
-                    Math.min(rules.maxStreakBonus, streak * rules.streakBonusPerWin)
-                );
-            }
-        });
-
-        return {
-            rankBonus: bestRankBonus,
-            streakBonus: bestStreakBonus,
-        };
+    const addPoints = (id, rawPoints, label, dateISO, recencyWeight) => {
+        if (!scores.has(id)) return;
+        const final = Math.round(rawPoints * recencyWeight * 10) / 10;
+        if (final === 0 && rawPoints === 0) return;
+        scores.set(id, (scores.get(id) || 0) + final);
+        breakdowns.get(id).push({ label, points: final, date: dateISO });
     };
 
+    // Chronologically ordered completed events
     const universeCurrentISO = getUniverseCurrentISO();
     const processedEvents = state.events
         .filter(e => /^\d{4}-\d{2}-\d{2}$/.test(String(e?.date || "")))
@@ -1245,167 +1183,223 @@ function computeWeeklyRankings(topN = 3) {
         .slice()
         .sort((a, b) => a.date.localeCompare(b.date));
 
+    // First pass: we need a provisional ranking to award "beat a top-N" bonuses.
+    // We compute scores in one chronological pass; for the top-N opponent check we
+    // use the running score AT THE TIME of the match (good enough and avoids a
+    // second full pass).
+    const runningRankAtShow = (showId) => {
+        const rows = state.superstars
+            .filter(ss => superstarOnShow(ss, showId))
+            .map(ss => ({ id: ss.id, score: scores.get(ss.id) || 0 }))
+            .sort((a, b) => b.score - a.score);
+        const pos = new Map();
+        rows.forEach((r, i) => pos.set(r.id, i + 1));
+        return { pos, size: rows.length };
+    };
+
+    const showIdsBySuperstar = new Map(state.superstars.map(ss => {
+        const ids = Array.isArray(ss?.showIds) && ss.showIds.length
+            ? ss.showIds.map(id => String(id ?? "").trim()).filter(Boolean)
+            : (ss?.showId ? [String(ss.showId).trim()] : []);
+        return [ss.id, Array.from(new Set(ids))];
+    }));
+
+    const opponentTierBonus = (defeatedIds) => {
+        // Returns the best bonus available from beating any of the defeated wrestlers.
+        let best = 0;
+        let bestLabel = "";
+        defeatedIds.forEach(did => {
+            const showIds = showIdsBySuperstar.get(did) || [];
+            showIds.forEach(showId => {
+                const { pos, size } = runningRankAtShow(showId);
+                const rank = pos.get(did);
+                if (!rank) return;
+                if (size >= 5 && rank <= 5 && rules.beatTop5Bonus > best) {
+                    best = rules.beatTop5Bonus;
+                    bestLabel = `Defeated a top-5 ranked opponent`;
+                } else if (size >= 10 && rank <= 10 && rules.beatTop10Bonus > best) {
+                    best = rules.beatTop10Bonus;
+                    bestLabel = `Defeated a top-10 ranked opponent`;
+                }
+            });
+        });
+        return { bonus: best, label: bestLabel };
+    };
+
     for (const ev of processedEvents) {
         const matches = Array.isArray(ev.matches) ? ev.matches : [];
+        const recency = rankingRecencyWeight(ev.date);
         matches.forEach((match, idx) => {
             const participantIds = resolveMatchParticipantIds(match, superstarNameToId);
-            const winnerId = resolveMatchWinnerId(match, participantIds, superstarNameById);
-            const pinById = resolveSuperstarIdFromRef(String(match?.pinBy ?? "").trim());
             const resultValue = String(match?.result ?? "").trim();
             const normalizedResult = normalizeNameForCompare(resultValue);
-            const isDrawLikeResult = isDrawRecordResult(resultValue)
-                || normalizedResult === "no contest"
-                || normalizedResult === "nc";
-            const matchMultiplier = matchImportanceMultiplier(ev, idx, matches.length, match);
+            const isTitle = matchIsTitleMatch(match);
+            const isMainEvent = matchIsMainEvent(idx, matches.length);
+            const importance = matchImportanceMultiplier(ev, idx, matches.length, match);
+            const pinById = resolveSuperstarIdFromRef(String(match?.pinBy ?? "").trim());
+            const eventLabel = ev.type === "ppv" ? "PLE" : "show";
 
+            // Promo: small points, no W/L impact
             if (isPromoResult(resultValue)) {
-                if (!participantIds.length) return;
-                noteAppearance(participantIds);
-                participantIds.forEach(id => addBonusPoints(id, scaledBonus(rules.promoPoints, matchMultiplier)));
+                participantIds.forEach(id => addPoints(id, rules.promoPoints * importance, `Promo segment on a ${eventLabel}`, ev.date, recency));
                 return;
             }
-
             if (participantIds.length < 2) return;
 
+            // Everyone in a title match gets a flat title-match bonus + records a defense date
+            if (isTitle) {
+                participantIds.forEach(id => {
+                    addPoints(id, rules.titleMatchBonus * importance, `Competed in a championship match`, ev.date, recency);
+                    lastTitleDefenseISO.set(id, ev.date);
+                });
+            }
+            // Main event bonus
+            if (isMainEvent) {
+                participantIds.forEach(id => addPoints(id, rules.mainEventBonus * importance, `Main-evented a ${eventLabel}`, ev.date, recency));
+            }
+            // Appearance points
+            participantIds.forEach(id => addPoints(id, rules.appearancePoints * importance, `Appeared on a ${eventLabel}`, ev.date, recency));
+
+            // No result / draw-like / no winner — no W/L, reset streaks
+            if (!resultValue || normalizedResult === "no result"
+                || isDrawRecordResult(resultValue) || normalizedResult === "no contest" || normalizedResult === "nc") {
+                participantIds.forEach(id => streaks.set(id, 0));
+                return;
+            }
+
+            // Determine winners / losers (handles team + singles)
             const participantTeams = normalizedParticipantTeams(match);
             const teams = inferMatchTeams(match?.matchType, participantIds, participantTeams);
-            const hasTeams = teams.length >= 2 && teams.every(group => group.participants.length);
-            const rankContext = buildShowRankContext();
-            const scoreMultiplier = hasTeams ? teamScoreMultiplier(teams, matchMultiplier) : matchMultiplier;
-            const eloMultiplier = hasTeams ? teamEloMultiplier(teams, matchMultiplier) : matchMultiplier;
+            const hasTeams = teams.length >= 2 && teams.every(g => g.participants.length);
+            const teamMult = hasTeams ? rules.teamMatchMultiplier : 1;
 
-            if (isDrawLikeResult) {
-                noteAppearance(participantIds);
-                awardParticipationPoints(participantIds, matchMultiplier, hasTeams ? teams : []);
-                participantIds.forEach(id => {
-                    addBonusPoints(id, scaledBonus(rules.drawPoints, scoreMultiplier));
-                    winStreaks.set(id, 0);
-                });
-                if (hasTeams) {
-                    forEachTeamPairing(teams, (teamA, teamB) => {
-                        for (const a of teamA.participants) {
-                            for (const b of teamB.participants) {
-                                applyHeadToHeadElo(a, b, 0.5, 0.5, eloMultiplier);
-                            }
-                        }
-                    });
-                } else {
-                    for (let i = 0; i < participantIds.length; i++) {
-                        for (let j = i + 1; j < participantIds.length; j++) {
-                            applyHeadToHeadElo(participantIds[i], participantIds[j], 0.5, 0.5, eloMultiplier);
-                        }
-                    }
-                }
-                return;
-            }
-
-            if (isDQResult(resultValue)) {
-                noteAppearance(participantIds);
-                awardParticipationPoints(participantIds, matchMultiplier, hasTeams ? teams : []);
-                participantIds.forEach(id => {
-                    addBonusPoints(id, scaledBonus(rules.dqPoints, scoreMultiplier));
-                    winStreaks.set(id, 0);
-                });
-                return;
-            }
-
-            if (!resultValue || normalizedResult === "no result") {
-                noteAppearance(participantIds);
-                awardParticipationPoints(participantIds, matchMultiplier, hasTeams ? teams : []);
-                participantIds.forEach(id => winStreaks.set(id, 0));
-                return;
-            }
-
+            let winners = [];
+            let losers = [];
             if (hasTeams) {
+                const winnerId = resolveMatchWinnerId(match, participantIds, superstarNameById);
                 const winningTeam = winningTeamFromMatch(match, teams, winnerId);
-                const winners = winningTeam?.participants || [];
-                const losers = losingParticipantsFromTeamGroups(teams, winningTeam);
-                if (!winners.length || !losers.length) {
-                    noteAppearance(participantIds);
-                    participantIds.forEach(id => winStreaks.set(id, 0));
-                    return;
+                if (winningTeam) {
+                    winners = winningTeam.participants.slice();
+                    losers = losingParticipantsFromTeamGroups(teams, winningTeam);
                 }
+            } else {
+                const winnerId = resolveMatchWinnerId(match, participantIds, superstarNameById);
+                if (winnerId && participantIds.includes(winnerId)) {
+                    winners = [winnerId];
+                    losers = participantIds.filter(id => id !== winnerId);
+                }
+            }
 
-                const bonuses = defeatedOpponentBonuses(losers, rankContext);
-                noteAppearance(participantIds);
-                awardParticipationPoints(participantIds, matchMultiplier, teams);
-                winners.forEach(id => {
-                    addBonusPoints(id, scaledBonus(rules.winPoints + bonuses.rankBonus + bonuses.streakBonus, scoreMultiplier));
+            // DQ: reduced win/loss, streaks reset
+            const isDQ = isDQResult(resultValue);
+
+            if (!winners.length || !losers.length) {
+                participantIds.forEach(id => streaks.set(id, 0));
+                return;
+            }
+
+            // Opponent tier bonus is computed BEFORE we mutate scores this match
+            const tier = opponentTierBonus(losers);
+
+            winners.forEach(id => {
+                if (isDQ) {
+                    addPoints(id, rules.dqWinPoints * importance * teamMult, `Won by DQ`, ev.date, recency);
+                    streaks.set(id, 0);
+                } else {
+                    addPoints(id, rules.winPoints * importance * teamMult, `Won a match`, ev.date, recency);
                     wins.set(id, (wins.get(id) || 0) + 1);
-                    winStreaks.set(id, (winStreaks.get(id) || 0) + 1);
-                });
-                losers.forEach(id => {
-                    addBonusPoints(id, scaledBonus(rules.lossPoints, scoreMultiplier));
-                    winStreaks.set(id, 0);
-                });
-                if (pinById && winners.includes(pinById)) {
-                    addBonusPoints(pinById, scaledBonus(rules.pinBonus, scoreMultiplier));
-                }
-                winners.forEach(a => {
-                    losers.forEach(b => {
-                        applyHeadToHeadElo(a, b, 1, 0, eloMultiplier);
-                    });
-                });
-                return;
-            }
-
-            if (!winnerId || !participantIds.includes(winnerId)) {
-                noteAppearance(participantIds);
-                participantIds.forEach(id => winStreaks.set(id, 0));
-                return;
-            }
-
-            const losers = participantIds.filter(id => id !== winnerId);
-            const bonuses = defeatedOpponentBonuses(losers, rankContext);
-            noteAppearance(participantIds);
-            awardParticipationPoints(participantIds, matchMultiplier);
-            addBonusPoints(winnerId, scaledBonus(rules.winPoints + bonuses.rankBonus + bonuses.streakBonus, scoreMultiplier));
-            wins.set(winnerId, (wins.get(winnerId) || 0) + 1);
-            winStreaks.set(winnerId, (winStreaks.get(winnerId) || 0) + 1);
-            losers.forEach(id => {
-                addBonusPoints(id, scaledBonus(rules.lossPoints, scoreMultiplier));
-                winStreaks.set(id, 0);
-            });
-            if (pinById && pinById === winnerId) {
-                addBonusPoints(winnerId, scaledBonus(rules.pinBonus, scoreMultiplier));
-            }
-            for (let i = 0; i < participantIds.length; i++) {
-                for (let j = i + 1; j < participantIds.length; j++) {
-                    const a = participantIds[i];
-                    const b = participantIds[j];
-                    if (winnerId === a) {
-                        applyHeadToHeadElo(a, b, 1, 0, eloMultiplier);
-                    } else if (winnerId === b) {
-                        applyHeadToHeadElo(a, b, 0, 1, eloMultiplier);
-                    } else {
-                        applyHeadToHeadElo(a, b, 0.5, 0.5, eloMultiplier);
+                    const newStreak = (streaks.get(id) || 0) + 1;
+                    streaks.set(id, newStreak);
+                    if (newStreak >= 2) {
+                        const streakBonus = Math.min(rules.maxStreakBonus, newStreak * rules.streakBonusPerWin);
+                        addPoints(id, streakBonus, `On a ${newStreak}-match win streak`, ev.date, recency);
+                    }
+                    if (tier.bonus > 0) {
+                        addPoints(id, tier.bonus * importance, tier.label, ev.date, recency);
+                    }
+                    if (pinById && pinById === id) {
+                        addPoints(id, rules.pinBonus * importance, `Scored the pin/submission`, ev.date, recency);
                     }
                 }
-            }
+            });
+            losers.forEach(id => {
+                if (isDQ) {
+                    addPoints(id, rules.dqLossPoints * importance * teamMult, `Lost by DQ`, ev.date, recency);
+                } else {
+                    addPoints(id, rules.lossPoints * importance * teamMult, `Lost a match`, ev.date, recency);
+                    losses.set(id, (losses.get(id) || 0) + 1);
+                }
+                streaks.set(id, 0);
+            });
         });
     }
 
+    // Champion bonuses (flat — applied last so they're visible in the breakdown)
+    const recencyWindowStartISO = (() => {
+        const cur = parseISO(universeCurrentISO);
+        if (!cur) return null;
+        cur.setDate(cur.getDate() - (rules.halfLifeWeeks * 7));
+        return toISODateLocal(cur);
+    })();
+    state.superstars.forEach(ss => {
+        if (!ss.isChampion) return;
+        scores.set(ss.id, (scores.get(ss.id) || 0) + rules.championBonus);
+        breakdowns.get(ss.id).push({ label: "Currently holds a championship", points: rules.championBonus, date: null });
+        const lastDefense = lastTitleDefenseISO.get(ss.id);
+        if (lastDefense && recencyWindowStartISO && lastDefense >= recencyWindowStartISO) {
+            scores.set(ss.id, (scores.get(ss.id) || 0) + rules.activeChampionBonus);
+            breakdowns.get(ss.id).push({ label: "Active champion — defended recently", points: rules.activeChampionBonus, date: null });
+        }
+    });
+
+    // Group + sort per show
     const byShow = new Map();
     for (const show of state.shows) {
         const rows = state.superstars
             .filter(ss => superstarOnShow(ss, show.id))
             .map(ss => ({
                 superstar: ss,
-                score: compositeScore(ss.id),
+                score: Math.round((scores.get(ss.id) || 0) * 10) / 10,
+                breakdown: breakdowns.get(ss.id) || [],
+                wins: wins.get(ss.id) || 0,
+                losses: losses.get(ss.id) || 0,
+                streak: streaks.get(ss.id) || 0,
             }))
             .sort((a, b) => {
                 if (b.score !== a.score) return b.score - a.score;
-                const bWins = wins.get(b.superstar.id) ?? toNonNegativeInt(superstarRecordById(b.superstar.id, records).wins);
-                const aWins = wins.get(a.superstar.id) ?? toNonNegativeInt(superstarRecordById(a.superstar.id, records).wins);
-                if (bWins !== aWins) {
-                    return bWins - aWins;
-                }
+                if (b.wins !== a.wins) return b.wins - a.wins;
                 return a.superstar.name.localeCompare(b.superstar.name);
-            })
-            .slice(0, Math.max(1, Number(topN) || 3));
+            });
         byShow.set(show.id, rows);
     }
+
+    _weeklyRankingsCache = byShow;
+    _weeklyRankingsCacheKey = key;
     return byShow;
+}
+
+// Back-compat wrapper: returns top-N rows per show (used by the dashboard card).
+function computeWeeklyRankings(topN = 3) {
+    const full = computeWeeklyRankingsFull();
+    const limited = new Map();
+    const n = Math.max(1, Number(topN) || 3);
+    for (const [showId, rows] of full.entries()) {
+        limited.set(showId, rows.slice(0, n));
+    }
+    return limited;
+}
+
+// Look up a single superstar's ranking row (with breakdown) for the info modal.
+// Returns { rank, size, row } or null.
+function rankingInfoForSuperstar(superstarId) {
+    const full = computeWeeklyRankingsFull();
+    for (const [showId, rows] of full.entries()) {
+        const idx = rows.findIndex(r => r.superstar.id === superstarId);
+        if (idx >= 0) {
+            return { showId, rank: idx + 1, size: rows.length, row: rows[idx] };
+        }
+    }
+    return null;
 }
 
 // -------------------- TITLE REIGN HISTORY (derived) --------------------
@@ -2070,7 +2064,7 @@ async function openShowTopTenModal(showId) {
     await modalPromise;
     modalCancelBtn.classList.remove("hidden");
     if (selectedSuperstarId) {
-        await openSuperstarDetails(selectedSuperstarId, { readOnly: true });
+        await openSuperstarDetails(selectedSuperstarId, { readOnly: true, fromRankings: true });
     }
 }
 function championshipHolderSuperstars(championshipId, showId = "") {
@@ -3235,7 +3229,7 @@ function renderDashboard() {
     $$("[data-open-ss]", rankingsEl).forEach(el => {
         const open = () => {
             el.blur();
-            openSuperstarDetails(el.dataset.openSs, { readOnly: true });
+            openSuperstarDetails(el.dataset.openSs, { readOnly: true, fromRankings: true });
         };
         el.addEventListener("click", open);
         el.addEventListener("keydown", (e) => {
@@ -3413,7 +3407,56 @@ async function editSuperstarFlow(id) {
     return true;
 }
 
-async function openSuperstarDetails(id, { readOnly = false } = {}) {
+// Renders the "Why this ranking" breakdown for the superstar info modal.
+// Only shown when the modal is opened from the rankings table.
+function renderRankingBreakdownSection(superstarId) {
+    const info = rankingInfoForSuperstar(superstarId);
+    if (!info) return "";
+    const { rank, size, row } = info;
+    // Aggregate breakdown entries by label, summing points
+    const grouped = new Map();
+    (row.breakdown || []).forEach(entry => {
+        const cur = grouped.get(entry.label) || { label: entry.label, total: 0, count: 0 };
+        cur.total += entry.points;
+        cur.count += 1;
+        grouped.set(entry.label, cur);
+    });
+    // Sort by absolute impact, biggest first
+    const rows = Array.from(grouped.values())
+        .map(g => ({ ...g, total: Math.round(g.total * 10) / 10 }))
+        .filter(g => g.total !== 0)
+        .sort((a, b) => Math.abs(b.total) - Math.abs(a.total));
+
+    const ordinal = (n) => {
+        const s = ["th", "st", "nd", "rd"];
+        const v = n % 100;
+        return n + (s[(v - 20) % 10] || s[v] || s[0]);
+    };
+
+    return `
+      <div class="ranking-breakdown">
+        <div class="ranking-breakdown-head">
+          <div class="h3" style="margin:0;">Ranking Breakdown</div>
+          <div class="ranking-breakdown-rank">${ordinal(rank)}<span class="muted tiny"> of ${size}</span></div>
+        </div>
+        <div class="ranking-breakdown-score muted tiny">Momentum score: <b>${row.score}</b> • ${row.wins}W ${row.losses}L${row.streak >= 2 ? ` • 🔥 ${row.streak}-match streak` : ""}</div>
+        <div class="ranking-breakdown-list">
+          ${rows.length
+            ? rows.map(g => `
+              <div class="ranking-breakdown-row">
+                <span class="ranking-breakdown-label">${escapeHTML(g.label)}${g.count > 1 ? ` <span class="muted tiny">×${g.count}</span>` : ""}</span>
+                <span class="ranking-breakdown-points ${g.total >= 0 ? "is-positive" : "is-negative"}">${g.total >= 0 ? "+" : ""}${g.total}</span>
+              </div>
+            `).join("")
+            : `<div class="muted tiny">No scored activity yet — this wrestler is at the base score.</div>`
+          }
+        </div>
+        <div class="muted tiny ranking-breakdown-note">Recent matches count for more — older results fade over time.</div>
+      </div>
+    `;
+}
+
+async function openSuperstarDetails(id, { readOnly = false, fromRankings = false } = {}) {
     const ss = state.superstars.find(x => x.id === id);
     if (!ss) return;
     const recordMap = computeSuperstarRecords();
@@ -3559,19 +3602,27 @@ async function openSuperstarDetails(id, { readOnly = false } = {}) {
             <div class="ss-momentum-spark">${sparkSVG}</div>
           </div>
         ` : ""}
+        ${fromRankings ? renderRankingBreakdownSection(ss.id) : ""}
         ${ssReigns.length ? `
-          <div>
-            <div class="h3">Title History</div>
-            <div class="stack" style="gap:6px;">
+          <div class="ss-title-history">
+            <button type="button" class="ss-title-history-toggle" id="ssTitleHistoryToggle" aria-expanded="false">
+              <span>🏆 Title History (${ssReigns.length})</span>
+              <span class="ss-title-history-chevron">▾</span>
+            </button>
+            <div class="ss-title-history-body hidden" id="ssTitleHistoryBody">
               ${ssReigns.slice().reverse().map(r => {
                 const c = state.championships.find(x => x.id === r.championshipId);
-                if (!c) return "";
+                const beltName = c ? c.name : "(deleted championship)";
                 const days = reignDayLength(r);
                 const range = r.endDate ? `${r.startDate} → ${r.endDate}` : `${r.startDate} → present`;
                 return `
                   <div class="ss-reign-row ${r.endDate ? "" : "is-active"}">
-                    <div class="ss-reign-name">${escapeHTML(c.name)}${r.endDate ? "" : ' <span class="champ-inline">C</span>'}</div>
+                    <div class="ss-reign-name">${escapeHTML(beltName)}${r.endDate ? "" : ' <span class="champ-inline">C</span>'}</div>
                     <div class="ss-reign-meta muted tiny">${escapeHTML(range)} • ${days} days</div>
+                    <div class="ss-reign-actions">
+                      <button type="button" class="btn secondary tiny" data-ss-edit-reign="${escapeAttr(r.id)}">Edit</button>
+                      <button type="button" class="btn danger tiny" data-ss-delete-reign="${escapeAttr(r.id)}">Delete</button>
+                    </div>
                   </div>
                 `;
               }).join("")}
@@ -3598,6 +3649,55 @@ async function openSuperstarDetails(id, { readOnly = false } = {}) {
     const modalActions = $(".modal-actions");
     const modalCancelBtn = $("#modalCancel");
     const modalOkBtn = $("#modalOk");
+
+    // Title history collapse/expand toggle (works in both readOnly and editable modes)
+    const wireTitleHistory = () => {
+        const toggle = $("#ssTitleHistoryToggle");
+        const body = $("#ssTitleHistoryBody");
+        if (toggle && body) {
+            toggle.addEventListener("click", () => {
+                const isHidden = body.classList.toggle("hidden");
+                toggle.setAttribute("aria-expanded", String(!isHidden));
+                const chevron = toggle.querySelector(".ss-title-history-chevron");
+                if (chevron) chevron.textContent = isHidden ? "▾" : "▴";
+            });
+        }
+        // Reign edit/delete buttons inside the title history
+        $$("[data-ss-edit-reign]").forEach(btn => {
+            btn.addEventListener("click", async () => {
+                if (await openEditReignModal(btn.dataset.ssEditReign)) {
+                    closeModal({ ok: false });
+                    setTimeout(() => openSuperstarDetails(id, { readOnly, fromRankings }), 0);
+                }
+            });
+        });
+        $$("[data-ss-delete-reign]").forEach(btn => {
+            btn.addEventListener("click", () => {
+                const reignId = btn.dataset.ssDeleteReign;
+                const reign = state.titleReigns.find(r => r.id === reignId);
+                if (!reign) return;
+                const names = (reign.holderNames || []).join(" & ") || "Vacant";
+                if (!confirm(`Delete this reign?\n\n${names} (${reign.startDate} → ${reign.endDate || "present"})\n\nUse the undo toast immediately if this was a mistake.`)) return;
+                const snapshot = snapshotState();
+                state.titleReigns = state.titleReigns.filter(r => r.id !== reignId);
+                if (!reign.endDate) {
+                    reign.holderIds.forEach(holderId => {
+                        const s = state.superstars.find(x => x.id === holderId);
+                        if (!s) return;
+                        const champs = parseChampionships(s.championships).filter(cid => cid !== reign.championshipId);
+                        s.championships = champs;
+                        s.isChampion = champs.length > 0;
+                    });
+                }
+                state.updatedAt = Date.now();
+                saveSoon();
+                offerUndo("Reign deleted.", snapshot);
+                closeModal({ ok: false });
+                setTimeout(() => openSuperstarDetails(id, { readOnly, fromRankings }), 0);
+            });
+        });
+    };
+    wireTitleHistory();
 
     if (readOnly) {
         modalCancelBtn.classList.add("hidden");

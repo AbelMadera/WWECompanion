@@ -3787,3 +3787,95 @@ textarea,
     height: 18px;
     flex-shrink: 0;
 }
+
+/* =========================================================
+   Ranking breakdown + collapsible title history
+   ========================================================= */
+.ranking-breakdown {
+    background: rgba(155, 155, 255, .06);
+    border: 1px solid rgba(155, 155, 255, .22);
+    border-radius: 12px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.ranking-breakdown-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+}
+.ranking-breakdown-rank {
+    font-size: 20px;
+    font-weight: 900;
+    color: #b9b9ff;
+}
+.ranking-breakdown-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.ranking-breakdown-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+    padding: 4px 0;
+    font-size: 13px;
+    border-bottom: 1px solid rgba(255, 255, 255, .04);
+}
+.ranking-breakdown-row:last-child {
+    border-bottom: none;
+}
+.ranking-breakdown-label {
+    color: var(--text);
+}
+.ranking-breakdown-points {
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+}
+.ranking-breakdown-points.is-positive {
+    color: #6ee0b8;
+}
+.ranking-breakdown-points.is-negative {
+    color: #ff9d9d;
+}
+.ranking-breakdown-note {
+    font-style: italic;
+    opacity: 0.7;
+}
+
+/* Collapsible title history */
+.ss-title-history-toggle {
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 14px;
+    background: rgba(255, 215, 107, .08);
+    border: 1px solid rgba(255, 215, 107, .28);
+    border-radius: 10px;
+    color: #ffd76b;
+    font-weight: 800;
+    font-size: 14px;
+    cursor: pointer;
+}
+.ss-title-history-chevron {
+    font-size: 12px;
+    transition: transform var(--dur-fast, .15s) ease;
+}
+.ss-title-history-body {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 8px;
+}
+.ss-title-history-body.hidden {
+    display: none;
+}
+.ss-reign-actions {
+    display: flex;
+    gap: 6px;
+    margin-top: 4px;
+}
