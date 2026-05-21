@@ -1246,6 +1246,12 @@ function computeWeeklyRankingsFull() {
             }
             if (participantIds.length < 2) return;
 
+            // A match with no result ("(no winner yet)") hasn't happened yet.
+            // It contributes NOTHING to rankings — no appearance points, no bonuses.
+            if (!resultValue || normalizedResult === "no result") {
+                return;
+            }
+
             // Everyone in a title match gets a flat title-match bonus + records a defense date
             if (isTitle) {
                 participantIds.forEach(id => {
@@ -1260,9 +1266,8 @@ function computeWeeklyRankingsFull() {
             // Appearance points
             participantIds.forEach(id => addPoints(id, rules.appearancePoints * importance, `Appeared on a ${eventLabel}`, ev.date, recency));
 
-            // No result / draw-like / no winner — no W/L, reset streaks
-            if (!resultValue || normalizedResult === "no result"
-                || isDrawRecordResult(resultValue) || normalizedResult === "no contest" || normalizedResult === "nc") {
+            // Draw-like / no contest — no W/L, reset streaks
+            if (isDrawRecordResult(resultValue) || normalizedResult === "no contest" || normalizedResult === "nc") {
                 participantIds.forEach(id => streaks.set(id, 0));
                 return;
             }
@@ -1924,8 +1929,10 @@ function superstarMomentumPoints(superstarId, n = 12) {
             const pids = (m.participants || []).map(resolveSuperstarIdFromRef).filter(Boolean);
             if (!pids.includes(superstarId)) continue;
             const result = String(m.result || "").trim();
+            // A match with no result hasn't happened — don't plot it at all.
+            if (!result || normalizeNameForCompare(result) === "no result") continue;
             if (isPromoResult(result)) { running += 0.3; points.push(running); continue; }
-            if (isDQResult(result) || isDrawRecordResult(result) || normalizeNameForCompare(result) === "no result") {
+            if (isDQResult(result) || isDrawRecordResult(result)) {
                 running += 0; points.push(running); continue;
             }
             let won = false, lost = false;
@@ -3554,6 +3561,12 @@ async function openSuperstarDetails(id, { readOnly = false, fromRankings = false
             });
             if (!includesSelected) continue;
             if (isPromoResult(match?.result)) continue;
+
+            // A match with no result ("(no winner yet)") hasn't happened yet —
+            // don't show it in match history.
+            const resultValue = String(match?.result ?? "").trim();
+            if (!resultValue) continue;
+            if (normalizeNameForCompare(resultValue) === "no result") continue;
 
             recentMatches.push({
                 matchup: participants.join(" vs "),
