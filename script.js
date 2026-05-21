@@ -2700,14 +2700,15 @@ function renderBookingAssistant() {
 function renderTitleReignsCard() {
     const root = $("#titleReignsList");
     if (!root) return;
-    const top = longestActiveReigns(5);
-    if (!top.length) {
-        root.innerHTML = `<div class="muted tiny">No active title reigns yet. Book a championship match to start tracking.</div>`;
+    // Show every current (active) championship reign — not just the top 5.
+    const current = longestActiveReigns(999);
+    if (!current.length) {
+        root.innerHTML = `<div class="muted tiny">No active title reigns yet. Set a champion in Settings → Championships.</div>`;
         return;
     }
     root.innerHTML = `
         <div class="title-reigns-list">
-            ${top.map(({ championshipId, reign, days }) => {
+            ${current.map(({ championshipId, reign, days }) => {
                 const championship = state.championships.find(c => c.id === championshipId);
                 if (!championship) return "";
                 const holders = reign.holderIds.map(id => state.superstars.find(s => s.id === id)).filter(Boolean);
@@ -2736,58 +2737,58 @@ function renderTitleReignsCard() {
                 `;
             }).join("")}
         </div>
-        <button type="button" class="btn secondary" id="viewAllReignsBtn" style="margin-top:10px;width:100%;">View All Reigns</button>
     `;
     $$("[data-open-championship]", root).forEach(btn => {
-        btn.addEventListener("click", () => openChampionshipDetailsModal(btn.dataset.openChampionship));
+        btn.addEventListener("click", () => openChampionshipHistoryModal(btn.dataset.openChampionship));
     });
-    $("#viewAllReignsBtn", root)?.addEventListener("click", () => openAllReignsModal());
 }
 
-// Shows every reign across every championship, grouped by championship,
-// each with Edit / Delete. Lets you fix any reign, not just the top 5.
-async function openAllReignsModal() {
+// Editable reign history for a single championship. Opened from Settings →
+// Championships → "View History". Lists every reign for that belt with
+// Edit / Delete, plus an Add Reign button to insert historical reigns manually.
+async function openChampionshipHistoryModal(championshipId) {
+    const championship = state.championships.find(c => c.id === championshipId);
+    if (!championship) return;
+
     const renderBody = () => {
-        const championships = state.championships.slice().sort((a, b) => a.name.localeCompare(b.name));
-        if (!championships.length) {
-            return `<div class="muted tiny">No championships exist yet.</div>`;
-        }
-        const sections = championships.map(c => {
-            // Newest reign first
-            const reigns = (state.titleReigns || [])
-                .filter(r => r.championshipId === c.id)
-                .slice()
-                .sort((a, b) => String(b.startDate).localeCompare(String(a.startDate)));
-            const rows = reigns.length
-                ? reigns.map(reign => {
-                    const storedNames = (reign.holderNames && reign.holderNames.length)
-                        ? reign.holderNames
-                        : reign.holderIds.map(id => state.superstars.find(s => s.id === id)?.name).filter(Boolean);
-                    const holderNames = storedNames.join(" & ") || "Vacant";
-                    const days = reignDayLength(reign);
-                    const dateRange = reign.endDate
-                        ? `${reign.startDate} → ${reign.endDate}`
-                        : `${reign.startDate} → present`;
-                    return `
-                        <div class="reign-history-row ${reign.endDate ? "" : "is-active"}">
-                            <div class="reign-history-name">${escapeHTML(holderNames)}${reign.isInitial ? ` <span class="muted tiny">(start)</span>` : ""}${reign.endDate ? "" : ` <span class="reign-active-badge">ACTIVE</span>`}</div>
-                            <div class="reign-history-meta muted tiny">${escapeHTML(dateRange)} • ${days} days</div>
-                            <div class="reign-history-actions">
-                                <button type="button" class="btn secondary tiny" data-edit-reign="${escapeAttr(reign.id)}">Edit</button>
-                                <button type="button" class="btn danger tiny" data-delete-reign="${escapeAttr(reign.id)}">Delete</button>
-                            </div>
+        const reigns = (state.titleReigns || [])
+            .filter(r => r.championshipId === championshipId)
+            .slice()
+            .sort((a, b) => String(b.startDate).localeCompare(String(a.startDate))); // newest first
+        const rows = reigns.length
+            ? reigns.map(reign => {
+                const storedNames = (reign.holderNames && reign.holderNames.length)
+                    ? reign.holderNames
+                    : reign.holderIds.map(id => state.superstars.find(s => s.id === id)?.name).filter(Boolean);
+                const holderNames = storedNames.join(" & ") || "Vacant";
+                const days = reignDayLength(reign);
+                const dateRange = reign.endDate
+                    ? `${reign.startDate} → ${reign.endDate}`
+                    : `${reign.startDate} → present`;
+                return `
+                    <div class="reign-history-row ${reign.endDate ? "" : "is-active"}">
+                        <div class="reign-history-name">${escapeHTML(holderNames)}${reign.isInitial ? ` <span class="muted tiny">(start)</span>` : ""}${reign.endDate ? "" : ` <span class="reign-active-badge">ACTIVE</span>`}</div>
+                        <div class="reign-history-meta muted tiny">${escapeHTML(dateRange)} • ${days} days</div>
+                        <div class="reign-history-actions">
+                            <button type="button" class="btn secondary tiny" data-edit-reign="${escapeAttr(reign.id)}">Edit</button>
+                            <button type="button" class="btn danger tiny" data-delete-reign="${escapeAttr(reign.id)}">Delete</button>
                         </div>
-                    `;
-                }).join("")
-                : `<div class="muted tiny">No reigns recorded.</div>`;
-            return `
-                <div class="all-reigns-section">
-                    <div class="all-reigns-belt">${escapeHTML(c.name)}</div>
-                    <div class="stack" style="gap:6px;">${rows}</div>
-                </div>
-            `;
-        }).join("");
-        return `<div class="stack" style="gap:16px;">${sections}</div>`;
+                    </div>
+                `;
+            }).join("")
+            : `<div class="muted tiny">No reigns recorded for this championship yet.</div>`;
+        return `
+            <div class="stack" style="gap:10px;">
+                <div class="muted tiny">Full reign history for ${escapeHTML(championship.name)}. Newest first.</div>
+                <div class="stack" style="gap:6px;">${rows}</div>
+                <button type="button" class="btn secondary" id="addReignBtn">+ Add Reign</button>
+            </div>
+        `;
+    };
+
+    const reopen = () => {
+        closeModal({ ok: false });
+        setTimeout(() => openChampionshipHistoryModal(championshipId), 0);
     };
 
     const wireButtons = () => {
@@ -2795,10 +2796,7 @@ async function openAllReignsModal() {
         if (!body) return;
         $$("[data-edit-reign]", body).forEach(btn => {
             btn.addEventListener("click", async () => {
-                if (await openEditReignModal(btn.dataset.editReign)) {
-                    closeModal({ ok: false });
-                    setTimeout(() => openAllReignsModal(), 0);
-                }
+                if (await openEditReignModal(btn.dataset.editReign)) reopen();
             });
         });
         $$("[data-delete-reign]", body).forEach(btn => {
@@ -2822,14 +2820,16 @@ async function openAllReignsModal() {
                 state.updatedAt = Date.now();
                 saveSoon();
                 offerUndo("Reign deleted.", snapshot);
-                closeModal({ ok: false });
-                setTimeout(() => openAllReignsModal(), 0);
+                reopen();
             });
+        });
+        $("#addReignBtn", body)?.addEventListener("click", async () => {
+            if (await openAddReignModal(championshipId)) reopen();
         });
     };
 
     const modalPromise = openModal({
-        title: "All Championship Reigns",
+        title: `${championship.name} — History`,
         bodyHTML: renderBody(),
         okText: "Close",
     });
@@ -2838,6 +2838,112 @@ async function openAllReignsModal() {
     wireButtons();
     await modalPromise;
     if (cancelBtn) cancelBtn.classList.remove("hidden");
+}
+
+// Add a new reign record manually (for filling in historical reigns).
+async function openAddReignModal(championshipId) {
+    const championship = state.championships.find(c => c.id === championshipId);
+    if (!championship) return false;
+    const eligible = state.superstars.slice().sort((a, b) => a.name.localeCompare(b.name));
+    const holderOptions = eligible.map(ss => `
+        <label class="row gap" style="align-items:center;">
+            <input type="checkbox" class="add-reign-holder" value="${escapeAttr(ss.id)}"/>
+            <span>${escapeHTML(ss.name)}</span>
+        </label>
+    `).join("");
+
+    const bodyHTML = `
+        <div class="stack">
+            <div class="muted tiny">New reign for ${escapeHTML(championship.name)}</div>
+            <label class="muted tiny">Start date</label>
+            <input id="addReignStart" class="input" type="date" value="${escapeAttr(getUniverseCurrentISO())}" />
+            <label class="reign-status-toggle">
+                <input type="checkbox" id="addReignActive" checked />
+                <span>Reign is ongoing (still champion)</span>
+            </label>
+            <div id="addReignEndWrap" class="stack" style="display:none;">
+                <label class="muted tiny">End date</label>
+                <input id="addReignEnd" class="input" type="date" />
+            </div>
+            <label class="muted tiny">Holder(s)</label>
+            <div class="stack" style="gap:4px;max-height:240px;overflow:auto;padding:8px;background:rgba(0,0,0,.15);border-radius:8px;">
+                ${holderOptions}
+            </div>
+        </div>
+    `;
+    const modalPromise = openModal({ title: "Add Reign", bodyHTML, okText: "Add" });
+    (() => {
+        const activeToggle = $("#addReignActive");
+        const endWrap = $("#addReignEndWrap");
+        const endInput = $("#addReignEnd");
+        if (activeToggle && endWrap) {
+            activeToggle.addEventListener("change", () => {
+                const ongoing = activeToggle.checked;
+                endWrap.style.display = ongoing ? "none" : "";
+                if (!ongoing && endInput && !endInput.value) endInput.value = getUniverseCurrentISO();
+            });
+        }
+    })();
+    const result = await modalPromise;
+    if (!result.ok) return false;
+
+    const newStart = String($("#addReignStart")?.value || "").trim();
+    const isOngoing = !!$("#addReignActive")?.checked;
+    const newEnd = isOngoing ? "" : String($("#addReignEnd")?.value || "").trim();
+    const holderIds = $$(".add-reign-holder:checked").map(el => el.value);
+
+    if (!isISODate(newStart)) {
+        showToast({ message: "Start date is required.", tone: "danger" });
+        return false;
+    }
+    if (!isOngoing && !isISODate(newEnd)) {
+        showToast({ message: "Pick an end date, or mark the reign as ongoing.", tone: "danger" });
+        return false;
+    }
+    if (newEnd && newEnd < newStart) {
+        showToast({ message: "End date must be on or after start date.", tone: "danger" });
+        return false;
+    }
+    if (!holderIds.length) {
+        showToast({ message: "Pick at least one holder.", tone: "danger" });
+        return false;
+    }
+
+    const snapshot = snapshotState();
+    // If this new reign is ongoing, close any other open reign for this belt
+    if (isOngoing) {
+        state.titleReigns
+            .filter(r => r.championshipId === championshipId && !r.endDate)
+            .forEach(r => { r.endDate = newStart; });
+    }
+    state.titleReigns.push({
+        id: uid("rgn"),
+        championshipId,
+        holderIds: holderIds.slice(),
+        holderNames: holderIds.map(id => state.superstars.find(s => s.id === id)?.name || "(unknown)"),
+        startDate: newStart,
+        endDate: newEnd || null,
+        eventId: null,
+        isInitial: false,
+    });
+    // If ongoing, sync the holders' championship field
+    if (isOngoing) {
+        state.superstars.forEach(ss => {
+            const has = parseChampionships(ss.championships).includes(championshipId);
+            const shouldHave = holderIds.includes(ss.id);
+            if (has && !shouldHave) {
+                ss.championships = parseChampionships(ss.championships).filter(cid => cid !== championshipId);
+                ss.isChampion = (ss.championships || []).length > 0;
+            } else if (!has && shouldHave) {
+                ss.championships = [...new Set([...parseChampionships(ss.championships), championshipId])];
+                ss.isChampion = true;
+            }
+        });
+    }
+    state.updatedAt = Date.now();
+    saveSoon();
+    offerUndo("Reign added.", snapshot);
+    return true;
 }
 
 async function openChampionshipDetailsModal(championshipId) {
@@ -6581,6 +6687,7 @@ function renderChampionshipSettingsPanel() {
                         ${renderScopePills(championship)}
                       </div>
                       <div class="item-actions championship-settings-actions">
+                        <button class="btn secondary" data-champ-history="${championship.id}">View History</button>
                         <button class="btn secondary" data-edit-title="${championship.id}">${isEditing ? "Cancel" : "Edit"}</button>
                         <button class="btn danger" data-del-title="${championship.id}">${isDeleting ? "Cancel Delete" : "Delete"}</button>
                       </div>
@@ -6678,6 +6785,10 @@ function renderChampionshipSettingsPanel() {
             settingsUiState.championships.message = null;
             renderChampionshipSettingsPanel();
         };
+    });
+
+    $$("[data-champ-history]", root).forEach(btn => {
+        btn.onclick = () => openChampionshipHistoryModal(btn.dataset.champHistory);
     });
 
     $$("[data-settings-save-title]", root).forEach(btn => {
