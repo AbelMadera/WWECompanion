@@ -3740,3 +3740,50 @@ textarea,
     font-size: 12px;
     min-height: 0;
 }
+
+/* =========================================================
+   All Reigns modal + reign editor active toggle
+   ========================================================= */
+.all-reigns-section {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.all-reigns-belt {
+    font-weight: 800;
+    font-size: 14px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid var(--line);
+    color: #ffd76b;
+}
+.reign-active-badge {
+    display: inline-block;
+    font-size: 9px;
+    font-weight: 900;
+    letter-spacing: .06em;
+    padding: 2px 6px;
+    border-radius: 6px;
+    background: rgba(77, 214, 168, .18);
+    border: 1px solid rgba(77, 214, 168, .4);
+    color: #6ee0b8;
+    vertical-align: middle;
+    margin-left: 6px;
+}
+.reign-status-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    background: rgba(255, 255, 255, .04);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    user-select: none;
+}
+.reign-status-toggle input {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+}

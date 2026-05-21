@@ -732,27 +732,14 @@ function computeSuperstarRecords() {
             if (participantIds.length < 2) return;
 
             const resultValue = String(match?.result ?? "").trim();
-            if (!resultValue) {
-                // "(winner)" placeholder counts as a draw for all participants
-                participantIds.forEach(pid => {
-                    const rec = records.get(pid);
-                    if (!rec) return;
-                    rec.draws += 1;
-                });
-                return;
-            }
+            // Empty result = "(no winner yet)" — match hasn't been booked with an outcome.
+            // Do nothing. Match doesn't affect anyone's W/L record.
+            if (!resultValue) return;
             if (normalizeNameForCompare(resultValue) === "no result") return;
             if (isPromoResult(resultValue)) return; // Promo does not affect W/L/D
             if (isDQResult(resultValue)) return; // DQ does not affect W/L/D
-
-            if (isDrawRecordResult(resultValue)) {
-                participantIds.forEach(pid => {
-                    const rec = records.get(pid);
-                    if (!rec) return;
-                    rec.draws += 1;
-                });
-                return;
-            }
+            // Draw results are not used in this universe — skip without affecting records.
+            if (isDrawRecordResult(resultValue)) return;
 
             if (isTeamResultValue(resultValue)) {
                 const teams = inferMatchTeams(match?.matchType, participantIds, normalizedParticipantTeams(match));
@@ -2619,7 +2606,6 @@ function renderUniverseDayHero() {
     $("#universeDayProgress")?.addEventListener("click", () => {
         const before = universeISO;
         setUniverseDateCompleted(before, true);
-        applyReignChangesForDate(before);
         const next = parseISO(before);
         next.setDate(next.getDate() + 1);
         calSelectedISO = toISODateLocal(next);
@@ -2730,7 +2716,10 @@ function renderTitleReignsCard() {
                         ? `<img class="reign-photo" src="${escapeAttr(photo)}" alt="${escapeAttr(h.name)}" />`
                         : `<div class="reign-photo-fallback">${escapeHTML(superstarInitials(h.name))}</div>`;
                 }).join("");
-                const names = holders.map(h => h.name).join(" & ");
+                // Fall back to stored snapshot names if a holder was deleted
+                const names = holders.length
+                    ? holders.map(h => h.name).join(" & ")
+                    : (reign.holderNames || []).join(" & ");
                 return `
                     <button type="button" class="reign-row" data-open-championship="${escapeAttr(championshipId)}">
                         <div class="reign-photos">${photos || `<div class="reign-photo-fallback">?</div>`}</div>
@@ -2746,10 +2735,108 @@ function renderTitleReignsCard() {
                 `;
             }).join("")}
         </div>
+        <button type="button" class="btn secondary" id="viewAllReignsBtn" style="margin-top:10px;width:100%;">View All Reigns</button>
     `;
     $$("[data-open-championship]", root).forEach(btn => {
         btn.addEventListener("click", () => openChampionshipDetailsModal(btn.dataset.openChampionship));
     });
+    $("#viewAllReignsBtn", root)?.addEventListener("click", () => openAllReignsModal());
+}
+
+// Shows every reign across every championship, grouped by championship,
+// each with Edit / Delete. Lets you fix any reign, not just the top 5.
+async function openAllReignsModal() {
+    const renderBody = () => {
+        const championships = state.championships.slice().sort((a, b) => a.name.localeCompare(b.name));
+        if (!championships.length) {
+            return `<div class="muted tiny">No championships exist yet.</div>`;
+        }
+        const sections = championships.map(c => {
+            // Newest reign first
+            const reigns = (state.titleReigns || [])
+                .filter(r => r.championshipId === c.id)
+                .slice()
+                .sort((a, b) => String(b.startDate).localeCompare(String(a.startDate)));
+            const rows = reigns.length
+                ? reigns.map(reign => {
+                    const storedNames = (reign.holderNames && reign.holderNames.length)
+                        ? reign.holderNames
+                        : reign.holderIds.map(id => state.superstars.find(s => s.id === id)?.name).filter(Boolean);
+                    const holderNames = storedNames.join(" & ") || "Vacant";
+                    const days = reignDayLength(reign);
+                    const dateRange = reign.endDate
+                        ? `${reign.startDate} → ${reign.endDate}`
+                        : `${reign.startDate} → present`;
+                    return `
+                        <div class="reign-history-row ${reign.endDate ? "" : "is-active"}">
+                            <div class="reign-history-name">${escapeHTML(holderNames)}${reign.isInitial ? ` <span class="muted tiny">(start)</span>` : ""}${reign.endDate ? "" : ` <span class="reign-active-badge">ACTIVE</span>`}</div>
+                            <div class="reign-history-meta muted tiny">${escapeHTML(dateRange)} • ${days} days</div>
+                            <div class="reign-history-actions">
+                                <button type="button" class="btn secondary tiny" data-edit-reign="${escapeAttr(reign.id)}">Edit</button>
+                                <button type="button" class="btn danger tiny" data-delete-reign="${escapeAttr(reign.id)}">Delete</button>
+                            </div>
+                        </div>
+                    `;
+                }).join("")
+                : `<div class="muted tiny">No reigns recorded.</div>`;
+            return `
+                <div class="all-reigns-section">
+                    <div class="all-reigns-belt">${escapeHTML(c.name)}</div>
+                    <div class="stack" style="gap:6px;">${rows}</div>
+                </div>
+            `;
+        }).join("");
+        return `<div class="stack" style="gap:16px;">${sections}</div>`;
+    };
+
+    const wireButtons = () => {
+        const body = $("#modalBody");
+        if (!body) return;
+        $$("[data-edit-reign]", body).forEach(btn => {
+            btn.addEventListener("click", async () => {
+                if (await openEditReignModal(btn.dataset.editReign)) {
+                    closeModal({ ok: false });
+                    setTimeout(() => openAllReignsModal(), 0);
+                }
+            });
+        });
+        $$("[data-delete-reign]", body).forEach(btn => {
+            btn.addEventListener("click", () => {
+                const reignId = btn.dataset.deleteReign;
+                const reign = state.titleReigns.find(r => r.id === reignId);
+                if (!reign) return;
+                const names = (reign.holderNames || []).join(" & ") || "Vacant";
+                if (!confirm(`Delete this reign?\n\n${names} (${reign.startDate} → ${reign.endDate || "present"})\n\nUse the undo toast immediately if this was a mistake.`)) return;
+                const snapshot = snapshotState();
+                state.titleReigns = state.titleReigns.filter(r => r.id !== reignId);
+                if (!reign.endDate) {
+                    reign.holderIds.forEach(holderId => {
+                        const ss = state.superstars.find(s => s.id === holderId);
+                        if (!ss) return;
+                        const champs = parseChampionships(ss.championships).filter(cid => cid !== reign.championshipId);
+                        ss.championships = champs;
+                        ss.isChampion = champs.length > 0;
+                    });
+                }
+                state.updatedAt = Date.now();
+                saveSoon();
+                offerUndo("Reign deleted.", snapshot);
+                closeModal({ ok: false });
+                setTimeout(() => openAllReignsModal(), 0);
+            });
+        });
+    };
+
+    const modalPromise = openModal({
+        title: "All Championship Reigns",
+        bodyHTML: renderBody(),
+        okText: "Close",
+    });
+    const cancelBtn = $("#modalCancel");
+    if (cancelBtn) cancelBtn.classList.add("hidden");
+    wireButtons();
+    await modalPromise;
+    if (cancelBtn) cancelBtn.classList.remove("hidden");
 }
 
 async function openChampionshipDetailsModal(championshipId) {
@@ -2880,29 +2967,60 @@ async function openEditReignModal(reignId) {
             <div class="muted tiny">Editing reign for ${escapeHTML(championship?.name || "championship")}</div>
             <label class="muted tiny">Start date</label>
             <input id="editReignStart" class="input" type="date" value="${escapeAttr(reign.startDate || "")}" />
-            <label class="muted tiny">End date (leave empty if still active)</label>
-            <input id="editReignEnd" class="input" type="date" value="${escapeAttr(reign.endDate || "")}" />
+
+            <label class="reign-status-toggle">
+                <input type="checkbox" id="editReignActive" ${reign.endDate ? "" : "checked"} />
+                <span>Reign is ongoing (still champion)</span>
+            </label>
+
+            <div id="editReignEndWrap" class="stack" style="${reign.endDate ? "" : "display:none;"}">
+                <label class="muted tiny">End date</label>
+                <input id="editReignEnd" class="input" type="date" value="${escapeAttr(reign.endDate || "")}" />
+            </div>
+
             <label class="muted tiny">Holder(s)</label>
             <div class="stack" style="gap:4px;max-height:240px;overflow:auto;padding:8px;background:rgba(0,0,0,.15);border-radius:8px;">
                 ${holdersOptions}
             </div>
         </div>
     `;
-    const result = await openModal({
+    const modalPromise = openModal({
         title: "Edit Reign",
         bodyHTML,
         okText: "Save",
     });
+    // openModal injects bodyHTML synchronously, so the elements exist now.
+    (() => {
+        const activeToggle = $("#editReignActive");
+        const endWrap = $("#editReignEndWrap");
+        const endInput = $("#editReignEnd");
+        if (activeToggle && endWrap) {
+            activeToggle.addEventListener("change", () => {
+                const ongoing = activeToggle.checked;
+                endWrap.style.display = ongoing ? "none" : "";
+                if (!ongoing && endInput && !endInput.value) {
+                    endInput.value = getUniverseCurrentISO();
+                }
+            });
+        }
+    })();
+    const result = await modalPromise;
     if (!result.ok) return false;
 
     const startEl = $("#editReignStart");
+    const activeEl = $("#editReignActive");
     const endEl = $("#editReignEnd");
     const newStart = String(startEl?.value || "").trim();
-    const newEnd = String(endEl?.value || "").trim();
+    const isOngoing = !!activeEl?.checked;
+    const newEnd = isOngoing ? "" : String(endEl?.value || "").trim();
     const newHolderIds = $$(".edit-reign-holder:checked").map(el => el.value);
 
     if (!isISODate(newStart)) {
         showToast({ message: "Start date is required.", tone: "danger" });
+        return false;
+    }
+    if (!isOngoing && !isISODate(newEnd)) {
+        showToast({ message: "Pick an end date, or mark the reign as ongoing.", tone: "danger" });
         return false;
     }
     if (newEnd && !isISODate(newEnd)) {
@@ -7396,10 +7514,6 @@ $("#calToggleDone")?.addEventListener("click", () => {
     if (!isISODate(calSelectedISO)) return;
     const done = isUniverseDateCompleted(calSelectedISO);
     setUniverseDateCompleted(calSelectedISO, !done);
-    if (!done) {
-        // Just marked as done — record any reign changes from this day's matches
-        applyReignChangesForDate(calSelectedISO);
-    }
     saveSoon();
     renderCalendar();
     renderDashboard();
@@ -7407,7 +7521,6 @@ $("#calToggleDone")?.addEventListener("click", () => {
 $("#calProgressDay")?.addEventListener("click", () => {
     if (!isISODate(calSelectedISO)) return;
     setUniverseDateCompleted(calSelectedISO, true);
-    applyReignChangesForDate(calSelectedISO);
     const next = parseISO(calSelectedISO);
     next.setDate(next.getDate() + 1);
     calSelectedISO = toISODateLocal(next);
