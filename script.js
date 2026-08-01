@@ -2420,41 +2420,82 @@ function setActiveNav(view) {
     $$(".bnav-btn").forEach(b => b.classList.toggle("active", b.dataset.view === view));
 }
 function setView(view) {
-    currentView = view;
-    setActiveNav(view);
+    if (!views.includes(view)) return;
+    const previousView = currentView;
+    const applyView = () => {
+        currentView = view;
+        setActiveNav(view);
 
-    views.forEach(v => $(`#view-${v}`).classList.toggle("hidden", v !== view));
+        views.forEach(v => $(`#view-${v}`).classList.toggle("hidden", v !== view));
 
-    const titles = {
-        dashboard: ["Dashboard", ""],
-        calendar: ["Calendar", ""],
-        planner: ["Planner", ""],
-        shows: ["Shows", "Create/remove shows & colors"],
-        roster: ["Roster", ""],
-        settings: ["Settings", ""],
+        const titles = {
+            dashboard: ["Dashboard", ""],
+            calendar: ["Calendar", ""],
+            planner: ["Planner", ""],
+            shows: ["Shows", "Create/remove shows & colors"],
+            roster: ["Roster", ""],
+            settings: ["Settings", ""],
+        };
+        $("#viewTitle").textContent = titles[view][0];
+        $("#viewSubtitle").textContent = titles[view][1];
+
+        renderAll();
     };
-    $("#viewTitle").textContent = titles[view][0];
-    $("#viewSubtitle").textContent = titles[view][1];
 
-    renderAll();
+    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+    if (previousView !== view && document.startViewTransition && !reduceMotion) {
+        document.startViewTransition(applyView);
+    } else {
+        applyView();
+    }
+}
+
+function optimizeImages(root = document) {
+    const images = root?.matches?.("img") ? [root] : Array.from(root?.querySelectorAll?.("img") || []);
+    images.forEach(img => {
+        if (!img.hasAttribute("loading")) img.loading = "lazy";
+        img.decoding = "async";
+        img.draggable = false;
+    });
 }
 
 // -------------------- MODAL --------------------
 const modal = $("#modal");
 let modalResolve = null;
 
+function resetModalScrollPosition() {
+    const body = $("#modalBody");
+    const card = $(".modal-card");
+    modal.scrollTop = 0;
+    if (body) body.scrollTop = 0;
+    if (card) card.scrollTop = 0;
+}
+
 function openModal({ title, bodyHTML, okText = "OK", cancelText = "Cancel" }) {
+    const body = $("#modalBody");
     $("#modalTitle").textContent = title;
-    $("#modalBody").innerHTML = bodyHTML;
+    body.innerHTML = bodyHTML;
     $("#modalOk").textContent = okText;
     $("#modalCancel").textContent = cancelText;
+    $("#modalOk")?.classList.remove("hidden");
+    $("#modalCancel")?.classList.remove("hidden");
+    $(".modal-card")?.classList.remove("superstar-picker-modal", "photo-crop-modal");
+    resetModalScrollPosition();
     modal.classList.remove("hidden");
     modal.setAttribute("aria-hidden", "false");
+    document.body.classList.add("modal-open");
+    requestAnimationFrame(() => {
+        resetModalScrollPosition();
+        optimizeImages(body);
+    });
     return new Promise(res => modalResolve = res);
 }
 function closeModal(result) {
     modal.classList.add("hidden");
     modal.setAttribute("aria-hidden", "true");
+    document.body.classList.remove("modal-open");
+    $(".modal-card")?.classList.remove("superstar-picker-modal", "photo-crop-modal");
+    resetModalScrollPosition();
     if (modalResolve) modalResolve(result);
     modalResolve = null;
 }
@@ -3420,6 +3461,7 @@ async function editSuperstarFlow(id) {
           <input id="editSSName" class="input" value="${escapeAttr(ss.name)}" />
           <label class="edit-ss-label" for="editSSPhoto" style="margin-top:10px;">Photo URL</label>
           <input id="editSSPhoto" class="input" value="${escapeAttr(photo)}" placeholder="Photo URL (https://...)" />
+          <div class="muted tiny" style="margin-top:8px;">To choose and crop a photo from your device, open Settings → Superstar Photos.</div>
         </div>
 
         <div class="edit-ss-section">
@@ -5022,6 +5064,289 @@ function plannerRosterOptions(ev) {
         .join("");
 }
 
+
+function plannerParticipantButtonHTML(participantId, slotIdx, optional = false, recordMap = null) {
+    const superstar = state.superstars.find(ss => ss.id === participantId) || null;
+    if (!superstar) {
+        return `
+          <button type="button" class="planner-participant-pick is-empty" data-pick-participant data-slot="${slotIdx}">
+            <span class="planner-participant-plus">+</span>
+            <span class="planner-participant-copy">
+              <span class="planner-participant-name">${optional ? "Optional superstar" : "Pick a superstar"}</span>
+              <span class="planner-participant-meta">Tap to open roster</span>
+            </span>
+            <span class="planner-participant-chevron">›</span>
+          </button>
+        `;
+    }
+    const photo = superstarPhotoURL(superstar);
+    const record = superstarRecordById(superstar.id, recordMap);
+    const avatar = photo
+        ? `<img class="planner-participant-avatar" src="${escapeAttr(photo)}" alt="" loading="lazy" decoding="async" />`
+        : `<span class="planner-participant-avatar planner-participant-avatar-fallback">${escapeHTML(superstarInitials(superstar.name))}</span>`;
+    return `
+      <button type="button" class="planner-participant-pick" data-pick-participant data-slot="${slotIdx}">
+        ${avatar}
+        <span class="planner-participant-copy">
+          <span class="planner-participant-name">${escapeHTML(superstar.name)}</span>
+          <span class="planner-participant-meta">${escapeHTML(superstar.division || "Roster")} • ${record.wins}-${record.losses}</span>
+        </span>
+        <span class="planner-participant-chevron">›</span>
+      </button>
+    `;
+}
+
+function plannerBookedSuperstarIds(ev, exceptRow = -1) {
+    const booked = new Set();
+    (ev?.matches || []).forEach((match, rowIndex) => {
+        if (rowIndex === exceptRow) return;
+        (Array.isArray(match?.participants) ? match.participants : [])
+            .map(resolveSuperstarIdFromRef)
+            .filter(Boolean)
+            .forEach(id => booked.add(id));
+    });
+    return booked;
+}
+
+function plannerRankMapForEvent(ev) {
+    const map = new Map();
+    const rankings = computeWeeklyRankings(3);
+    const relevantShowIds = eventShowIds(ev);
+    const showIds = relevantShowIds.length ? relevantShowIds : state.shows.map(show => show.id);
+    showIds.forEach(showId => {
+        const rows = rankings.get(showId) || [];
+        rows.forEach((row, index) => {
+            if (!map.has(row.superstar.id)) map.set(row.superstar.id, index + 1);
+        });
+    });
+    return map;
+}
+
+function updatePlannerParticipantSlot({ row, slot, superstarId = "" }) {
+    const ev = getEvent(plannerEventId);
+    if (!ev || !ev.matches[row]) return false;
+    if (isUniverseDateCompleted(ev.date)) {
+        showToast({ message: "This day is marked done — unmark it on the calendar to edit.", tone: "danger" });
+        return false;
+    }
+
+    const match = ev.matches[row];
+    const previousParticipants = Array.isArray(match.participants) ? match.participants.filter(Boolean) : [];
+    const oldParticipantId = previousParticipants[slot] || "";
+    const oldTeams = normalizedParticipantTeams(match);
+    const oldTeam = oldParticipantId ? oldTeams[oldParticipantId] || "" : "";
+    const nextParticipants = previousParticipants.slice();
+
+    if (superstarId) {
+        const duplicateIndex = nextParticipants.indexOf(superstarId);
+        if (duplicateIndex >= 0 && duplicateIndex !== slot) nextParticipants.splice(duplicateIndex, 1);
+        nextParticipants[slot] = superstarId;
+    } else if (slot < nextParticipants.length) {
+        nextParticipants.splice(slot, 1);
+    }
+
+    match.participants = nextParticipants.filter(Boolean);
+    match.participantSlots = Math.max(participantSlotCount(match), MIN_PARTICIPANT_SLOTS, match.participants.length);
+
+    const remaining = new Set(match.participants);
+    const nextEscorts = {};
+    Object.entries(normalizedParticipantEscorts(match)).forEach(([participantId, escortRef]) => {
+        if (remaining.has(participantId)) nextEscorts[participantId] = escortRef;
+    });
+    match.participantEscorts = nextEscorts;
+
+    const nextTeams = {};
+    Object.entries(oldTeams).forEach(([participantId, teamKey]) => {
+        if (remaining.has(participantId)) nextTeams[participantId] = teamKey;
+    });
+    if (superstarId && oldTeam && !nextTeams[superstarId]) nextTeams[superstarId] = oldTeam;
+    match.participantTeams = nextTeams;
+
+    reconcilePlannerMatchTeams(match);
+    upsertEvent(ev);
+    renderPlanner();
+    return true;
+}
+
+async function openPlannerSuperstarPicker({ row, slot }) {
+    const ev = getEvent(plannerEventId);
+    if (!ev || !ev.matches[row]) return;
+    if (isUniverseDateCompleted(ev.date)) {
+        showToast({ message: "This day is marked done — unmark it on the calendar to edit.", tone: "danger" });
+        return;
+    }
+
+    const match = ev.matches[row];
+    const participants = Array.isArray(match.participants) ? match.participants.filter(Boolean) : [];
+    const currentId = participants[slot] || "";
+    const selectedElsewhereInMatch = new Set(participants.filter((_, index) => index !== slot));
+    const bookedElsewhere = plannerBookedSuperstarIds(ev, row);
+    const eventShows = eventShowIds(ev);
+    const rankMap = plannerRankMapForEvent(ev);
+    const pickerRecordMap = computeSuperstarRecords();
+    const pickerState = {
+        query: "",
+        brandOnly: eventShows.length > 0,
+        championsOnly: false,
+        freeTonight: false,
+        division: "all",
+    };
+
+    const matchupHTML = Array.from({ length: participantSlotCount(match) }).map((_, index) => {
+        const participantId = participants[index] || "";
+        const superstar = state.superstars.find(ss => ss.id === participantId) || null;
+        const isTarget = index === slot;
+        if (!superstar || isTarget) {
+            return `<div class="picker-matchup-chip ${isTarget ? "is-target" : ""}"><span class="picker-matchup-number">${index + 1}</span><span>${isTarget ? "Choosing…" : "Open slot"}</span></div>`;
+        }
+        const photo = superstarPhotoURL(superstar);
+        const initials = superstarInitials(superstar.name);
+        return `<div class="picker-matchup-chip"><span class="picker-matchup-avatar"><span class="picker-matchup-fallback">${escapeHTML(initials)}</span>${photo ? `<img data-picker-photo src="${escapeAttr(photo)}" alt="" />` : ""}</span><span class="picker-matchup-label">${escapeHTML(superstar.name)}</span></div>`;
+    }).join(`<span class="picker-matchup-vs">vs</span>`);
+
+    const bodyHTML = `
+      <div class="superstar-picker-shell">
+        <button type="button" class="picker-close" id="pickerClose" aria-label="Close">×</button>
+        <div class="picker-context">Match ${row + 1} • Slot ${slot + 1}</div>
+        <div class="picker-matchup">${matchupHTML}</div>
+        <div class="picker-search-row">
+          <input id="pickerSearch" class="input picker-search" type="search" autocomplete="off" placeholder="Search the roster…" />
+        </div>
+        <div class="picker-filter-strip" aria-label="Roster filters">
+          <button type="button" class="picker-filter is-active" data-picker-filter="brand">This brand only</button>
+          <button type="button" class="picker-filter" data-picker-filter="champions">Champions</button>
+          <button type="button" class="picker-filter" data-picker-filter="free">Free tonight</button>
+          <select id="pickerDivision" class="picker-filter picker-filter-select" aria-label="Division filter">
+            <option value="all">All divisions</option>
+            <option value="World">World</option>
+            <option value="Midcard">Midcard</option>
+            <option value="Tag">Tag</option>
+            <option value="Women">Women</option>
+            <option value="Other">Other</option>
+          </select>
+        </div>
+        <div class="picker-roster-head"><span>Roster</span><span id="pickerRosterCount" class="muted tiny"></span></div>
+        <div id="pickerRosterGrid" class="picker-roster-grid"></div>
+      </div>
+    `;
+
+    const modalPromise = openModal({ title: "Pick a Superstar", bodyHTML, okText: "Done", cancelText: "Close" });
+    const modalCard = $(".modal-card");
+    modalCard?.classList.add("superstar-picker-modal");
+    const actions = $(".modal-actions");
+    const okButton = $("#modalOk");
+    okButton?.classList.add("hidden");
+    const clearButton = document.createElement("button");
+    clearButton.type = "button";
+    clearButton.className = "btn secondary picker-clear-slot";
+    clearButton.textContent = "Clear slot";
+    actions?.insertBefore(clearButton, $("#modalCancel"));
+
+    const rosterGrid = $("#pickerRosterGrid");
+    const rosterCount = $("#pickerRosterCount");
+    const normalizeQuery = value => normalizeNameForCompare(String(value || ""));
+    const bindPickerPhotoFallbacks = root => {
+        $$('img[data-picker-photo]', root || document).forEach(img => {
+            if (img.dataset.fallbackBound === "true") return;
+            img.dataset.fallbackBound = "true";
+            img.addEventListener("error", () => {
+                img.classList.add("is-broken");
+                img.setAttribute("aria-hidden", "true");
+                img.closest(".picker-superstar-visual")?.classList.remove("has-photo");
+            }, { once: true });
+        });
+    };
+    bindPickerPhotoFallbacks($("#modalBody"));
+
+    const rosterForPicker = () => state.superstars
+        .filter(superstar => {
+            if (selectedElsewhereInMatch.has(superstar.id)) return false;
+            if (pickerState.brandOnly && eventShows.length && !eventShows.some(showId => superstarOnShow(superstar, showId))) return false;
+            if (pickerState.championsOnly && !superstar.isChampion) return false;
+            if (pickerState.freeTonight && bookedElsewhere.has(superstar.id) && superstar.id !== currentId) return false;
+            if (pickerState.division !== "all" && normalizeSuperstarDivision(superstar.division) !== pickerState.division) return false;
+            const query = normalizeQuery(pickerState.query);
+            if (query) {
+                const haystack = normalizeQuery([superstar.name, superstar.division, superstar.faction, superstar.manager, ...superstarShowNames(superstar)].join(" "));
+                if (!haystack.includes(query)) return false;
+            }
+            return true;
+        })
+        .sort((a, b) => {
+            const rankA = rankMap.get(a.id) || Number.MAX_SAFE_INTEGER;
+            const rankB = rankMap.get(b.id) || Number.MAX_SAFE_INTEGER;
+            return (rankA - rankB) || a.name.localeCompare(b.name);
+        });
+
+    const renderPickerRoster = () => {
+        const roster = rosterForPicker();
+        if (rosterCount) rosterCount.textContent = `${roster.length} available`;
+        if (!rosterGrid) return;
+        rosterGrid.innerHTML = roster.length ? roster.map(superstar => {
+            const photo = superstarPhotoURL(superstar);
+            const record = superstarRecordById(superstar.id, pickerRecordMap);
+            const rank = rankMap.get(superstar.id);
+            const booked = bookedElsewhere.has(superstar.id) && superstar.id !== currentId;
+            const active = superstar.id === currentId;
+            return `
+              <button type="button" class="picker-superstar-card ${active ? "is-selected" : ""}" data-picker-superstar="${escapeAttr(superstar.id)}" aria-label="Select ${escapeAttr(superstar.name)}">
+                <span class="picker-superstar-visual${photo ? " has-photo" : ""}">
+                  <span class="picker-superstar-fallback">${escapeHTML(superstarInitials(superstar.name))}</span>
+                  ${photo ? `<img class="picker-superstar-photo" data-picker-photo src="${escapeAttr(photo)}" alt="" loading="lazy" decoding="async" draggable="false" />` : ""}
+                  ${superstar.isChampion ? `<span class="picker-title-badge">TITLE</span>` : ""}
+                  ${rank ? `<span class="picker-rank-badge">#${rank}</span>` : ""}
+                </span>
+                <span class="picker-superstar-name">${escapeHTML(superstar.name)}</span>
+                <span class="picker-superstar-meta">${escapeHTML(superstar.division || "Roster")} • ${record.wins}-${record.losses}${booked ? " • Booked" : ""}</span>
+              </button>
+            `;
+        }).join("") : `<div class="picker-empty"><b>No superstars found.</b><span>Try clearing a filter or searching another name.</span></div>`;
+        bindPickerPhotoFallbacks(rosterGrid);
+        optimizeImages(rosterGrid);
+    };
+
+    $("#pickerSearch")?.addEventListener("input", e => {
+        pickerState.query = e.target.value;
+        requestAnimationFrame(renderPickerRoster);
+    });
+    $("#pickerDivision")?.addEventListener("change", e => {
+        pickerState.division = e.target.value;
+        renderPickerRoster();
+    });
+    $$("[data-picker-filter]").forEach(button => {
+        button.addEventListener("click", () => {
+            const filter = button.dataset.pickerFilter;
+            if (filter === "brand") pickerState.brandOnly = !pickerState.brandOnly;
+            if (filter === "champions") pickerState.championsOnly = !pickerState.championsOnly;
+            if (filter === "free") pickerState.freeTonight = !pickerState.freeTonight;
+            const active = filter === "brand" ? pickerState.brandOnly : filter === "champions" ? pickerState.championsOnly : pickerState.freeTonight;
+            button.classList.toggle("is-active", active);
+            renderPickerRoster();
+        });
+    });
+    rosterGrid?.addEventListener("click", e => {
+        const card = e.target.closest("[data-picker-superstar]");
+        if (!card) return;
+        updatePlannerParticipantSlot({ row, slot, superstarId: card.dataset.pickerSuperstar });
+        closeModal({ ok: true, selected: card.dataset.pickerSuperstar });
+    });
+    clearButton.addEventListener("click", () => {
+        updatePlannerParticipantSlot({ row, slot, superstarId: "" });
+        closeModal({ ok: true, cleared: true });
+    });
+    $("#pickerClose")?.addEventListener("click", () => closeModal({ ok: false }));
+
+    renderPickerRoster();
+    requestAnimationFrame(() => {
+        resetModalScrollPosition();
+        if (rosterGrid) rosterGrid.scrollTop = 0;
+    });
+    await modalPromise;
+    clearButton.remove();
+    okButton?.classList.remove("hidden");
+    modalCard?.classList.remove("superstar-picker-modal");
+}
+
 function plannerNoteDisplayHTML(noteValue, emptyText) {
     const value = String(noteValue ?? "");
     if (!value.trim()) return `<div class="muted tiny">${escapeHTML(emptyText)}</div>`;
@@ -5218,6 +5543,7 @@ function renderPlanner(fromPositions = null) {
     if (lockBanner) lockBanner.classList.toggle("hidden", !isEventLocked);
 
     const optionsHTML = plannerRosterOptions(ev);
+    const plannerRecordMap = computeSuperstarRecords();
     const eventShows = eventShowIds(ev);
     let clearedUnavailableChampionship = false;
     ev.matches = ev.matches.map(match => {
@@ -5282,27 +5608,33 @@ function renderPlanner(fromPositions = null) {
             const name = superstarNameById(pid) || pid;
             return `<option value="${escapeAttr(pid)}">${escapeHTML(name)}</option>`;
         }).join("");
-        const participantFields = Array.from({ length: slotCount }).map((_, slotIdx) => `
-          <div class="row gap wrap">
-            <select class="cell-input small" data-field="participant" data-slot="${slotIdx}">
-              <option value="">${slotIdx < 2 ? "(select)" : "(optional)"}</option>
-              ${optionsHTML}
-            </select>
-            <button
-              type="button"
-              class="btn secondary participant-add-btn"
-              data-open-escort="${slotIdx}"
-              title="Add ringside accompaniment"
-              aria-label="Add ringside accompaniment"
-            >+</button>
-            ${isTeamBased ? `
-              <select class="cell-input small" data-field="participantTeam" data-slot="${slotIdx}" style="max-width:120px;">
-                <option value="">(team)</option>
-                ${participantTeamOptions}
-              </select>
-            ` : ``}
-          </div>
-        `).join("");
+        const participantFields = Array.from({ length: slotCount }).map((_, slotIdx) => {
+            const participantId = participants[slotIdx] || "";
+            return `
+              <div class="planner-table-participant-slot">
+                ${plannerParticipantButtonHTML(participantId, slotIdx, slotIdx >= 2, plannerRecordMap)}
+                <select class="visually-hidden" data-field="participant" data-slot="${slotIdx}" tabindex="-1" aria-hidden="true">
+                  <option value="">${slotIdx < 2 ? "(select)" : "(optional)"}</option>
+                  ${optionsHTML}
+                </select>
+                <div class="row gap wrap planner-participant-tools">
+                  <button
+                    type="button"
+                    class="btn secondary participant-add-btn"
+                    data-open-escort="${slotIdx}"
+                    title="Add ringside accompaniment"
+                    aria-label="Add ringside accompaniment"
+                  >Manager</button>
+                  ${isTeamBased ? `
+                    <select class="cell-input small" data-field="participantTeam" data-slot="${slotIdx}" style="max-width:120px;">
+                      <option value="">(team)</option>
+                      ${participantTeamOptions}
+                    </select>
+                  ` : ``}
+                </div>
+              </div>
+            `;
+        }).join("");
         const teamNameFields = isTagTeam && teamGroups.length
             ? `
               <div class="stack" style="gap:6px;">
@@ -5445,25 +5777,25 @@ function renderPlanner(fromPositions = null) {
                 const escortName = participantId ? participantEscortName(m, participantId) : "";
                 return `
                     <div class="planner-card-participant">
-                        <div class="planner-card-participant-row">
-                            <select class="cell-input" data-field="participant" data-slot="${slotIdx}">
-                                <option value="">${slotIdx < 2 ? "(select superstar)" : "(optional)"}</option>
-                                ${optionsHTML}
-                            </select>
+                        ${plannerParticipantButtonHTML(participantId, slotIdx, slotIdx >= 2, plannerRecordMap)}
+                        <select class="visually-hidden" data-field="participant" data-slot="${slotIdx}" tabindex="-1" aria-hidden="true">
+                            <option value="">${slotIdx < 2 ? "(select superstar)" : "(optional)"}</option>
+                            ${optionsHTML}
+                        </select>
+                        <div class="planner-card-participant-row planner-participant-tools">
                             <button type="button"
-                                class="btn secondary planner-card-iconbtn"
+                                class="btn secondary planner-escort-btn"
                                 data-open-escort="${slotIdx}"
                                 ${participantId ? "" : "disabled"}
                                 title="Set ringside accompaniment"
-                                aria-label="Set ringside accompaniment">+</button>
+                                aria-label="Set ringside accompaniment">${escortName ? `Manager: ${escapeHTML(escortName)}` : "Add manager"}</button>
+                            ${isTeamBased ? `
+                                <select class="cell-input planner-card-team-pick" data-field="participantTeam" data-slot="${slotIdx}">
+                                    <option value="">(no team)</option>
+                                    ${participantTeamOptions}
+                                </select>
+                            ` : ""}
                         </div>
-                        ${isTeamBased ? `
-                            <select class="cell-input planner-card-team-pick" data-field="participantTeam" data-slot="${slotIdx}">
-                                <option value="">(no team)</option>
-                                ${participantTeamOptions}
-                            </select>
-                        ` : ""}
-                        ${escortName ? `<div class="planner-card-escort muted tiny">With ${escapeHTML(escortName)}</div>` : ""}
                     </div>
                 `;
             }).join("");
@@ -5866,6 +6198,16 @@ function renderPlanner(fromPositions = null) {
             await openPlannerNoteModal({ row, field });
         });
     });
+    $$("[data-pick-participant]").forEach(btn => {
+        btn.addEventListener("click", async () => {
+            const rowEl = btn.closest("[data-row]");
+            if (!rowEl) return;
+            const row = Number(rowEl.dataset.row);
+            const slot = Number(btn.dataset.slot);
+            await openPlannerSuperstarPicker({ row, slot });
+        });
+    });
+
     $$("[data-open-escort]").forEach(btn => {
         btn.addEventListener("click", async () => {
             const rowEl = btn.closest("[data-row]");
@@ -6051,6 +6393,11 @@ const settingsUiState = {
         deletingId: null,
         draft: null,
     },
+    photos: {
+        selectedId: null,
+        message: null,
+        crop: null,
+    },
     bulkPhotos: {
         results: null,
         scanning: false,
@@ -6101,6 +6448,16 @@ function resetSettingsPanelState(panelKey) {
         settingsUiState.rivalries.draft = null;
     }
 
+    if (panelKey === "photos") {
+        settingsUiState.photos = settingsUiState.photos || {};
+        settingsUiState.photos.selectedId = state.superstars.some(ss => ss.id === settingsUiState.photos.selectedId)
+            ? settingsUiState.photos.selectedId
+            : (state.superstars[0]?.id || null);
+        settingsUiState.photos.message = null;
+        settingsUiState.photos.crop = null;
+        return;
+    }
+
     if (panelKey === "bulkPhotos") {
         settingsUiState.bulkPhotos = settingsUiState.bulkPhotos || {};
         settingsUiState.bulkPhotos.results = null;
@@ -6115,6 +6472,7 @@ async function openSettingsPanel(panelKey) {
         shows: { title: "Manage Shows", render: renderShowsSettingsPanel },
         championships: { title: "Manage Championships", render: renderChampionshipSettingsPanel },
         rivalries: { title: "Rivalries & Storylines", render: renderRivalriesSettingsPanel },
+        photos: { title: "Superstar Photos", render: renderSuperstarPhotoSettingsPanel },
         bulkPhotos: { title: "Bulk Photo Scan", render: renderBulkPhotosPanel },
         data: { title: "Import, Export, and Reset", render: renderDataSettingsPanel },
     };
@@ -6177,6 +6535,14 @@ function renderSettingsTools() {
           <span class="pill">${activeRivalryCount} active</span>
         </span>
       </button>
+      <button class="settings-launch" data-settings-open="photos">
+        <span class="settings-launch-title">Superstar Photos</span>
+        <span class="settings-launch-copy">Choose a photo from your device, zoom it, and reposition it to fit the superstar frame.</span>
+        <span class="settings-launch-meta">
+          <span class="pill">Photo library</span>
+          <span class="pill">Crop & resize</span>
+        </span>
+      </button>
       <button class="settings-launch" data-settings-open="bulkPhotos">
         <span class="settings-launch-title">Bulk Photo Scan</span>
         <span class="settings-launch-copy">Auto-assign superstar photos from your local <code>images/superstars/</code> folder in one tap.</span>
@@ -6198,6 +6564,244 @@ function renderSettingsTools() {
         btn.onclick = () => {
             openSettingsPanel(btn.dataset.settingsOpen);
         };
+    });
+}
+
+
+function readImageFileAsDataURL(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.onerror = () => reject(reader.error || new Error("Could not read image."));
+        reader.readAsDataURL(file);
+    });
+}
+
+function loadCropImage(source) {
+    return new Promise((resolve, reject) => {
+        const image = new Image();
+        image.onload = () => resolve(image);
+        image.onerror = () => reject(new Error("Could not open that image."));
+        image.src = source;
+    });
+}
+
+function drawSuperstarPhotoCrop(canvas, crop) {
+    if (!canvas || !crop?.image) return;
+    const ctx = canvas.getContext("2d", { alpha: true });
+    if (!ctx) return;
+    const width = canvas.width;
+    const height = canvas.height;
+    const image = crop.image;
+    const baseScale = Math.max(width / image.naturalWidth, height / image.naturalHeight);
+    const scale = baseScale * Number(crop.zoom || 1);
+    const drawWidth = image.naturalWidth * scale;
+    const drawHeight = image.naturalHeight * scale;
+    const maxOffsetX = Math.max(0, (drawWidth - width) / 2);
+    const maxOffsetY = Math.max(0, (drawHeight - height) / 2);
+    const offsetX = (Number(crop.x || 0) / 100) * maxOffsetX;
+    const offsetY = (Number(crop.y || 0) / 100) * maxOffsetY;
+    const dx = (width - drawWidth) / 2 + offsetX;
+    const dy = (height - drawHeight) / 2 + offsetY;
+
+    ctx.clearRect(0, 0, width, height);
+    ctx.fillStyle = "#111118";
+    ctx.fillRect(0, 0, width, height);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(image, dx, dy, drawWidth, drawHeight);
+}
+
+function cropCanvasToDataURL(crop) {
+    const output = document.createElement("canvas");
+    output.width = 512;
+    output.height = 512;
+    drawSuperstarPhotoCrop(output, crop);
+    const webp = output.toDataURL("image/webp", .82);
+    return webp.startsWith("data:image/webp") ? webp : output.toDataURL("image/jpeg", .84);
+}
+
+async function beginSuperstarPhotoCrop(superstarId, source) {
+    try {
+        const image = await loadCropImage(source);
+        settingsUiState.photos.crop = {
+            superstarId,
+            source,
+            image,
+            zoom: 1,
+            x: 0,
+            y: 0,
+        };
+        renderSuperstarPhotoCropPanel();
+    } catch (error) {
+        settingsUiState.photos.message = { tone: "danger", text: error?.message || "Could not open that image." };
+        renderSuperstarPhotoSettingsPanel();
+    }
+}
+
+function renderSuperstarPhotoCropPanel() {
+    const crop = settingsUiState.photos.crop;
+    const superstar = state.superstars.find(ss => ss.id === crop?.superstarId);
+    if (!crop || !superstar) {
+        renderSuperstarPhotoSettingsPanel();
+        return;
+    }
+
+    $(".modal-card")?.classList.add("photo-crop-modal");
+    $("#modalBody").innerHTML = `
+      <div class="photo-crop-shell">
+        <button type="button" class="photo-crop-back" id="photoCropBack">← Back</button>
+        <div class="photo-crop-copy">
+          <div class="h3" style="margin:0;">Fit ${escapeHTML(superstar.name)} to the frame</div>
+          <div class="muted tiny">Use size to zoom, then move the photo horizontally or vertically.</div>
+        </div>
+        <div class="photo-crop-preview-wrap">
+          <canvas id="superstarPhotoCropCanvas" class="photo-crop-canvas" width="640" height="640" aria-label="Photo crop preview"></canvas>
+          <div class="photo-crop-frame" aria-hidden="true"></div>
+        </div>
+        <div class="photo-crop-controls">
+          <label class="photo-crop-control"><span>Size</span><input id="photoCropZoom" type="range" min="0.65" max="3" step="0.01" value="${crop.zoom}"></label>
+          <label class="photo-crop-control"><span>Horizontal</span><input id="photoCropX" type="range" min="-100" max="100" step="1" value="${crop.x}"></label>
+          <label class="photo-crop-control"><span>Vertical</span><input id="photoCropY" type="range" min="-100" max="100" step="1" value="${crop.y}"></label>
+        </div>
+        <div class="photo-crop-actions">
+          <button type="button" class="btn secondary" id="photoCropReset">Reset</button>
+          <button type="button" class="btn" id="photoCropSave">Save Photo</button>
+        </div>
+      </div>
+    `;
+
+    const canvas = $("#superstarPhotoCropCanvas");
+    let drawPending = false;
+    const scheduleDraw = () => {
+        if (drawPending) return;
+        drawPending = true;
+        requestAnimationFrame(() => {
+            drawPending = false;
+            drawSuperstarPhotoCrop(canvas, crop);
+        });
+    };
+    const bindRange = (selector, key) => {
+        $(selector)?.addEventListener("input", e => {
+            crop[key] = Number(e.target.value);
+            scheduleDraw();
+        });
+    };
+    bindRange("#photoCropZoom", "zoom");
+    bindRange("#photoCropX", "x");
+    bindRange("#photoCropY", "y");
+
+    $("#photoCropReset")?.addEventListener("click", () => {
+        crop.zoom = 1;
+        crop.x = 0;
+        crop.y = 0;
+        $("#photoCropZoom").value = "1";
+        $("#photoCropX").value = "0";
+        $("#photoCropY").value = "0";
+        scheduleDraw();
+    });
+    $("#photoCropBack")?.addEventListener("click", () => {
+        settingsUiState.photos.crop = null;
+        $(".modal-card")?.classList.remove("photo-crop-modal");
+        renderSuperstarPhotoSettingsPanel();
+    });
+    $("#photoCropSave")?.addEventListener("click", () => {
+        const dataURL = cropCanvasToDataURL(crop);
+        state.superstars = state.superstars.map(ss => ss.id === superstar.id ? { ...ss, photo: dataURL } : ss);
+        settingsUiState.photos.crop = null;
+        settingsUiState.photos.selectedId = superstar.id;
+        settingsUiState.photos.message = { tone: "success", text: `Photo saved for ${superstar.name}.` };
+        saveSoon();
+        renderRoster();
+        renderDashboard();
+        renderPlanner();
+        $(".modal-card")?.classList.remove("photo-crop-modal");
+        renderSuperstarPhotoSettingsPanel();
+    });
+    scheduleDraw();
+}
+
+function renderSuperstarPhotoSettingsPanel() {
+    const modalBody = $("#modalBody");
+    if (!modalBody) return;
+    $(".modal-card")?.classList.remove("photo-crop-modal");
+    if (!state.superstars.length) {
+        modalBody.innerHTML = `<div class="settings-status info">Add a superstar to the roster before assigning photos.</div>`;
+        return;
+    }
+
+    const selectedId = state.superstars.some(ss => ss.id === settingsUiState.photos.selectedId)
+        ? settingsUiState.photos.selectedId
+        : state.superstars[0].id;
+    settingsUiState.photos.selectedId = selectedId;
+    const superstar = state.superstars.find(ss => ss.id === selectedId);
+    const photo = superstarPhotoURL(superstar);
+    const canAdjustCurrent = photo.startsWith("data:image/");
+
+    modalBody.innerHTML = `
+      <div class="superstar-photo-settings">
+        ${settingsStatusHTML("superstarPhotoStatus", settingsUiState.photos.message)}
+        <div class="superstar-photo-picker-row">
+          <label class="edit-ss-label" for="settingsPhotoSuperstar">Superstar</label>
+          <select id="settingsPhotoSuperstar" class="input">
+            ${state.superstars.slice().sort((a, b) => a.name.localeCompare(b.name)).map(ss => `<option value="${escapeAttr(ss.id)}" ${ss.id === selectedId ? "selected" : ""}>${escapeHTML(ss.name)}</option>`).join("")}
+          </select>
+        </div>
+        <div class="superstar-photo-current-card">
+          <div class="superstar-photo-current-frame">
+            ${photo
+              ? `<img src="${escapeAttr(photo)}" alt="${escapeAttr(superstar.name)}" loading="eager" decoding="async" />`
+              : `<div class="superstar-photo-current-fallback">${escapeHTML(superstarInitials(superstar.name))}</div>`}
+          </div>
+          <div class="superstar-photo-current-copy">
+            <div class="item-title">${escapeHTML(superstar.name)}</div>
+            <div class="muted tiny">Photos chosen here are cropped to a square, compressed for mobile, and saved with your local universe data.</div>
+          </div>
+        </div>
+        <div class="superstar-photo-actions">
+          <label class="btn superstar-photo-library-btn">
+            Choose from Photo Library
+            <input id="settingsPhotoLibraryInput" type="file" accept="image/*" />
+          </label>
+          ${canAdjustCurrent ? `<button type="button" class="btn secondary" id="settingsPhotoAdjustCurrent">Adjust current photo</button>` : ""}
+          ${photo ? `<button type="button" class="btn danger" id="settingsPhotoRemove">Remove photo</button>` : ""}
+        </div>
+        <div class="settings-status info">Tip: pinch gestures are not required. Use the Size, Horizontal, and Vertical sliders for precise framing.</div>
+      </div>
+    `;
+    optimizeImages(modalBody);
+
+    $("#settingsPhotoSuperstar")?.addEventListener("change", e => {
+        settingsUiState.photos.selectedId = e.target.value;
+        settingsUiState.photos.message = null;
+        renderSuperstarPhotoSettingsPanel();
+    });
+    $("#settingsPhotoLibraryInput")?.addEventListener("change", async e => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        if (!String(file.type || "").startsWith("image/")) {
+            settingsUiState.photos.message = { tone: "danger", text: "Choose an image file." };
+            renderSuperstarPhotoSettingsPanel();
+            return;
+        }
+        if (file.size > 15 * 1024 * 1024) {
+            settingsUiState.photos.message = { tone: "danger", text: "That photo is too large. Choose an image under 15 MB." };
+            renderSuperstarPhotoSettingsPanel();
+            return;
+        }
+        settingsUiState.photos.message = { tone: "info", text: "Opening photo editor…" };
+        const source = await readImageFileAsDataURL(file);
+        await beginSuperstarPhotoCrop(selectedId, source);
+    });
+    $("#settingsPhotoAdjustCurrent")?.addEventListener("click", () => beginSuperstarPhotoCrop(selectedId, photo));
+    $("#settingsPhotoRemove")?.addEventListener("click", () => {
+        state.superstars = state.superstars.map(ss => ss.id === selectedId ? { ...ss, photo: "" } : ss);
+        settingsUiState.photos.message = { tone: "success", text: `Photo removed from ${superstar.name}.` };
+        saveSoon();
+        renderRoster();
+        renderDashboard();
+        renderPlanner();
+        renderSuperstarPhotoSettingsPanel();
     });
 }
 
@@ -6928,13 +7532,44 @@ function generateFilenameCandidates(name) {
     return out;
 }
 
-// Test whether a candidate path exists. Returns the URL if it does, "" otherwise.
-async function probeFile(url) {
-    try {
-        const res = await fetch(url, { method: "HEAD", cache: "no-cache" });
-        if (res.ok) return url;
-    } catch (e) { /* network/CORS error — treat as not found */ }
-    return "";
+// Test whether a candidate image exists. Image loading is used instead of HEAD
+// because many local development servers return 404/405 for HEAD even when a
+// normal browser image request succeeds.
+const superstarPhotoProbeCache = new Map();
+function probeFile(url) {
+    const cleanUrl = String(url || "").trim();
+    if (!cleanUrl) return Promise.resolve("");
+    if (superstarPhotoProbeCache.has(cleanUrl)) return superstarPhotoProbeCache.get(cleanUrl);
+
+    const pending = new Promise(resolve => {
+        const image = new Image();
+        let settled = false;
+        const finish = value => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeoutId);
+            image.onload = null;
+            image.onerror = null;
+            resolve(value);
+        };
+        const timeoutId = setTimeout(() => finish(""), 4500);
+        image.onload = () => finish(cleanUrl);
+        image.onerror = () => finish("");
+        image.decoding = "async";
+        image.src = cleanUrl;
+    });
+
+    superstarPhotoProbeCache.set(cleanUrl, pending);
+    return pending;
+}
+
+function isLocalSuperstarPhotoPath(value) {
+    const path = String(value || "")
+        .split(/[?#]/)[0]
+        .replace(/^\.\//, "")
+        .trim()
+        .toLowerCase();
+    return path.startsWith(SUPERSTAR_PHOTO_FOLDER.toLowerCase());
 }
 
 // Try every (candidate × extension) combination for a single name in the given folder.
@@ -6970,7 +7605,12 @@ async function scanSuperstarPhotos() {
         const batch = queue.splice(0, 4);
         await Promise.all(batch.map(async (ss) => {
             const previousPath = String(ss.photo || "").trim();
-            const newPath = await findFileForName(ss.name, SUPERSTAR_PHOTO_FOLDER);
+            // Verify an already configured local path first. This is both faster
+            // and supports filenames that do not follow the generated convention.
+            const verifiedExistingPath = isLocalSuperstarPhotoPath(previousPath)
+                ? await probeFile(previousPath)
+                : "";
+            const newPath = verifiedExistingPath || await findFileForName(ss.name, SUPERSTAR_PHOTO_FOLDER);
             if (newPath) {
                 results.found.push({ id: ss.id, name: ss.name, previousPath, newPath });
             } else {
@@ -7016,9 +7656,12 @@ function renderBulkPhotosPanel() {
 
     $("#bulkScanSuperstars")?.addEventListener("click", async () => {
         settingsUiState.bulkPhotos.scanning = true;
+        settingsUiState.bulkPhotos.results = null;
+        superstarPhotoProbeCache.clear();
         renderBulkPhotosPanel();
         try {
             const results = await scanSuperstarPhotos();
+            results.applied = false;
             settingsUiState.bulkPhotos.results = settingsUiState.bulkPhotos.results || {};
             settingsUiState.bulkPhotos.results.superstars = results;
         } catch (e) {
@@ -7030,20 +7673,21 @@ function renderBulkPhotosPanel() {
 
     $("#bulkApplySuperstars")?.addEventListener("click", () => {
         const results = settingsUiState.bulkPhotos.results?.superstars;
-        if (!results) return;
+        if (!results || !results.found.length || results.applied) return;
         const snapshot = snapshotState();
         let changed = 0;
         results.found.forEach(({ id, newPath }) => {
             const ss = state.superstars.find(x => x.id === id);
             if (!ss) return;
+            if (ss.photo !== newPath) changed += 1;
             ss.photo = newPath;
-            changed += 1;
         });
+        results.applied = true;
+        results.appliedCount = results.found.length;
         saveSoon();
         renderAll();
-        offerUndo(`${changed} superstar photo${changed === 1 ? "" : "s"} updated.`, snapshot);
-        // Clear the result so the buttons hide
-        delete settingsUiState.bulkPhotos.results.superstars;
+        offerUndo(`${results.found.length} scanned superstar photo${results.found.length === 1 ? "" : "s"} set.`, snapshot);
+        showToast({ message: `${results.found.length} scanned photo${results.found.length === 1 ? "" : "s"} set on the roster.`, tone: "success" });
         renderBulkPhotosPanel();
     });
 }
@@ -7051,11 +7695,21 @@ function renderBulkPhotosPanel() {
 function renderSuperstarScanResults(results) {
     const foundCount = results.found.length;
     const missingCount = results.missing.length;
+    const applied = !!results.applied;
+    const applyLabel = applied
+        ? `✓ ${foundCount} Photo${foundCount === 1 ? "" : "s"} Set`
+        : foundCount > 0
+            ? `Set ${foundCount} Scanned Photo${foundCount === 1 ? "" : "s"}`
+            : "Set Scanned Photos";
     return `
         <div class="bulk-scan-results">
             <div class="bulk-scan-summary">
                 <span class="pill bulk-pill-found">${foundCount} found</span>
                 <span class="pill bulk-pill-missing">${missingCount} missing</span>
+            </div>
+            <div class="bulk-scan-actions">
+                <button class="btn bulk-apply-btn ${applied ? "is-complete" : ""}" id="bulkApplySuperstars" ${foundCount === 0 || applied ? "disabled" : ""}>${applyLabel}</button>
+                <span class="muted tiny">${foundCount > 0 ? (applied ? "The scanned paths are now assigned to your roster." : "Review the matches below, then set them on the roster.") : "No matching local files were detected. Check the folder and filenames, then scan again."}</span>
             </div>
             ${foundCount > 0 ? `
                 <details class="bulk-scan-details">
@@ -7085,9 +7739,6 @@ function renderSuperstarScanResults(results) {
                     </ul>
                 </details>
             ` : ""}
-            <div class="row gap wrap">
-                ${foundCount > 0 ? `<button class="btn" id="bulkApplySuperstars">Apply ${foundCount} Photo${foundCount === 1 ? "" : "s"}</button>` : ""}
-            </div>
         </div>
     `;
 }
@@ -7688,6 +8339,8 @@ function renderAll() {
     if (currentView === "planner") renderPlanner();
     if (currentView === "roster") renderRoster();
     if (currentView === "settings") renderSettingsTools();
+
+    requestAnimationFrame(() => optimizeImages($(`#view-${currentView}`)));
 }
 
 // -------------------- UI BINDINGS --------------------
