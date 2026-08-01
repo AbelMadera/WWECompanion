@@ -2127,6 +2127,296 @@ function championshipBoardSlotKey(championship) {
     }
     return "men_world";
 }
+
+function prepareShowBoardPhoto(img) {
+    if (!img) return;
+
+    const markShape = () => {
+        if (!img.naturalWidth || !img.naturalHeight) return;
+        const ratio = img.naturalWidth / img.naturalHeight;
+        img.dataset.boardShape = ratio < 0.82 ? "portrait" : (ratio > 1.18 ? "landscape" : "square");
+    };
+
+    const useFallbackFit = () => {
+        markShape();
+        img.classList.remove("is-board-normalized", "is-alpha-trimmed");
+        img.classList.add("is-board-fallback-fit");
+    };
+
+    const analyze = () => {
+        markShape();
+        if (img.dataset.boardNormalized === "1" || !img.naturalWidth || !img.naturalHeight) return;
+
+        try {
+            // Work on a reasonably small copy so opening the board stays smooth on phones.
+            const maxDimension = 560;
+            const sourceScale = Math.min(1, maxDimension / Math.max(img.naturalWidth, img.naturalHeight));
+            const width = Math.max(1, Math.round(img.naturalWidth * sourceScale));
+            const height = Math.max(1, Math.round(img.naturalHeight * sourceScale));
+            const sourceCanvas = document.createElement("canvas");
+            sourceCanvas.width = width;
+            sourceCanvas.height = height;
+            const context = sourceCanvas.getContext("2d", { willReadFrequently: true });
+            if (!context) {
+                useFallbackFit();
+                return;
+            }
+            context.imageSmoothingEnabled = true;
+            context.imageSmoothingQuality = "high";
+            context.clearRect(0, 0, width, height);
+            context.drawImage(img, 0, 0, width, height);
+            const imageData = context.getImageData(0, 0, width, height);
+            const pixels = imageData.data;
+            const totalPixels = width * height;
+
+            const emptyBounds = () => ({ minX: width, minY: height, maxX: -1, maxY: -1, count: 0 });
+            const includePixel = (bounds, x, y) => {
+                if (x < bounds.minX) bounds.minX = x;
+                if (x > bounds.maxX) bounds.maxX = x;
+                if (y < bounds.minY) bounds.minY = y;
+                if (y > bounds.maxY) bounds.maxY = y;
+                bounds.count += 1;
+            };
+            const boundsAreUseful = bounds => bounds && bounds.maxX >= bounds.minX && bounds.maxY >= bounds.minY && bounds.count > totalPixels * 0.006;
+
+            // Transparent renders are the most reliable case: use every visible pixel to
+            // discover the wrestler's real bounds, ignoring empty padding in the file.
+            let transparentCount = 0;
+            const alphaBounds = emptyBounds();
+            for (let y = 0; y < height; y += 1) {
+                for (let x = 0; x < width; x += 1) {
+                    const alpha = pixels[((y * width) + x) * 4 + 3];
+                    if (alpha < 245) transparentCount += 1;
+                    if (alpha > 18) includePixel(alphaBounds, x, y);
+                }
+            }
+
+            let subjectBounds = null;
+            let transparentSource = transparentCount > totalPixels * 0.004;
+            if (transparentSource && boundsAreUseful(alphaBounds)) {
+                subjectBounds = alphaBounds;
+            }
+
+            // Some renders have a baked-in dark or colored background. For those, flood
+            // the connected background inward from the outer edges, then keep the largest
+            // remaining connected region as the wrestler. This normalizes large, small,
+            // square, portrait, and landscape source files into the same visual crop.
+            if (!subjectBounds) {
+                transparentSource = false;
+                const background = new Uint8Array(totalPixels);
+                const queue = new Int32Array(totalPixels);
+                let queueStart = 0;
+                let queueEnd = 0;
+                const palette = [];
+                const paletteStep = Math.max(3, Math.floor(Math.min(width, height) / 30));
+
+                const colorAt = index => {
+                    const offset = index * 4;
+                    return [pixels[offset], pixels[offset + 1], pixels[offset + 2]];
+                };
+                const colorDistanceSq = (a, b) => {
+                    const dr = a[0] - b[0];
+                    const dg = a[1] - b[1];
+                    const db = a[2] - b[2];
+                    return (dr * dr) + (dg * dg) + (db * db);
+                };
+                const addPalette = (x, y) => {
+                    const index = (y * width) + x;
+                    const alpha = pixels[(index * 4) + 3];
+                    if (alpha > 12) palette.push(colorAt(index));
+                };
+                for (let x = 0; x < width; x += paletteStep) {
+                    addPalette(x, 0);
+                    if (x < width * 0.18 || x > width * 0.82) addPalette(x, height - 1);
+                }
+                for (let y = 0; y < height; y += paletteStep) {
+                    addPalette(0, y);
+                    addPalette(width - 1, y);
+                }
+
+                const seed = (x, y) => {
+                    if (x < 0 || x >= width || y < 0 || y >= height) return;
+                    const index = (y * width) + x;
+                    if (background[index]) return;
+                    background[index] = 1;
+                    queue[queueEnd++] = index;
+                };
+                for (let x = 0; x < width; x += 2) seed(x, 0);
+                for (let y = 0; y < height; y += 2) {
+                    seed(0, y);
+                    seed(width - 1, y);
+                }
+                for (let x = 0; x < Math.max(1, Math.floor(width * 0.16)); x += 2) {
+                    seed(x, height - 1);
+                    seed(width - 1 - x, height - 1);
+                }
+
+                const paletteDistanceSq = color => {
+                    let closest = Infinity;
+                    for (let i = 0; i < palette.length; i += 1) {
+                        const distance = colorDistanceSq(color, palette[i]);
+                        if (distance < closest) closest = distance;
+                    }
+                    return closest;
+                };
+                const directPaletteThreshold = 35 * 35;
+                const gradientPaletteThreshold = 66 * 66;
+                const neighborThreshold = 23 * 23;
+                const tryBackgroundNeighbor = (fromIndex, nextIndex) => {
+                    if (nextIndex < 0 || nextIndex >= totalPixels || background[nextIndex]) return;
+                    const alpha = pixels[(nextIndex * 4) + 3];
+                    if (alpha <= 12) {
+                        background[nextIndex] = 1;
+                        queue[queueEnd++] = nextIndex;
+                        return;
+                    }
+                    const nextColor = colorAt(nextIndex);
+                    const paletteDistance = paletteDistanceSq(nextColor);
+                    const localDistance = colorDistanceSq(colorAt(fromIndex), nextColor);
+                    if (paletteDistance <= directPaletteThreshold ||
+                        (paletteDistance <= gradientPaletteThreshold && localDistance <= neighborThreshold)) {
+                        background[nextIndex] = 1;
+                        queue[queueEnd++] = nextIndex;
+                    }
+                };
+
+                while (queueStart < queueEnd) {
+                    const index = queue[queueStart++];
+                    const x = index % width;
+                    const y = Math.floor(index / width);
+                    if (x > 0) tryBackgroundNeighbor(index, index - 1);
+                    if (x + 1 < width) tryBackgroundNeighbor(index, index + 1);
+                    if (y > 0) tryBackgroundNeighbor(index, index - width);
+                    if (y + 1 < height) tryBackgroundNeighbor(index, index + width);
+                }
+
+                // Keep the largest foreground component so borders, logos, and small bits of
+                // compression noise do not force the crop to include the whole source image.
+                const visited = new Uint8Array(totalPixels);
+                const componentQueue = new Int32Array(totalPixels);
+                let largestBounds = null;
+                for (let startIndex = 0; startIndex < totalPixels; startIndex += 1) {
+                    if (visited[startIndex] || background[startIndex] || pixels[(startIndex * 4) + 3] <= 18) continue;
+                    let componentStart = 0;
+                    let componentEnd = 0;
+                    componentQueue[componentEnd++] = startIndex;
+                    visited[startIndex] = 1;
+                    const bounds = emptyBounds();
+                    while (componentStart < componentEnd) {
+                        const index = componentQueue[componentStart++];
+                        const x = index % width;
+                        const y = Math.floor(index / width);
+                        includePixel(bounds, x, y);
+                        const visit = nextIndex => {
+                            if (nextIndex < 0 || nextIndex >= totalPixels || visited[nextIndex] || background[nextIndex] || pixels[(nextIndex * 4) + 3] <= 18) return;
+                            visited[nextIndex] = 1;
+                            componentQueue[componentEnd++] = nextIndex;
+                        };
+                        if (x > 0) visit(index - 1);
+                        if (x + 1 < width) visit(index + 1);
+                        if (y > 0) visit(index - width);
+                        if (y + 1 < height) visit(index + width);
+                    }
+                    if (!largestBounds || bounds.count > largestBounds.count) largestBounds = bounds;
+                }
+                if (boundsAreUseful(largestBounds)) subjectBounds = largestBounds;
+            }
+
+            if (!subjectBounds) {
+                useFallbackFit();
+                return;
+            }
+
+            const subjectWidth = subjectBounds.maxX - subjectBounds.minX + 1;
+            const subjectHeight = subjectBounds.maxY - subjectBounds.minY + 1;
+            if (subjectWidth < 5 || subjectHeight < 5) {
+                useFallbackFit();
+                return;
+            }
+
+            // Very tall full-body artwork is reframed to an upper-body portrait so every
+            // champion reads like the Jordynne reference instead of becoming a tiny figure.
+            const subjectRatio = subjectHeight / Math.max(1, subjectWidth);
+            let visibleHeightRatio = 1;
+            if (subjectRatio > 2.25) visibleHeightRatio = 0.64;
+            else if (subjectRatio > 1.85) visibleHeightRatio = 0.72;
+            else if (subjectRatio > 1.55) visibleHeightRatio = 0.83;
+            const focusedBottom = Math.min(subjectBounds.maxY, Math.round(subjectBounds.minY + (subjectHeight * visibleHeightRatio)));
+            const focusedHeight = focusedBottom - subjectBounds.minY + 1;
+
+            const sidePadding = Math.max(4, Math.round(subjectWidth * 0.075));
+            const topPadding = Math.max(4, Math.round(focusedHeight * 0.075));
+            const bottomPadding = Math.max(2, Math.round(focusedHeight * 0.018));
+            let cropX = Math.max(0, subjectBounds.minX - sidePadding);
+            let cropY = Math.max(0, subjectBounds.minY - topPadding);
+            let cropRight = Math.min(width, subjectBounds.maxX + sidePadding + 1);
+            let cropBottom = Math.min(height, focusedBottom + bottomPadding + 1);
+            let cropWidth = cropRight - cropX;
+            let cropHeight = cropBottom - cropY;
+
+            if (cropWidth < 8 || cropHeight < 8) {
+                useFallbackFit();
+                return;
+            }
+
+            // Output the exact same 6:7 aspect ratio used by every dashboard portrait.
+            // Because each generated image already matches its frame, CSS never has to
+            // guess between contain/cover or zoom differently for different source sizes.
+            const targetWidth = 600;
+            const targetHeight = 700;
+            const output = document.createElement("canvas");
+            output.width = targetWidth;
+            output.height = targetHeight;
+            const outputContext = output.getContext("2d");
+            if (!outputContext) {
+                useFallbackFit();
+                return;
+            }
+            outputContext.imageSmoothingEnabled = true;
+            outputContext.imageSmoothingQuality = "high";
+            outputContext.clearRect(0, 0, targetWidth, targetHeight);
+
+            // Fill the portrait consistently instead of preserving every edge of the
+            // source image. A cover-style scale gives broad renders (jackets, raised arms,
+            // tag poses, etc.) the same close upper-body framing as narrower portraits.
+            // The crop is anchored near the top so the face always stays visible while any
+            // necessary overflow is taken from the lower body and outer shoulders.
+            const heightScale = (targetHeight * 1.01) / cropHeight;
+            const widthScale = (targetWidth * 1.015) / cropWidth;
+            let drawScale = Math.max(heightScale, widthScale);
+
+            // Avoid an extreme zoom when a source has a very narrow silhouette. The focused
+            // crop above already removes most full-body space, so this cap still produces a
+            // strong upper-body portrait while protecting the face and shoulders.
+            const fitScale = Math.min(targetWidth / cropWidth, targetHeight / cropHeight);
+            drawScale = Math.min(drawScale, fitScale * 1.42);
+
+            const drawWidth = cropWidth * drawScale;
+            const drawHeight = cropHeight * drawScale;
+            const drawX = (targetWidth - drawWidth) / 2;
+            const drawY = targetHeight * 0.012;
+            outputContext.drawImage(
+                sourceCanvas,
+                cropX, cropY, cropWidth, cropHeight,
+                drawX, drawY, drawWidth, drawHeight
+            );
+
+            img.dataset.boardNormalized = "1";
+            img.classList.remove("is-alpha-trimmed", "is-board-fallback-fit");
+            img.classList.add("is-board-normalized");
+            img.addEventListener("load", markShape, { once: true });
+            img.src = output.toDataURL("image/png");
+        } catch {
+            // Cross-origin images cannot be inspected in canvas. They use a consistent
+            // upper-body CSS crop instead of reverting to the browser's natural sizing.
+            useFallbackFit();
+        }
+    };
+
+    if (img.complete && img.naturalWidth) analyze();
+    else img.addEventListener("load", analyze, { once: true });
+}
+
 async function openShowChampionsModal(showId) {
     const show = getShow(showId);
     if (!show) return;
@@ -2134,140 +2424,177 @@ async function openShowChampionsModal(showId) {
     const championships = state.championships
         .filter(championship => championshipAvailableForShowIds(championship, [showId]))
         .sort(sortChampionshipsForDashboard);
+
     const usedChampionshipIds = new Set();
     const takeChampionship = (predicate) => {
-        const championship = championships.find(championship => !usedChampionshipIds.has(championship.id) && predicate(championship));
+        const championship = championships.find(item => !usedChampionshipIds.has(item.id) && predicate(item));
         if (championship) usedChampionshipIds.add(championship.id);
         return championship || null;
     };
-    const tagTeamLabelForHolders = (holders) => {
+
+    const activeReignForChampionship = (championshipId) => {
+        if (!championshipId) return null;
+        return (state.titleReigns || [])
+            .filter(reign => reign.championshipId === championshipId && !reign.endDate)
+            .slice()
+            .sort((a, b) => String(b.startDate || "").localeCompare(String(a.startDate || "")))[0] || null;
+    };
+
+    const defenseCountForReign = (championshipId, reign) => {
+        if (!championshipId || !reign || !isISODate(reign.startDate)) return 0;
+        const universeCurrentISO = getUniverseCurrentISO();
+        return state.events.reduce((total, event) => {
+            if (!isISODate(event?.date)) return total;
+            if (event.date <= reign.startDate || event.date > universeCurrentISO) return total;
+            if (!(event.date < universeCurrentISO || isUniverseDateCompleted(event.date))) return total;
+            const defenses = (Array.isArray(event.matches) ? event.matches : []).filter(match => {
+                if (String(match?.championshipId || "").trim() !== championshipId) return false;
+                const result = normalizeNameForCompare(match?.result);
+                return !!result && result !== "no result";
+            }).length;
+            return total + defenses;
+        }, 0);
+    };
+
+    const championshipView = (championship) => {
+        if (!championship) {
+            return {
+                championship: null,
+                holders: [],
+                holderNames: [],
+                reign: null,
+                days: 0,
+                defenses: 0,
+                held: false,
+            };
+        }
+        const reign = activeReignForChampionship(championship.id);
+        const rosterHolders = championshipHolderSuperstars(championship.id, showId);
+        const reignHolders = (reign?.holderIds || [])
+            .map(id => state.superstars.find(superstar => superstar.id === id))
+            .filter(Boolean);
+        const holders = reignHolders.length ? reignHolders : rosterHolders;
+        const holderNames = holders.length
+            ? holders.map(holder => holder.name)
+            : (reign?.holderNames || []);
+        return {
+            championship,
+            holders,
+            holderNames,
+            reign,
+            days: reign ? reignDayLength(reign) : 0,
+            defenses: reign ? defenseCountForReign(championship.id, reign) : 0,
+            held: !!(holderNames.length || holders.length),
+        };
+    };
+
+    const tagTeamLabelForHolders = (holders, fallbackNames = []) => {
         const factions = Array.from(new Set(holders.map(holder => String(holder?.faction || "").trim()).filter(Boolean)));
         if (factions.length === 1) return factions[0];
-        return holders.map(holder => holder.name).join(" / ");
+        const names = holders.length ? holders.map(holder => holder.name) : fallbackNames;
+        return names.join(" / ");
     };
-    const holderVisualHTML = (holder, { featured = false, compact = false } = {}) => {
-        const classSuffix = featured ? "featured" : (compact ? "compact" : "");
-        return holder?.photo
-            ? `<img class="show-board-holder-photo ${classSuffix}" src="${escapeAttr(holder.photo)}" alt="${escapeAttr(holder.name)}" />`
-            : `<div class="show-board-holder-fallback ${classSuffix}">${escapeHTML(superstarInitials(holder?.name || "?"))}</div>`;
+
+    const holderPortraitHTML = (holder, variant = "row") => {
+        const name = String(holder?.name || "Unknown");
+        const photo = holder ? superstarPhotoURL(holder) : "";
+        const initials = superstarInitials(name) || "?";
+        return `
+          <span class="show-board-portrait show-board-portrait-${variant}${photo ? " has-photo" : " is-broken"}">
+            ${photo ? `<img data-show-board-photo src="${escapeAttr(photo)}" alt="${escapeAttr(name)}" />` : ""}
+            <span class="show-board-portrait-fallback">${escapeHTML(initials)}</span>
+          </span>
+        `;
     };
+
+    const vacantPortraitHTML = (variant = "row") => `
+      <span class="show-board-portrait show-board-portrait-${variant} is-vacant">
+        <span class="show-board-portrait-fallback">?</span>
+      </span>
+    `;
+
     const buildFeaturedChampionshipHTML = (championship, emptyLabel) => {
-        const holders = championship ? championshipHolderSuperstars(championship.id, showId) : [];
-        const primaryHolder = holders[0] || null;
-        const championName = primaryHolder?.name || "Vacant";
-        const beltName = championship?.name || emptyLabel;
-        return `
-          <div class="show-board-featured-card">
-            <div class="show-board-featured-nameplate">${escapeHTML(championName)}</div>
-            <div class="show-board-featured-belt">${escapeHTML(beltName)}</div>
-            ${primaryHolder ? `
-              <button type="button" class="show-board-featured-champion" data-open-ss="${primaryHolder.id}">
-                ${holderVisualHTML(primaryHolder, { featured: true })}
-              </button>
-            ` : `
-              <div class="show-board-vacant featured">Vacant</div>
-            `}
-          </div>
-        `;
-    };
-    const buildSinglesRowHTML = (championship) => {
-        const holders = championshipHolderSuperstars(championship.id, showId);
-        const primaryHolder = holders[0] || null;
-        return `
-          <div class="show-board-row">
-            <div class="show-board-row-visual">
-              ${primaryHolder
-                ? `<button type="button" class="show-board-row-portrait-btn" data-open-ss="${primaryHolder.id}">${holderVisualHTML(primaryHolder, { compact: true })}</button>`
-                : `<div class="show-board-holder-fallback compact">?</div>`
-              }
+        const view = championshipView(championship);
+        const titleName = championship?.name || emptyLabel;
+        const holderName = view.held
+            ? tagTeamLabelForHolders(view.holders, view.holderNames)
+            : "VACANT";
+        const primaryHolder = view.holders[0] || null;
+        const portraits = view.held && view.holders.length
+            ? view.holders.slice(0, 2).map(holder => holderPortraitHTML(holder, view.holders.length > 1 ? "featured-tag" : "featured")).join("")
+            : vacantPortraitHTML("featured");
+        const content = `
+            <div class="show-board-featured-title">${escapeHTML(titleName)}</div>
+            <div class="show-board-featured-holder">${escapeHTML(holderName)}</div>
+            <div class="show-board-featured-meta ${view.held ? "" : "is-vacant"}">
+              ${view.held
+                  ? `<span class="show-board-status-dot"></span><span>${view.days} ${view.days === 1 ? "DAY" : "DAYS"}</span>`
+                  : `<span>—</span><span>OPEN</span>`}
             </div>
-            ${primaryHolder ? `
-              <button type="button" class="show-board-row-champion" data-open-ss="${primaryHolder.id}">
-                <div class="show-board-row-copy">
-                  <div class="show-board-row-nameplate">${escapeHTML(primaryHolder.name)}</div>
-                  <div class="show-board-row-belt">${escapeHTML(championship.name)}</div>
-                </div>
-              </button>
-            ` : `
-              <div class="show-board-row-copy">
-                <div class="show-board-row-nameplate">Vacant</div>
-                <div class="show-board-row-belt">${escapeHTML(championship.name)}</div>
-              </div>
-            `}
-          </div>
-        `;
-    };
-    const buildTagRowHTML = (championship) => {
-        const holders = championshipHolderSuperstars(championship.id, showId);
-        const teamLabel = holders.length ? tagTeamLabelForHolders(holders) : "";
-        return `
-          <div class="show-board-row tag">
-            <div class="show-board-row-visual tag">
-              ${holders.length
-                ? holders.slice(0, 2).map(holder => `
-                    <button type="button" class="show-board-tag-portrait-btn" data-open-ss="${holder.id}">
-                      ${holderVisualHTML(holder, { compact: true })}
-                    </button>
-                  `).join("")
-                : `<div class="show-board-holder-fallback compact">?</div><div class="show-board-holder-fallback compact">?</div>`
-              }
+            <div class="show-board-featured-render ${view.holders.length > 1 ? "is-tag" : ""}">
+              ${portraits}
+              ${view.held ? "" : `<span class="show-board-render-label">OPEN</span>`}
             </div>
-            ${holders.length ? `
-              <div class="show-board-tag-champion">
-                <div class="show-board-row-copy">
-                  <div class="show-board-row-nameplate">${escapeHTML(teamLabel)}</div>
-                  <div class="show-board-row-belt">${escapeHTML(championship.name)}</div>
-                  <div class="show-board-row-meta">${escapeHTML(holders.map(holder => holder.name).join(", "))}</div>
-                </div>
-              </div>
-            ` : `
-              <div class="show-board-row-copy">
-                <div class="show-board-row-nameplate">Vacant</div>
-                <div class="show-board-row-belt">${escapeHTML(championship.name)}</div>
-              </div>
-            `}
-          </div>
         `;
+        return primaryHolder
+            ? `<button type="button" class="show-board-featured-card is-held" data-open-ss="${escapeAttr(primaryHolder.id)}">${content}</button>`
+            : `<div class="show-board-featured-card is-vacant">${content}</div>`;
     };
-    const mensWorldChampionship = takeChampionship(championship => {
-        return championshipBoardSlotKey(championship) === "men_world";
-    });
-    const womensWorldChampionship = takeChampionship(championship => {
-        return championshipBoardSlotKey(championship) === "women_world";
-    });
-    const mensMidcardChampionship = takeChampionship(championship => {
-        return championshipBoardSlotKey(championship) === "men_midcard";
-    });
-    const womensMidcardChampionship = takeChampionship(championship => {
-        return championshipBoardSlotKey(championship) === "women_midcard";
-    });
-    const mensTagChampionship = takeChampionship(championship => {
-        return championshipBoardSlotKey(championship) === "men_tag";
-    });
-    const womensTagChampionship = takeChampionship(championship => {
-        return championshipBoardSlotKey(championship) === "women_tag";
-    });
-    const otherChampionships = championships.filter(championship => !usedChampionshipIds.has(championship.id));
+
+    const buildChampionshipRowHTML = (championship) => {
+        const view = championshipView(championship);
+        const isTag = championshipBoardSlotKey(championship).includes("tag");
+        const label = view.held
+            ? (isTag ? tagTeamLabelForHolders(view.holders, view.holderNames) : (view.holderNames[0] || view.holders[0]?.name || "Champion"))
+            : "VACANT";
+        const primaryHolder = view.holders[0] || null;
+        const portraits = view.held && view.holders.length
+            ? view.holders.slice(0, isTag ? 2 : 1).map(holder => holderPortraitHTML(holder, "row")).join("")
+            : Array.from({ length: isTag ? 2 : 1 }, () => vacantPortraitHTML("row")).join("");
+        const body = `
+            <span class="show-board-row-accent" aria-hidden="true"></span>
+            <span class="show-board-row-portraits ${isTag ? "is-tag" : ""}">${portraits}</span>
+            <span class="show-board-row-copy">
+              <span class="show-board-row-title">${escapeHTML(championship.name)}</span>
+              <span class="show-board-row-holder">${escapeHTML(label)}</span>
+              ${view.held && isTag && view.holderNames.length > 1 ? `<span class="show-board-row-team-members">${escapeHTML(view.holderNames.join(" · "))}</span>` : ""}
+            </span>
+            <span class="show-board-row-stat ${view.held ? "" : "is-vacant"}">
+              <span class="show-board-row-stat-value">${view.held ? view.days : "—"}</span>
+              <span class="show-board-row-stat-label">${view.held ? "DAYS" : "OPEN"}</span>
+            </span>
+        `;
+        return primaryHolder
+            ? `<button type="button" class="show-board-row is-held" data-open-ss="${escapeAttr(primaryHolder.id)}">${body}</button>`
+            : `<div class="show-board-row is-vacant">${body}</div>`;
+    };
+
+    const mensWorldChampionship = takeChampionship(championship => championshipBoardSlotKey(championship) === "men_world");
+    const womensWorldChampionship = takeChampionship(championship => championshipBoardSlotKey(championship) === "women_world");
+    const lowerChampionships = [
+        takeChampionship(championship => championshipBoardSlotKey(championship) === "men_midcard"),
+        takeChampionship(championship => championshipBoardSlotKey(championship) === "women_midcard"),
+        takeChampionship(championship => championshipBoardSlotKey(championship) === "men_tag"),
+        takeChampionship(championship => championshipBoardSlotKey(championship) === "women_tag"),
+        ...championships.filter(championship => !usedChampionshipIds.has(championship.id)),
+    ].filter(Boolean);
 
     const bodyHTML = championships.length
         ? `
             <div class="show-board-modal" style="--show-board-accent:${escapeAttr(show.color)};">
               <div class="show-board-shell">
-                <div class="show-board-header">${escapeHTML(show.name)}</div>
+                <header class="show-board-hero">
+                  <div class="show-board-hero-stripes" aria-hidden="true"></div>
+                  <div class="show-board-show-name">${escapeHTML(show.name)}</div>
+                </header>
                 <div class="show-board-featured-grid">
                   ${buildFeaturedChampionshipHTML(mensWorldChampionship, "Men's World Championship")}
                   ${buildFeaturedChampionshipHTML(womensWorldChampionship, "Women's World Championship")}
                 </div>
                 <div class="show-board-section">
-                  ${mensMidcardChampionship ? buildSinglesRowHTML(mensMidcardChampionship) : ""}
-                  ${womensMidcardChampionship ? buildSinglesRowHTML(womensMidcardChampionship) : ""}
-                  ${mensTagChampionship ? buildTagRowHTML(mensTagChampionship) : ""}
-                  ${womensTagChampionship ? buildTagRowHTML(womensTagChampionship) : ""}
-                  ${otherChampionships.map(championship => {
-                      return championshipBoardSlotKey(championship).includes("tag")
-                          ? buildTagRowHTML(championship)
-                          : buildSinglesRowHTML(championship);
-                  }).join("")}
+                  ${lowerChampionships.length
+                      ? lowerChampionships.map(buildChampionshipRowHTML).join("")
+                      : `<div class="show-board-empty">No additional championships are assigned to this show.</div>`}
                 </div>
               </div>
             </div>
@@ -2281,18 +2608,26 @@ async function openShowChampionsModal(showId) {
         cancelText: "Close",
     });
 
+    const modalCard = $(".modal-card");
     const modalCancelBtn = $("#modalCancel");
+    modalCard?.classList.add("show-champions-modal");
     modalCancelBtn.classList.add("hidden");
+
+    $$('[data-show-board-photo]', $("#modalBody")).forEach(img => {
+        img.addEventListener("error", () => img.closest(".show-board-portrait")?.classList.add("is-broken"), { once: true });
+        prepareShowBoardPhoto(img);
+    });
+
     let selectedSuperstarId = "";
-    $$("[data-open-ss]", $("#modalBody")).forEach(el => {
+    $$('[data-open-ss]', $("#modalBody")).forEach(element => {
         const open = () => {
-            selectedSuperstarId = String(el.dataset.openSs || "").trim();
+            selectedSuperstarId = String(element.dataset.openSs || "").trim();
             closeModal({ ok: false });
         };
-        el.addEventListener("click", open);
-        el.addEventListener("keydown", (e) => {
-            if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
+        element.addEventListener("click", open);
+        element.addEventListener("keydown", event => {
+            if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
                 open();
             }
         });
@@ -2304,6 +2639,7 @@ async function openShowChampionsModal(showId) {
         await openSuperstarDetails(selectedSuperstarId, { readOnly: true });
     }
 }
+
 function showName(showId) {
     if (!showId) return "No show";
     const s = getShow(showId);
@@ -2479,7 +2815,7 @@ function openModal({ title, bodyHTML, okText = "OK", cancelText = "Cancel" }) {
     $("#modalCancel").textContent = cancelText;
     $("#modalOk")?.classList.remove("hidden");
     $("#modalCancel")?.classList.remove("hidden");
-    $(".modal-card")?.classList.remove("superstar-picker-modal", "photo-crop-modal");
+    $(".modal-card")?.classList.remove("superstar-picker-modal", "photo-crop-modal", "show-champions-modal");
     resetModalScrollPosition();
     modal.classList.remove("hidden");
     modal.setAttribute("aria-hidden", "false");
@@ -2494,7 +2830,7 @@ function closeModal(result) {
     modal.classList.add("hidden");
     modal.setAttribute("aria-hidden", "true");
     document.body.classList.remove("modal-open");
-    $(".modal-card")?.classList.remove("superstar-picker-modal", "photo-crop-modal");
+    $(".modal-card")?.classList.remove("superstar-picker-modal", "photo-crop-modal", "show-champions-modal");
     resetModalScrollPosition();
     if (modalResolve) modalResolve(result);
     modalResolve = null;
