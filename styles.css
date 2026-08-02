@@ -6686,3 +6686,16 @@ button.show-board-row:hover {
         flex-basis: 38px;
     }
 }
+
+
+/* =========================================================
+   Stability + smooth planner selection — v5.7.6
+   ========================================================= */
+body.modal-open {
+    overscroll-behavior: none;
+}
+.picker-superstar-card[data-selecting="true"] {
+    pointer-events: none;
+    opacity: .72;
+    transform: scale(.985);
+}

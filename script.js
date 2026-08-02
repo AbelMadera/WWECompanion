@@ -4,6 +4,11 @@
 const STORAGE_KEY = "universeBooker.v2";
 const STORAGE_BACKUP_PREFIX = "universeBooker.v2.corrupt-";
 const STORAGE_AUTOEXPORT_KEY = "universeBooker.v2.lastReminder";
+const STORAGE_RECOVERY_KEY = "universeBooker.v2.sessionRecovery";
+const UI_SESSION_KEY = "universeBooker.v2.uiSession";
+const PHOTO_DB_NAME = "universeBooker.photoVault.v1";
+const PHOTO_DB_STORE = "photos";
+const PHOTO_REF_PREFIX = "idb-photo:";
 const CALENDAR_DAYS_PER_MONTH = 28;
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -369,35 +374,78 @@ function defaultState() {
     };
 }
 
+function storageSafeSnapshot(sourceState) {
+    const snapshot = safeJSONParse(JSON.stringify(sourceState)) || defaultState();
+    snapshot.superstars = (snapshot.superstars || []).map(superstar => {
+        const photo = String(superstar?.photo || "");
+        // Embedded photos are kept in IndexedDB. Dropping only an embedded image
+        // is safer than losing the entire universe when browser storage is full.
+        return /^data:image\//i.test(photo) ? { ...superstar, photo: "" } : superstar;
+    });
+    return snapshot;
+}
+
 const store = {
     lastSaveError: null,
     saveCount: 0,
     load() {
-        const raw = localStorage.getItem(STORAGE_KEY);
-        if (!raw) return defaultState();
-        const parsed = safeJSONParse(raw);
-        if (parsed && parsed.version) return parsed;
-        // Corrupt or unrecognized — back it up before falling back to defaults
-        try {
-            const backupKey = `${STORAGE_BACKUP_PREFIX}${Date.now()}`;
-            localStorage.setItem(backupKey, raw);
-        } catch (e) { /* ignore — at least we tried */ }
+        const primaryRaw = localStorage.getItem(STORAGE_KEY);
+        const recoveryRaw = (() => {
+            try { return sessionStorage.getItem(STORAGE_RECOVERY_KEY); } catch { return null; }
+        })();
+        const primary = safeJSONParse(primaryRaw);
+        const recovery = safeJSONParse(recoveryRaw);
+        const validPrimary = primary && primary.version ? primary : null;
+        const validRecovery = recovery && recovery.version ? recovery : null;
+
+        if (validPrimary && validRecovery) {
+            return Number(validRecovery.updatedAt || 0) > Number(validPrimary.updatedAt || 0)
+                ? validRecovery
+                : validPrimary;
+        }
+        if (validPrimary) return validPrimary;
+        if (validRecovery) return validRecovery;
+
+        // Corrupt or unrecognized — back it up before falling back to defaults.
+        if (primaryRaw) {
+            try {
+                const backupKey = `${STORAGE_BACKUP_PREFIX}${Date.now()}`;
+                localStorage.setItem(backupKey, primaryRaw);
+            } catch (e) { /* ignore — at least we tried */ }
+        }
         return defaultState();
     },
     save(state) {
         state.updatedAt = Date.now();
+        let serialized = "";
         try {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+            serialized = JSON.stringify(state);
+            localStorage.setItem(STORAGE_KEY, serialized);
+            try { sessionStorage.setItem(STORAGE_RECOVERY_KEY, serialized); } catch { /* optional recovery */ }
             this.lastSaveError = null;
             this.saveCount += 1;
-            return { ok: true };
+            return { ok: true, degraded: false };
         } catch (err) {
-            this.lastSaveError = err;
-            return { ok: false, error: err };
+            // Quota failures used to make the next browser reload look like a full
+            // reset. Keep the core universe safe even if an embedded photo is huge.
+            try {
+                const compact = storageSafeSnapshot(state);
+                compact.updatedAt = state.updatedAt;
+                serialized = JSON.stringify(compact);
+                localStorage.setItem(STORAGE_KEY, serialized);
+                try { sessionStorage.setItem(STORAGE_RECOVERY_KEY, serialized); } catch { /* optional recovery */ }
+                this.lastSaveError = err;
+                this.saveCount += 1;
+                return { ok: true, degraded: true, error: err };
+            } catch (fallbackError) {
+                this.lastSaveError = fallbackError;
+                return { ok: false, error: fallbackError };
+            }
         }
     },
     wipe() {
         localStorage.removeItem(STORAGE_KEY);
+        try { sessionStorage.removeItem(STORAGE_RECOVERY_KEY); } catch { /* ignore */ }
     },
     listCorruptBackups() {
         const keys = [];
@@ -445,9 +493,9 @@ function flushSaveNow() {
     const indicator = $("#saveState");
     if (indicator) {
         if (result.ok) {
-            indicator.textContent = "Saved";
-            indicator.classList.add("muted");
-            indicator.classList.remove("save-state-error");
+            indicator.textContent = result.degraded ? "Saved • photos pending" : "Saved";
+            indicator.classList.toggle("muted", !result.degraded);
+            indicator.classList.toggle("save-state-error", !!result.degraded);
         } else {
             indicator.textContent = "Save failed";
             indicator.classList.remove("muted");
@@ -458,7 +506,13 @@ function flushSaveNow() {
     if (result.ok && store.saveCount > 0 && store.saveCount % 50 === 0) {
         showBackupReminderToast();
     }
-    if (!result.ok) {
+    if (result.degraded) {
+        showToast({
+            message: "Your universe was saved safely, but one or more embedded photos were too large for browser storage.",
+            tone: "info",
+            duration: 5200,
+        });
+    } else if (!result.ok) {
         showSaveErrorToast();
     }
 }
@@ -663,9 +717,110 @@ function superstarChampionshipNames(superstar) {
         .map(championshipName)
         .filter(Boolean);
 }
+const photoVaultCache = new Map();
+let photoVaultDbPromise = null;
+
+function photoVaultRef(superstarId) {
+    return `${PHOTO_REF_PREFIX}${superstarId}`;
+}
+function photoVaultIdFromRef(value) {
+    const raw = String(value || "");
+    return raw.startsWith(PHOTO_REF_PREFIX) ? raw.slice(PHOTO_REF_PREFIX.length) : "";
+}
+function openPhotoVaultDB() {
+    if (!("indexedDB" in window)) return Promise.reject(new Error("IndexedDB is unavailable."));
+    if (photoVaultDbPromise) return photoVaultDbPromise;
+    photoVaultDbPromise = new Promise((resolve, reject) => {
+        const request = indexedDB.open(PHOTO_DB_NAME, 1);
+        request.onupgradeneeded = () => {
+            const db = request.result;
+            if (!db.objectStoreNames.contains(PHOTO_DB_STORE)) db.createObjectStore(PHOTO_DB_STORE);
+        };
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error || new Error("Could not open the photo vault."));
+    });
+    return photoVaultDbPromise;
+}
+async function savePhotoToVault(superstarId, dataURL) {
+    const db = await openPhotoVaultDB();
+    await new Promise((resolve, reject) => {
+        const tx = db.transaction(PHOTO_DB_STORE, "readwrite");
+        tx.objectStore(PHOTO_DB_STORE).put(String(dataURL || ""), superstarId);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error || new Error("Could not save that photo."));
+        tx.onabort = () => reject(tx.error || new Error("Photo save was interrupted."));
+    });
+    photoVaultCache.set(superstarId, String(dataURL || ""));
+    return photoVaultRef(superstarId);
+}
+async function loadPhotoFromVault(superstarId) {
+    if (photoVaultCache.has(superstarId)) return photoVaultCache.get(superstarId) || "";
+    const db = await openPhotoVaultDB();
+    const value = await new Promise((resolve, reject) => {
+        const tx = db.transaction(PHOTO_DB_STORE, "readonly");
+        const request = tx.objectStore(PHOTO_DB_STORE).get(superstarId);
+        request.onsuccess = () => resolve(String(request.result || ""));
+        request.onerror = () => reject(request.error || new Error("Could not load that photo."));
+    });
+    if (value) photoVaultCache.set(superstarId, value);
+    return value;
+}
+async function deletePhotoFromVault(superstarId) {
+    photoVaultCache.delete(superstarId);
+    if (!("indexedDB" in window)) return;
+    const db = await openPhotoVaultDB();
+    await new Promise((resolve, reject) => {
+        const tx = db.transaction(PHOTO_DB_STORE, "readwrite");
+        tx.objectStore(PHOTO_DB_STORE).delete(superstarId);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error || new Error("Could not remove that photo."));
+    });
+}
+async function clearPhotoVault() {
+    photoVaultCache.clear();
+    if (!("indexedDB" in window)) return;
+    const db = await openPhotoVaultDB();
+    await new Promise((resolve, reject) => {
+        const tx = db.transaction(PHOTO_DB_STORE, "readwrite");
+        tx.objectStore(PHOTO_DB_STORE).clear();
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error || new Error("Could not clear the photo vault."));
+    });
+}
+function rerenderCurrentViewPreservingScroll() {
+    const x = window.scrollX || 0;
+    const y = window.scrollY || 0;
+    renderAll();
+    requestAnimationFrame(() => window.scrollTo(x, y));
+}
+async function initializePhotoVault() {
+    if (!("indexedDB" in window)) return;
+    let migrated = false;
+    let loaded = false;
+    for (const superstar of state.superstars) {
+        const raw = String(superstar?.photo || "").trim();
+        try {
+            if (/^data:image\//i.test(raw)) {
+                superstar.photo = await savePhotoToVault(superstar.id, raw);
+                migrated = true;
+                loaded = true;
+            } else {
+                const vaultId = photoVaultIdFromRef(raw);
+                if (vaultId && await loadPhotoFromVault(vaultId)) loaded = true;
+            }
+        } catch (error) {
+            console.warn("Photo vault initialization skipped a photo:", error);
+        }
+    }
+    if (migrated) store.save(state);
+    if (loaded) rerenderCurrentViewPreservingScroll();
+}
+
 function superstarPhotoURL(superstar) {
     const raw = String(superstar?.photo ?? "").trim();
     if (!raw) return "";
+    const vaultId = photoVaultIdFromRef(raw);
+    if (vaultId) return photoVaultCache.get(vaultId) || "";
     // Reject dangerous schemes outright (javascript:, vbscript:, file:, non-image data:)
     if (/^javascript:/i.test(raw)) return "";
     if (/^vbscript:/i.test(raw)) return "";
@@ -2750,6 +2905,41 @@ function deleteEvent(eventId) {
 // -------------------- ROUTER --------------------
 const views = ["dashboard", "calendar", "planner", "roster", "settings"];
 let currentView = "dashboard";
+let uiSessionSaveTimer = null;
+
+function readUiSessionState() {
+    try {
+        const parsed = safeJSONParse(sessionStorage.getItem(UI_SESSION_KEY));
+        return parsed && typeof parsed === "object" ? parsed : {};
+    } catch {
+        return {};
+    }
+}
+function saveUiSessionState() {
+    if (document.body.classList.contains("modal-open")) return;
+    try {
+        sessionStorage.setItem(UI_SESSION_KEY, JSON.stringify({
+            view: currentView,
+            plannerEventId,
+            scrollX: window.scrollX || 0,
+            scrollY: window.scrollY || 0,
+            savedAt: Date.now(),
+        }));
+    } catch { /* session persistence is optional */ }
+}
+function scheduleUiSessionSave() {
+    clearTimeout(uiSessionSaveTimer);
+    uiSessionSaveTimer = setTimeout(saveUiSessionState, 120);
+}
+function restoreUiSessionScroll(session) {
+    const x = Number(session?.scrollX || 0);
+    const y = Number(session?.scrollY || 0);
+    const restore = () => window.scrollTo({ left: x, top: y, behavior: "auto" });
+    requestAnimationFrame(() => {
+        restore();
+        requestAnimationFrame(restore);
+    });
+}
 
 function setActiveNav(view) {
     $$(".nav-btn").forEach(b => b.classList.toggle("active", b.dataset.view === view));
@@ -2776,6 +2966,7 @@ function setView(view) {
         $("#viewSubtitle").textContent = titles[view][1];
 
         renderAll();
+        scheduleUiSessionSave();
     };
 
     const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
@@ -2798,6 +2989,49 @@ function optimizeImages(root = document) {
 // -------------------- MODAL --------------------
 const modal = $("#modal");
 let modalResolve = null;
+let modalScrollLock = null;
+
+function lockDocumentScroll() {
+    if (modalScrollLock) return;
+    const body = document.body;
+    const scrollX = window.scrollX || 0;
+    const scrollY = window.scrollY || 0;
+    modalScrollLock = {
+        scrollX,
+        scrollY,
+        restoration: "scrollRestoration" in history ? history.scrollRestoration : null,
+        style: {
+            position: body.style.position,
+            top: body.style.top,
+            left: body.style.left,
+            right: body.style.right,
+            width: body.style.width,
+            overflow: body.style.overflow,
+        },
+    };
+    if ("scrollRestoration" in history) history.scrollRestoration = "manual";
+    body.style.position = "fixed";
+    body.style.top = `-${scrollY}px`;
+    body.style.left = `-${scrollX}px`;
+    body.style.right = "0";
+    body.style.width = "100%";
+    body.style.overflow = "hidden";
+}
+
+function unlockDocumentScroll() {
+    if (!modalScrollLock) return;
+    const lock = modalScrollLock;
+    modalScrollLock = null;
+    const body = document.body;
+    Object.assign(body.style, lock.style);
+    if ("scrollRestoration" in history && lock.restoration) history.scrollRestoration = lock.restoration;
+    const restore = () => window.scrollTo({ left: lock.scrollX, top: lock.scrollY, behavior: "auto" });
+    restore();
+    requestAnimationFrame(() => {
+        restore();
+        requestAnimationFrame(restore);
+    });
+}
 
 function resetModalScrollPosition() {
     const body = $("#modalBody");
@@ -2817,6 +3051,7 @@ function openModal({ title, bodyHTML, okText = "OK", cancelText = "Cancel" }) {
     $("#modalCancel")?.classList.remove("hidden");
     $(".modal-card")?.classList.remove("superstar-picker-modal", "photo-crop-modal", "show-champions-modal");
     resetModalScrollPosition();
+    lockDocumentScroll();
     modal.classList.remove("hidden");
     modal.setAttribute("aria-hidden", "false");
     document.body.classList.add("modal-open");
@@ -2832,6 +3067,7 @@ function closeModal(result) {
     document.body.classList.remove("modal-open");
     $(".modal-card")?.classList.remove("superstar-picker-modal", "photo-crop-modal", "show-champions-modal");
     resetModalScrollPosition();
+    unlockDocumentScroll();
     if (modalResolve) modalResolve(result);
     modalResolve = null;
 }
@@ -5458,7 +5694,35 @@ function plannerRankMapForEvent(ev) {
     return map;
 }
 
-function updatePlannerParticipantSlot({ row, slot, superstarId = "" }) {
+function capturePlannerViewportAnchor(row, slot) {
+    const anchor = document.querySelector(`[data-row="${row}"] [data-pick-participant][data-slot="${slot}"]`);
+    return {
+        row,
+        slot,
+        scrollX: window.scrollX || 0,
+        scrollY: window.scrollY || 0,
+        top: anchor?.getBoundingClientRect().top ?? null,
+    };
+}
+function restorePlannerViewportAnchor(snapshot) {
+    if (!snapshot) return;
+    const restore = () => {
+        const anchor = document.querySelector(`[data-row="${snapshot.row}"] [data-pick-participant][data-slot="${snapshot.slot}"]`);
+        if (anchor && Number.isFinite(snapshot.top)) {
+            const delta = anchor.getBoundingClientRect().top - snapshot.top;
+            if (Math.abs(delta) > 0.5) window.scrollBy({ top: delta, left: 0, behavior: "auto" });
+            try { anchor.focus({ preventScroll: true }); } catch { /* older browsers */ }
+        } else {
+            window.scrollTo({ left: snapshot.scrollX, top: snapshot.scrollY, behavior: "auto" });
+        }
+    };
+    requestAnimationFrame(() => {
+        restore();
+        requestAnimationFrame(restore);
+    });
+}
+
+function updatePlannerParticipantSlot({ row, slot, superstarId = "" }, { render = true } = {}) {
     const ev = getEvent(plannerEventId);
     if (!ev || !ev.matches[row]) return false;
     if (isUniverseDateCompleted(ev.date)) {
@@ -5500,7 +5764,7 @@ function updatePlannerParticipantSlot({ row, slot, superstarId = "" }) {
 
     reconcilePlannerMatchTeams(match);
     upsertEvent(ev);
-    renderPlanner();
+    if (render) renderPlanner();
     return true;
 }
 
@@ -5512,6 +5776,7 @@ async function openPlannerSuperstarPicker({ row, slot }) {
         return;
     }
 
+    const viewportAnchor = capturePlannerViewportAnchor(row, slot);
     const match = ev.matches[row];
     const participants = Array.isArray(match.participants) ? match.participants.filter(Boolean) : [];
     const currentId = participants[slot] || "";
@@ -5663,11 +5928,17 @@ async function openPlannerSuperstarPicker({ row, slot }) {
     rosterGrid?.addEventListener("click", e => {
         const card = e.target.closest("[data-picker-superstar]");
         if (!card) return;
-        updatePlannerParticipantSlot({ row, slot, superstarId: card.dataset.pickerSuperstar });
-        closeModal({ ok: true, selected: card.dataset.pickerSuperstar });
+        e.preventDefault();
+        e.stopPropagation();
+        if (card.dataset.selecting === "true") return;
+        card.dataset.selecting = "true";
+        const selectedId = card.dataset.pickerSuperstar;
+        updatePlannerParticipantSlot({ row, slot, superstarId: selectedId }, { render: false });
+        closeModal({ ok: true, selected: selectedId });
     });
-    clearButton.addEventListener("click", () => {
-        updatePlannerParticipantSlot({ row, slot, superstarId: "" });
+    clearButton.addEventListener("click", e => {
+        e.preventDefault();
+        updatePlannerParticipantSlot({ row, slot, superstarId: "" }, { render: false });
         closeModal({ ok: true, cleared: true });
     });
     $("#pickerClose")?.addEventListener("click", () => closeModal({ ok: false }));
@@ -5677,10 +5948,14 @@ async function openPlannerSuperstarPicker({ row, slot }) {
         resetModalScrollPosition();
         if (rosterGrid) rosterGrid.scrollTop = 0;
     });
-    await modalPromise;
+    const modalResult = await modalPromise;
     clearButton.remove();
     okButton?.classList.remove("hidden");
     modalCard?.classList.remove("superstar-picker-modal");
+    if (modalResult?.selected || modalResult?.cleared) {
+        renderPlanner();
+        restorePlannerViewportAnchor(viewportAnchor);
+    }
 }
 
 function plannerNoteDisplayHTML(noteValue, emptyText) {
@@ -7041,9 +7316,18 @@ function renderSuperstarPhotoCropPanel() {
         $(".modal-card")?.classList.remove("photo-crop-modal");
         renderSuperstarPhotoSettingsPanel();
     });
-    $("#photoCropSave")?.addEventListener("click", () => {
+    $("#photoCropSave")?.addEventListener("click", async e => {
+        const button = e.currentTarget;
+        button.disabled = true;
+        button.textContent = "Saving…";
         const dataURL = cropCanvasToDataURL(crop);
-        state.superstars = state.superstars.map(ss => ss.id === superstar.id ? { ...ss, photo: dataURL } : ss);
+        let storedPhoto = dataURL;
+        try {
+            storedPhoto = await savePhotoToVault(superstar.id, dataURL);
+        } catch (error) {
+            console.warn("Photo vault unavailable; using local save fallback.", error);
+        }
+        state.superstars = state.superstars.map(ss => ss.id === superstar.id ? { ...ss, photo: storedPhoto } : ss);
         settingsUiState.photos.crop = null;
         settingsUiState.photos.selectedId = superstar.id;
         settingsUiState.photos.message = { tone: "success", text: `Photo saved for ${superstar.name}.` };
@@ -7130,7 +7414,8 @@ function renderSuperstarPhotoSettingsPanel() {
         await beginSuperstarPhotoCrop(selectedId, source);
     });
     $("#settingsPhotoAdjustCurrent")?.addEventListener("click", () => beginSuperstarPhotoCrop(selectedId, photo));
-    $("#settingsPhotoRemove")?.addEventListener("click", () => {
+    $("#settingsPhotoRemove")?.addEventListener("click", async () => {
+        await deletePhotoFromVault(selectedId).catch(() => {});
         state.superstars = state.superstars.map(ss => ss.id === selectedId ? { ...ss, photo: "" } : ss);
         settingsUiState.photos.message = { tone: "success", text: `Photo removed from ${superstar.name}.` };
         saveSoon();
@@ -8136,8 +8421,8 @@ function renderDataSettingsPanel() {
         setSettingsStatus(status, "Selected file cleared.", "info");
     };
 
-    $("#settingsExportBtn", root).onclick = () => {
-        exportUniverseJSON();
+    $("#settingsExportBtn", root).onclick = async () => {
+        await exportUniverseJSON();
         setSettingsStatus(status, "Full universe backup exported.", "success");
     };
 
@@ -8157,6 +8442,7 @@ function renderDataSettingsPanel() {
 
         try {
             const result = importPopulateJSON(payload, { replace: replaceInput.checked });
+            await initializePhotoVault().catch(error => console.warn("Imported photo migration skipped:", error));
             fileInput.value = "";
             renderAll();
             setSettingsStatus(
@@ -8178,6 +8464,7 @@ function renderDataSettingsPanel() {
         }
 
         store.wipe();
+        clearPhotoVault().catch(() => {});
         state = normalizeStateData(store.load());
         plannerEventId = null;
         renderAll();
@@ -8758,8 +9045,18 @@ $("#quickOpenToday")?.addEventListener("click", () => {
 });
 
 // Export/Import/Reset
-function exportUniverseJSON() {
-    const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
+async function exportUniverseJSON() {
+    const snapshot = safeJSONParse(JSON.stringify(state)) || state;
+    for (const superstar of snapshot.superstars || []) {
+        const vaultId = photoVaultIdFromRef(superstar.photo);
+        if (!vaultId) continue;
+        try {
+            superstar.photo = photoVaultCache.get(vaultId) || await loadPhotoFromVault(vaultId) || "";
+        } catch {
+            superstar.photo = "";
+        }
+    }
+    const blob = new Blob([JSON.stringify(snapshot, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -8769,6 +9066,22 @@ function exportUniverseJSON() {
 }
 
 // -------------------- INIT --------------------
+window.addEventListener("scroll", scheduleUiSessionSave, { passive: true });
+window.addEventListener("pagehide", () => {
+    if (pendingSave) flushSaveNow();
+    saveUiSessionState();
+});
+window.addEventListener("pageshow", event => {
+    if (event.persisted) restoreUiSessionScroll(readUiSessionState());
+});
+
 (function init() {
-    setView("dashboard");
+    const session = readUiSessionState();
+    if (session.plannerEventId && state.events.some(event => event.id === session.plannerEventId)) {
+        plannerEventId = session.plannerEventId;
+    }
+    const initialView = views.includes(session.view) ? session.view : "dashboard";
+    setView(initialView);
+    restoreUiSessionScroll(session);
+    initializePhotoVault().catch(error => console.warn("Photo vault unavailable:", error));
 })();
