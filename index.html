@@ -5,9 +5,13 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Universe Booker" />
+    <meta name="format-detection" content="telephone=no" />
+    <meta name="color-scheme" content="dark" />
     <meta name="theme-color" content="#0b0b0f" />
+    <link rel="manifest" href="manifest.webmanifest" />
     <link rel="apple-touch-icon" href="images/app-icon.png" />
     <link rel="icon" type="image/png" sizes="192x192" href="images/app-icon.png" />
     <link rel="icon" type="image/png" sizes="512x512" href="images/app-icon.png" />
@@ -16,23 +20,32 @@
 </head>
 
 <body>
+    <!-- Reusable tab icons -->
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+        <symbol id="i-home" viewBox="0 0 24 24"><path d="M4 10.5 12 4l8 6.5V19a1 1 0 0 1-1 1h-4.5v-5.5h-5V20H5a1 1 0 0 1-1-1z"/></symbol>
+        <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></symbol>
+        <symbol id="i-planner" viewBox="0 0 24 24"><rect x="4" y="3.5" width="16" height="17" rx="2.5"/><path d="M8 8.5h8M8 12h8M8 15.5h5"/></symbol>
+        <symbol id="i-roster" viewBox="0 0 24 24"><circle cx="9" cy="8.5" r="3.2"/><path d="M3.5 19.5c.9-3.4 3-5.2 5.5-5.2s4.6 1.8 5.5 5.2"/><circle cx="17" cy="9.5" r="2.4"/><path d="M15.5 14.6c2.6-.4 4.4 1.3 5 4.4"/></symbol>
+        <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 13.5a7.6 7.6 0 0 0 0-3l2-1.6-2-3.4-2.4.9a7.4 7.4 0 0 0-2.6-1.5L14 2.5h-4l-.4 2.4A7.4 7.4 0 0 0 7 6.4l-2.4-.9-2 3.4 2 1.6a7.6 7.6 0 0 0 0 3l-2 1.6 2 3.4 2.4-.9a7.4 7.4 0 0 0 2.6 1.5l.4 2.4h4l.4-2.4a7.4 7.4 0 0 0 2.6-1.5l2.4.9 2-3.4z"/></symbol>
+    </svg>
+
     <div class="app">
-        <!-- Side nav (desktop/tablet) -->
+        <!-- Side nav (desktop) -->
         <aside class="sidebar" aria-label="Navigation">
             <div class="brand">
                 <div class="logo">UB</div>
                 <div>
                     <div class="title">2K Universe Booker</div>
-                    <div class="sub">LocalStorage </div>
+                    <div class="sub">Saved on this device</div>
                 </div>
             </div>
 
-            <nav class="nav" role="tablist" aria-label="Views">
-                <button class="nav-btn active" data-view="dashboard">Dashboard</button>
-                <button class="nav-btn" data-view="calendar">Calendar</button>
-                <button class="nav-btn" data-view="planner">Planner</button>
-                <button class="nav-btn" data-view="roster">Roster</button>
-                <button class="nav-btn" data-view="settings">Settings</button>
+            <nav class="nav" aria-label="Views">
+                <button class="nav-btn active" data-view="dashboard"><svg class="nav-icon"><use href="#i-home"/></svg><span>Dashboard</span></button>
+                <button class="nav-btn" data-view="calendar"><svg class="nav-icon"><use href="#i-calendar"/></svg><span>Calendar</span></button>
+                <button class="nav-btn" data-view="planner"><svg class="nav-icon"><use href="#i-planner"/></svg><span>Planner</span></button>
+                <button class="nav-btn" data-view="roster"><svg class="nav-icon"><use href="#i-roster"/></svg><span>Roster</span></button>
+                <button class="nav-btn" data-view="settings"><svg class="nav-icon"><use href="#i-settings"/></svg><span>Settings</span></button>
             </nav>
 
             <div class="sidebar-footer"></div>
@@ -75,28 +88,27 @@
 
             <!-- CALENDAR -->
             <section id="view-calendar" class="view hidden">
-                <div class="card">
-                    <div class="card-body row space gap wrap">
-                        <div class="row gap">
-                            <button class="btn secondary" id="calPrev" aria-label="Previous month">←</button>
-                            <button class="btn secondary" id="calToday">Today</button>
-                            <button class="btn secondary" id="calNext" aria-label="Next month">→</button>
-                        </div>
-
-                        <div class="row gap wrap">
+                <div class="card cal-toolbar-card">
+                    <div class="cal-header">
+                        <button class="btn secondary icon-btn" id="calPrev" aria-label="Previous month">‹</button>
+                        <div class="cal-month" id="calendarTitle" aria-live="polite"></div>
+                        <button class="btn secondary icon-btn" id="calNext" aria-label="Next month">›</button>
+                        <button class="btn secondary" id="calToday">Today</button>
+                    </div>
+                    <div class="cal-tools">
+                        <label class="cal-tool">
+                            <span class="cal-tool-label">Show</span>
                             <select id="calShowFilter" class="input">
                                 <option value="all">All shows</option>
                             </select>
+                        </label>
+                        <label class="cal-tool">
+                            <span class="cal-tool-label">Universe start</span>
                             <input id="calUniverseStartDate" class="input" type="date" title="Universe start date" />
-                            <button class="btn secondary" id="calSetStartFromSelected">Use Selected as Start</button>
-                            <button class="btn secondary" id="calToggleDone">Mark Day Done</button>
-                            <button class="btn secondary" id="calProgressDay">Progress Day</button>
-                            <button class="btn" id="addEventBtn">Add Event</button>
-                        </div>
+                        </label>
                     </div>
                 </div>
 
-                <div class="h2" id="calendarTitle"></div>
                 <div class="calendar-weekdays" aria-hidden="true">
                     <div class="calendar-weekday">Mon</div>
                     <div class="calendar-weekday">Tue</div>
@@ -108,78 +120,92 @@
                 </div>
                 <div id="calendarGrid" class="calendar" aria-label="Calendar grid"></div>
 
-                <div class="card">
-                    <div class="card-title">Events on selected date</div>
+                <div class="card cal-day-card">
+                    <div class="cal-day-head">
+                        <div class="cal-day-heading">
+                            <div class="cal-day-title" id="calSelectedTitle">Selected day</div>
+                            <span class="cal-day-status" id="calSelectedStatus"></span>
+                        </div>
+                        <div class="cal-day-actions">
+                            <button class="btn secondary" id="calToggleDone">Mark Done</button>
+                            <button class="btn secondary" id="calProgressDay">Progress Day</button>
+                            <button class="btn" id="addEventBtn">Add Event</button>
+                        </div>
+                    </div>
                     <div id="eventsList" class="card-body"></div>
+                    <div class="cal-day-foot">
+                        <button class="link-btn" id="calSetStartFromSelected">Use this day as the universe start</button>
+                    </div>
                 </div>
             </section>
 
             <!-- PLANNER -->
             <section id="view-planner" class="view hidden">
-                <div class="card">
-                    <div class="card-body row space gap wrap">
-                        <div class="planner-toolbar">
-                            <select id="plannerEventSelect" class="input"></select>
-                            <div class="row gap wrap planner-toolbar-actions">
-                                <button id="addMatchRow" class="btn">Add Row</button>
-                                <span id="saveState" class="pill muted">Saved</span>
-                            </div>
+                <div class="planner-toolbar-card">
+                    <div class="planner-toolbar">
+                        <button class="btn secondary icon-btn" id="plannerPrevEvent" aria-label="Previous event">‹</button>
+                        <select id="plannerEventSelect" class="input" aria-label="Event"></select>
+                        <button class="btn secondary icon-btn" id="plannerNextEvent" aria-label="Next event">›</button>
+                    </div>
+                    <div class="planner-toolbar-meta">
+                        <div id="plannerMeta" class="planner-meta" role="button" tabindex="0" title="View event card"></div>
+                        <div class="planner-toolbar-actions">
+                            <span id="saveState" class="pill muted">Saved</span>
+                            <button id="addMatchRow" class="btn">Add Match</button>
                         </div>
                     </div>
                 </div>
 
-                <div id="plannerMeta" class="muted"></div>
                 <div id="plannerLockBanner" class="planner-lock-banner hidden">
-                    <span>🔒 This day is marked done. Matches are locked. To edit, unmark the day in the calendar first.</span>
+                    <span>🔒 This day is marked done, so the card is locked. Unmark the day in the calendar to edit it.</span>
                 </div>
 
-                <!-- Mobile-friendly card layout (rendered when viewport is small) -->
                 <div id="plannerCardList" class="planner-card-list" aria-label="Match cards"></div>
-
-                <!-- Desktop / wide-screen table (hidden on small screens) -->
-                <div class="table-wrap planner-table-wrap" role="region" aria-label="Planner table">
-                    <table class="table" id="matchesTable">
-                        <thead>
-                            <tr>
-                                <th style="width:90px;">Move</th>
-                                <th>Participants</th>
-                                <th style="width:160px;">Match Type</th>
-                                <th>Storyline</th>
-                                <th style="width:220px;">Championship</th>
-                                <th style="width:160px;">Result</th>
-                                <th>Rivalry Notes</th>
-                                <th style="width:70px;"></th>
-                            </tr>
-                        </thead>
-                        <tbody id="matchesBody"></tbody>
-                    </table>
-                </div>
+                <datalist id="matchTypePresets">
+                    <option value="1v1"></option>
+                    <option value="Tag Team"></option>
+                    <option value="Triple Threat"></option>
+                    <option value="Fatal 4-Way"></option>
+                    <option value="6-Man Tag"></option>
+                    <option value="Triple Threat Tag"></option>
+                    <option value="Fatal 4-Way Tag"></option>
+                    <option value="Handicap"></option>
+                    <option value="Steel Cage"></option>
+                    <option value="Hell in a Cell"></option>
+                    <option value="Ladder Match"></option>
+                    <option value="TLC"></option>
+                    <option value="Extreme Rules"></option>
+                    <option value="Last Man Standing"></option>
+                    <option value="Royal Rumble"></option>
+                    <option value="Elimination Chamber"></option>
+                    <option value="Promo"></option>
+                </datalist>
             </section>
 
             <!-- ROSTER -->
             <section id="view-roster" class="view hidden">
                 <div class="card">
-                    <div class="card-title row space gap wrap">
-                        <span>Roster</span>
-                        <div class="row gap wrap roster-header-actions">
-                            <div class="row gap wrap roster-filters">
-                                <select id="rosterFilter" class="input"></select>
-                                <select id="rosterDivisionFilter" class="input">
-                                    <option value="all">All divisions</option>
-                                    <option value="World">World</option>
-                                    <option value="Midcard">Midcard</option>
-                                    <option value="Tag">Tag</option>
-                                    <option value="Women">Women</option>
-                                    <option value="Other">Other</option>
-                                </select>
-                                <select id="rosterStatusFilter" class="input">
-                                    <option value="all">Everyone</option>
-                                    <option value="champions">Champions only</option>
-                                    <option value="non-champions">Non-champions</option>
-                                </select>
-                                <input id="rosterSearch" class="input" placeholder="Search…" />
-                            </div>
+                    <div class="card-title roster-head">
+                        <div class="roster-head-row">
+                            <span>Roster <span id="rosterCount" class="muted tiny"></span></span>
                             <button id="openAddSSModal" class="btn">Add Superstar</button>
+                        </div>
+                        <div class="roster-filters">
+                            <input id="rosterSearch" class="input" type="search" placeholder="Search superstars…" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="search" />
+                            <select id="rosterFilter" class="input" aria-label="Show"></select>
+                            <select id="rosterDivisionFilter" class="input" aria-label="Division">
+                                <option value="all">All divisions</option>
+                                <option value="World">World</option>
+                                <option value="Midcard">Midcard</option>
+                                <option value="Tag">Tag</option>
+                                <option value="Women">Women</option>
+                                <option value="Other">Other</option>
+                            </select>
+                            <select id="rosterStatusFilter" class="input" aria-label="Champion status">
+                                <option value="all">Everyone</option>
+                                <option value="champions">Champions only</option>
+                                <option value="non-champions">Non-champions</option>
+                            </select>
                         </div>
                     </div>
                     <div id="rosterList" class="card-body"></div>
@@ -189,39 +215,37 @@
             <!-- SETTINGS -->
             <section id="view-settings" class="view hidden">
                 <div class="card">
-                    <div class="card-title">Settings Panels</div>
+                    <div class="card-title">Settings</div>
                     <div class="card-body">
-                        <div class="muted">
-                            Open the panel you need instead of keeping every settings tool expanded on the page.
-                        </div>
-                        <div id="settingsPanels" class="settings-panel-list" style="margin-top:14px;"></div>
+                        <div id="settingsPanels" class="settings-panel-list"></div>
                     </div>
                 </div>
             </section>
 
-            <!-- Modal -->
-            <div id="modal" class="modal hidden" aria-hidden="true">
-                <div class="modal-card">
-                    <div class="modal-title" id="modalTitle">Modal</div>
-                    <div class="modal-body" id="modalBody"></div>
-                    <div class="modal-actions">
-                        <button class="btn secondary" id="modalCancel">Cancel</button>
-                        <button class="btn" id="modalOk">OK</button>
-                    </div>
-                </div>
-            </div>
-
-            <footer class="footer muted">HTML/CSS/JS • LocalStorage • v5.0.0</footer>
-
-            <!-- Bottom nav (mobile) -->
-            <nav class="bottom-nav" aria-label="Bottom navigation">
-                <button class="bnav-btn active" data-view="dashboard">Home</button>
-                <button class="bnav-btn" data-view="calendar">Calendar</button>
-                <button class="bnav-btn" data-view="planner">Planner</button>
-                <button class="bnav-btn" data-view="roster">Roster</button>
-                <button class="bnav-btn" data-view="settings">Settings</button>
-            </nav>
+            <footer class="footer muted">2K Universe Booker • Saved on this device • v6.0</footer>
         </main>
+
+        <!-- Bottom tab bar (phones & tablets) -->
+        <nav class="bottom-nav" aria-label="Bottom navigation">
+            <button class="bnav-btn active" data-view="dashboard"><svg class="bnav-icon"><use href="#i-home"/></svg><span>Home</span></button>
+            <button class="bnav-btn" data-view="calendar"><svg class="bnav-icon"><use href="#i-calendar"/></svg><span>Calendar</span></button>
+            <button class="bnav-btn" data-view="planner"><svg class="bnav-icon"><use href="#i-planner"/></svg><span>Planner</span></button>
+            <button class="bnav-btn" data-view="roster"><svg class="bnav-icon"><use href="#i-roster"/></svg><span>Roster</span></button>
+            <button class="bnav-btn" data-view="settings"><svg class="bnav-icon"><use href="#i-settings"/></svg><span>Settings</span></button>
+        </nav>
+    </div>
+
+    <!-- Modal / bottom sheet -->
+    <div id="modal" class="modal hidden" aria-hidden="true">
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+            <div class="modal-grabber" aria-hidden="true"></div>
+            <div class="modal-title" id="modalTitle">Modal</div>
+            <div class="modal-body" id="modalBody"></div>
+            <div class="modal-actions">
+                <button class="btn secondary" id="modalCancel">Cancel</button>
+                <button class="btn" id="modalOk">OK</button>
+            </div>
+        </div>
     </div>
 
     <script src="script.js"></script>

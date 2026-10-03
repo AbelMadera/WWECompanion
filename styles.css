@@ -1272,39 +1272,6 @@ h1 {
     color: #b8b8c4;
 }
 
-/* Planner table */
-.table-wrap {
-    margin-top: 12px;
-    overflow: auto;
-    border: 1px solid var(--line);
-    border-radius: 16px;
-    -webkit-overflow-scrolling: touch;
-}
-
-.table {
-    width: 100%;
-    border-collapse: collapse;
-    min-width: 980px;
-    background: rgba(0, 0, 0, .15);
-}
-
-.table thead th {
-    position: sticky;
-    top: 0;
-    background: rgba(18, 18, 26, .95);
-    border-bottom: 1px solid var(--line);
-    padding: 10px;
-    text-align: left;
-    font-size: 12px;
-    color: var(--muted);
-}
-
-.table td {
-    border-top: 1px solid rgba(255, 255, 255, .06);
-    padding: 8px 10px;
-    vertical-align: top;
-}
-
 .cell-input {
     width: 100%;
     min-height: 36px;
@@ -1347,34 +1314,6 @@ textarea.cell-input {
     white-space: pre-wrap;
     line-height: 1.45;
     word-break: break-word;
-}
-
-.planner-drag-handle {
-    min-height: 36px;
-    border: 1px dashed rgba(255, 255, 255, .22);
-    background: rgba(255, 255, 255, .04);
-    color: var(--muted);
-    border-radius: 12px;
-    cursor: grab;
-    font-size: 16px;
-    line-height: 1;
-    font-weight: 900;
-    touch-action: none;
-    user-select: none;
-    -webkit-user-select: none;
-}
-
-.planner-drag-handle:active {
-    cursor: grabbing;
-}
-
-#matchesBody tr.planner-row-dragging {
-    opacity: .55;
-}
-
-#matchesBody tr.planner-row-drop-target td {
-    background: rgba(87, 111, 255, .12);
-    transition: background 120ms ease;
 }
 
 /* Modal */
@@ -3290,205 +3229,6 @@ textarea.cell-input {
 .ss-reign-row.is-active { background: rgba(155, 155, 255, .07); border-color: rgba(155, 155, 255, .25); }
 .ss-reign-name { font-weight: 700; font-size: 13px; }
 
-/* ====================== Mobile planner CARDS ====================== */
-/* On small screens, hide the table and show cards. On wide screens, opposite. */
-.planner-card-list {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    margin-top: 12px;
-}
-.planner-table-wrap { display: none; }
-.planner-card-list { display: flex; }
-
-@media (min-width: 961px) {
-    .planner-table-wrap { display: block; }
-    .planner-card-list { display: none; }
-}
-
-.planner-card {
-    background: rgba(20, 20, 30, .8);
-    border: 1px solid var(--line);
-    border-radius: 16px;
-    padding: 14px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    transition: border-color var(--dur-fast) var(--ease-soft), background var(--dur-fast) var(--ease-soft), transform var(--dur-fast) var(--ease-soft);
-}
-.planner-card.planner-row-dragging {
-    opacity: .65;
-    border-color: rgba(155, 155, 255, .45);
-    background: rgba(28, 28, 44, .95);
-}
-.planner-card.planner-row-drop-target {
-    border-color: rgba(77, 214, 168, .55);
-    box-shadow: 0 0 0 2px rgba(77, 214, 168, .2);
-}
-
-.planner-card-head {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-.planner-card-drag {
-    background: rgba(255, 255, 255, .04);
-    border: 1px solid var(--line);
-    border-radius: 10px;
-    color: var(--muted);
-    width: 36px;
-    height: 36px;
-    cursor: grab;
-    display: grid;
-    place-items: center;
-    font-size: 18px;
-    line-height: 1;
-    touch-action: none;
-}
-.planner-card-drag:active { cursor: grabbing; background: rgba(255, 255, 255, .1); }
-.planner-card-num {
-    font-weight: 900;
-    font-size: 13px;
-    letter-spacing: .02em;
-}
-.planner-card-belt {
-    background: linear-gradient(135deg, #ffd76b, #ffb84d);
-    color: #1a1300;
-    padding: 4px 8px;
-    border-radius: 7px;
-    font-size: 10px;
-    font-weight: 900;
-    letter-spacing: .02em;
-    line-height: 1.2;
-    max-width: 50%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-.planner-card-spacer { flex: 1; }
-.planner-card-iconbtn {
-    width: 36px;
-    height: 36px;
-    border-radius: 10px;
-    border: 1px solid var(--line);
-    background: rgba(255, 255, 255, .05);
-    color: var(--text);
-    cursor: pointer;
-    font-size: 16px;
-    font-weight: 700;
-    display: grid;
-    place-items: center;
-    transition: background var(--dur-fast) var(--ease-soft);
-}
-.planner-card-iconbtn:hover { background: rgba(255, 255, 255, .1); }
-.planner-card-iconbtn:disabled { opacity: .4; cursor: not-allowed; }
-.planner-card-iconbtn.danger { border-color: rgba(255, 77, 77, .35); background: rgba(255, 77, 77, .1); color: #ffa8a8; }
-.planner-card-iconbtn.danger:hover { background: rgba(255, 77, 77, .18); }
-.planner-card-iconbtn.small { width: 30px; height: 30px; font-size: 14px; }
-
-.planner-card-section {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-}
-.planner-card-section-head {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-}
-.planner-card-section-actions { display: flex; gap: 4px; }
-.planner-card-label {
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: .12em;
-    color: var(--muted);
-    font-weight: 800;
-}
-
-.planner-card-participants {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-}
-.planner-card-participant {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    padding: 8px;
-    background: rgba(255, 255, 255, .025);
-    border: 1px solid rgba(255, 255, 255, .05);
-    border-radius: 10px;
-}
-.planner-card-participant-row {
-    display: flex;
-    gap: 8px;
-    align-items: stretch;
-}
-.planner-card-participant-row .cell-input {
-    flex: 1;
-    min-width: 0;
-}
-.planner-card-team-pick { width: 100%; }
-.planner-card-escort { padding-left: 4px; }
-
-.planner-card-team-names {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 6px;
-}
-
-.planner-card-notes {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 8px;
-}
-.planner-card-note {
-    text-align: left;
-    border: 1px dashed rgba(255, 255, 255, .14);
-    background: transparent;
-    color: var(--text);
-    padding: 8px 10px;
-    border-radius: 10px;
-    cursor: pointer;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    min-height: 56px;
-    transition: background var(--dur-fast) var(--ease-soft), border-color var(--dur-fast) var(--ease-soft);
-}
-.planner-card-note:hover {
-    background: rgba(255, 255, 255, .04);
-    border-color: rgba(255, 255, 255, .25);
-}
-.planner-card-note-label {
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: .12em;
-    color: var(--muted);
-    font-weight: 800;
-}
-.planner-card-note-preview {
-    font-size: 12px;
-    line-height: 1.3;
-    color: var(--text);
-    overflow: hidden;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-}
-.planner-card-note-preview.is-empty { color: var(--muted); font-style: italic; }
-
-@media (max-width: 480px) {
-    .planner-card-team-names { grid-template-columns: 1fr; }
-    .planner-card-notes { grid-template-columns: 1fr; }
-}
-
-/* On large screens, increase the planner-card-list cap so cards don't dominate */
-@media (min-width: 961px) {
-    .planner-card-list { max-width: 720px; }
-}
-
-
 /* =========================================================
    v5.3 — Bulk photo scan panel
    ========================================================= */
@@ -3632,10 +3372,7 @@ html {
 }
 
 /* Smooth momentum scrolling on iOS and smoother scroll behavior overall */
-body {
-    -webkit-overflow-scrolling: touch;
-    scroll-behavior: smooth;
-}
+
 
 /* Prevent text selection on UI chrome — feels more app-like */
 .app,
@@ -3672,37 +3409,6 @@ textarea,
 .planner-lock-banner.hidden {
     display: none;
 }
-/* Visually mute locked rows + disable pointer events on their controls */
-.planner-row-locked {
-    opacity: 0.72;
-    position: relative;
-}
-.planner-row-locked .cell-input,
-.planner-row-locked select,
-.planner-row-locked input,
-.planner-row-locked textarea,
-.planner-row-locked .planner-card-iconbtn,
-.planner-row-locked .planner-card-note,
-.planner-row-locked [data-del-row],
-.planner-row-locked .planner-drag-handle {
-    pointer-events: none;
-    cursor: not-allowed;
-}
-/* Add a subtle lock indicator in the corner of locked cards */
-.planner-card.planner-row-locked::before {
-    content: "🔒";
-    position: absolute;
-    top: 10px;
-    right: 10px;
-    font-size: 14px;
-    opacity: 0.6;
-    pointer-events: none;
-}
-/* And on table rows, a left-edge indicator */
-.planner-row-locked > td:first-child {
-    border-left: 3px solid rgba(255, 180, 80, .5);
-}
-
 /* Reign history rows (championship details modal) — add edit/delete buttons */
 .reign-history-row {
     display: grid;
@@ -4450,15 +4156,6 @@ button,
     accent-color: #8888ff;
 }
 
-/* Off-screen cards no longer need to be fully painted on long mobile pages. */
-.planner-card,
-.roster-item,
-.settings-launch,
-.rank-row,
-.event-match-card {
-    content-visibility: auto;
-    contain-intrinsic-size: 1px 180px;
-}
 
 .bottom-nav,
 .modal,
@@ -7029,5 +6726,1388 @@ body.modal-open {
 
     .show-board-row-title {
         font-size: 7.2px;
+    }
+}
+
+/* =========================================================
+   v6.0 — Native app shell, planner cards, responsive layout
+   (Last layer in the file: it intentionally wins over the
+   older versioned blocks above.)
+   ========================================================= */
+:root {
+    --accent: #9d8cff;
+    --accent-strong: #b3a6ff;
+    --accent-soft: rgba(157, 140, 255, .16);
+    --gold: #f3cf62;
+    --gutter: 16px;
+    --tabbar-h: 62px;
+    --topbar-h: 56px;
+    --sheet-radius: 22px;
+    --safe-left: env(safe-area-inset-left, 0px);
+    --safe-right: env(safe-area-inset-right, 0px);
+}
+
+/* ---------- base ---------- */
+button,
+input,
+select,
+textarea {
+    font-family: inherit;
+}
+
+.input,
+.cell-input {
+    font-weight: 500;
+}
+
+html.is-scroll-locked,
+html.is-scroll-locked body {
+    overflow: hidden;
+}
+
+@media (pointer: fine) {
+    html {
+        scrollbar-gutter: stable;
+    }
+}
+
+:where(button, select, input, textarea, [role="button"], a):focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+button:disabled,
+.btn:disabled {
+    opacity: .42;
+    cursor: not-allowed;
+    transform: none !important;
+}
+
+select:disabled,
+input:disabled,
+textarea:disabled {
+    opacity: .6;
+    cursor: not-allowed;
+}
+
+img.is-broken {
+    display: none !important;
+}
+
+.img-fallback {
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    font-weight: 900;
+    font-size: 12px;
+    color: var(--muted);
+    background: rgba(255, 255, 255, .06);
+    overflow: hidden;
+}
+
+.icon-btn {
+    width: 44px;
+    min-width: 44px;
+    padding: 0;
+    display: grid;
+    place-items: center;
+    font-size: 24px;
+    line-height: 1;
+}
+
+.link-btn {
+    border: 0;
+    background: none;
+    color: var(--muted);
+    padding: 8px 0;
+    font-size: 12px;
+    font-weight: 700;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    cursor: pointer;
+}
+
+/* ---------- shell ---------- */
+.main {
+    min-width: 0;
+    width: 100%;
+    max-width: 1240px;
+    margin: 0 auto;
+    padding:
+        0
+        max(var(--gutter), var(--safe-right))
+        calc(var(--tabbar-h) + var(--safe-bottom) + 28px)
+        max(var(--gutter), var(--safe-left));
+}
+
+.topbar {
+    position: sticky;
+    top: 0;
+    z-index: 60;
+    min-height: 0;
+    margin: 0 calc(-1 * max(var(--gutter), var(--safe-left))) 10px;
+    padding: calc(var(--safe-top) + 12px) max(var(--gutter), var(--safe-right)) 12px max(var(--gutter), var(--safe-left));
+    background: rgba(11, 11, 15, .8);
+    -webkit-backdrop-filter: saturate(1.6) blur(18px);
+    backdrop-filter: saturate(1.6) blur(18px);
+    border-bottom: 1px solid transparent;
+    transition: border-color var(--dur-fast) var(--ease-soft);
+    view-transition-name: topbar;
+}
+
+body.is-scrolled .topbar {
+    border-bottom-color: rgba(255, 255, 255, .07);
+}
+
+#viewTitle {
+    font-size: clamp(18px, 4.6vw, 22px);
+    letter-spacing: -.01em;
+}
+
+#viewSubtitle {
+    font-size: 12px;
+    font-weight: 700;
+    margin-top: 2px;
+}
+
+#viewSubtitle:empty {
+    display: none;
+}
+
+.footer {
+    display: none;
+}
+
+/* Bottom tab bar */
+.bottom-nav {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 100;
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 0;
+    padding: 6px max(6px, var(--safe-right)) calc(6px + var(--safe-bottom)) max(6px, var(--safe-left));
+    background: rgba(14, 14, 20, .84);
+    -webkit-backdrop-filter: saturate(1.6) blur(20px);
+    backdrop-filter: saturate(1.6) blur(20px);
+    border-top: 1px solid rgba(255, 255, 255, .07);
+    box-shadow: none;
+    transform: none;
+    view-transition-name: tabbar;
+}
+
+.bnav-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    min-height: 50px;
+    padding: 3px 0;
+    border: 0;
+    border-radius: 14px;
+    background: none;
+    color: var(--muted);
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: .01em;
+    line-height: 1.1;
+}
+
+.bnav-btn.active {
+    background: none;
+    border-color: transparent;
+    color: var(--text);
+}
+
+.bnav-icon,
+.nav-icon {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    flex: 0 0 auto;
+}
+
+.bnav-icon {
+    width: 24px;
+    height: 24px;
+    padding: 3px 16px;
+    box-sizing: content-box;
+    border-radius: 999px;
+    transition: background var(--dur-fast) var(--ease-soft), color var(--dur-fast) var(--ease-soft);
+}
+
+.bnav-btn.active .bnav-icon {
+    background: var(--accent-soft);
+    color: var(--accent-strong);
+}
+
+/* Sidebar (desktop) */
+.nav-btn {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-weight: 700;
+}
+
+.nav-icon {
+    width: 20px;
+    height: 20px;
+    color: var(--muted);
+}
+
+.nav-btn.active .nav-icon {
+    color: var(--accent-strong);
+}
+
+.sidebar {
+    view-transition-name: sidebar;
+}
+
+/* Faster, calmer tab switches */
+::view-transition-old(root),
+::view-transition-new(root) {
+    animation-duration: .16s;
+}
+
+/* Toasts sit above the tab bar */
+.toast-stack {
+    bottom: calc(var(--tabbar-h) + var(--safe-bottom) + 14px);
+}
+
+/* ---------- touch feedback ---------- */
+@media (hover: none) {
+    .btn:hover,
+    .cal-cell:hover,
+    .nav-btn:hover,
+    .reign-row:hover,
+    .rank-row:hover,
+    .roster-item:hover,
+    .settings-launch:hover {
+        transform: none;
+    }
+
+    .btn:active,
+    .item:active,
+    .rank-row:active,
+    .reign-row:active,
+    .settings-launch:active,
+    .dashboard-show-tab:active,
+    .cal-cell:active,
+    .planner-participant-pick:active,
+    .pm-icon-btn:active,
+    .planner-card-note:active,
+    .planner-card-iconbtn:active,
+    .planner-add-card:active,
+    .picker-superstar-card:active,
+    .picker-filter:active,
+    .bnav-btn:active {
+        transform: scale(.965);
+        transition-duration: .08s;
+    }
+}
+
+/* ---------- modal: centred card on large screens, bottom sheet on phones ---------- */
+.modal {
+    -webkit-backdrop-filter: blur(4px);
+    backdrop-filter: blur(4px);
+    transform: none;
+}
+
+.modal-card {
+    transform: none;
+    transition: transform .26s cubic-bezier(.2, .9, .25, 1);
+}
+
+.modal-card.is-dragging {
+    transition: none;
+}
+
+.modal-grabber {
+    display: none;
+}
+
+.modal-title {
+    flex: 0 0 auto;
+}
+
+.modal-body {
+    flex: 1 1 auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+}
+
+@media (max-width: 720px) {
+    .modal {
+        place-items: end center;
+        padding: max(10px, var(--safe-top)) 0 0;
+        background: rgba(0, 0, 0, .5);
+    }
+
+    .modal-card:not(.show-champions-modal) {
+        width: 100%;
+        max-width: 640px;
+        max-height: calc(100dvh - max(10px, var(--safe-top)) - 6px);
+        border-radius: var(--sheet-radius) var(--sheet-radius) 0 0;
+        border-bottom: 0;
+        animation: sheetUp .34s cubic-bezier(.2, .9, .25, 1);
+    }
+
+    .modal-card:not(.show-champions-modal) .modal-grabber {
+        display: block;
+        flex: 0 0 auto;
+        width: 40px;
+        height: 5px;
+        padding: 8px 60px 6px;
+        box-sizing: content-box;
+        margin: 0 auto;
+        background: rgba(255, 255, 255, .24);
+        background-clip: content-box;
+        border-radius: 999px;
+        touch-action: none;
+        cursor: grab;
+    }
+
+    .modal-card:not(.show-champions-modal) .modal-title {
+        padding-top: 4px;
+        touch-action: none;
+    }
+
+    .modal-actions {
+        padding: 10px 12px calc(10px + var(--safe-bottom));
+    }
+}
+
+@keyframes sheetUp {
+    from { transform: translateY(100%); }
+    to { transform: translateY(0); }
+}
+
+/* ---------- dashboard ---------- */
+@media (min-width: 760px) {
+    #view-dashboard .grid {
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        grid-template-areas:
+            "next reigns"
+            "rank rank";
+        align-items: start;
+        gap: 14px;
+    }
+
+    #view-dashboard .grid > .card {
+        margin: 0;
+    }
+
+    #view-dashboard .grid > .card:nth-child(1) { grid-area: next; }
+    #view-dashboard .grid > .card:nth-child(2) { grid-area: rank; }
+    #view-dashboard .grid > .card:nth-child(3) { grid-area: reigns; }
+
+    .rankings-shows {
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    }
+}
+
+/* ---------- calendar ---------- */
+.cal-toolbar-card {
+    padding: 12px;
+}
+
+.cal-header {
+    display: grid;
+    grid-template-columns: 44px minmax(0, 1fr) 44px auto;
+    align-items: center;
+    gap: 8px;
+}
+
+.cal-month {
+    text-align: center;
+    font-size: 18px;
+    font-weight: 900;
+    letter-spacing: -.01em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.cal-tools {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.cal-tool {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+.cal-tool-label {
+    font-size: 10.5px;
+    font-weight: 800;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--muted);
+}
+
+.cal-tool .input {
+    min-width: 0;
+}
+
+.cal-cell {
+    width: 100%;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    gap: 4px;
+    font: inherit;
+    color: inherit;
+    text-align: left;
+    touch-action: manipulation;
+}
+
+.cal-date {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 3px;
+    color: var(--text);
+}
+
+.cal-day-state {
+    margin-left: 0;
+    padding: 1px 5px;
+    font-size: 8.5px;
+    letter-spacing: .04em;
+}
+
+.cal-cell.is-universe-now .cal-day-state {
+    border-color: var(--accent);
+    color: var(--accent-strong);
+}
+
+.cal-cell.is-selected {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    box-shadow: 0 0 0 1px var(--accent) inset;
+}
+
+.cal-cell.is-done .cal-date {
+    color: var(--muted);
+    text-decoration: none;
+}
+
+.cal-cell.is-done .cal-num {
+    text-decoration: line-through;
+    text-decoration-thickness: 2px;
+}
+
+.cal-day-card {
+    overflow: hidden;
+}
+
+.cal-day-head {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--line);
+}
+
+.cal-day-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.cal-day-title {
+    font-size: 16px;
+    font-weight: 900;
+}
+
+.cal-day-status {
+    flex: 0 0 auto;
+    padding: 4px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    font-size: 11px;
+    font-weight: 800;
+    color: var(--muted);
+}
+
+.cal-day-status[data-state="now"] {
+    color: var(--accent-strong);
+    border-color: rgba(157, 140, 255, .5);
+    background: var(--accent-soft);
+}
+
+.cal-day-status[data-state="done"] {
+    color: #9be8b4;
+    border-color: rgba(92, 184, 127, .5);
+    background: rgba(41, 97, 61, .25);
+}
+
+.cal-day-actions {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.cal-day-actions .btn {
+    padding-inline: 6px;
+    font-size: 13px;
+}
+
+.cal-day-foot {
+    padding: 0 14px 10px;
+}
+
+.cal-empty {
+    padding: 6px 0;
+    text-align: center;
+}
+
+.cal-event-item {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.cal-event-copy {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.cal-event-copy .badge {
+    margin: 2px 4px 2px 0;
+}
+
+.cal-event-chevron {
+    color: var(--muted);
+    font-size: 24px;
+    line-height: 1;
+}
+
+@media (min-width: 1100px) {
+    #view-calendar:not(.hidden) {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 360px;
+        grid-template-areas:
+            "tool tool"
+            "wk day"
+            "grid day";
+        column-gap: 18px;
+        align-items: start;
+    }
+
+    #view-calendar .cal-toolbar-card { grid-area: tool; }
+    #view-calendar .calendar-weekdays { grid-area: wk; }
+    #view-calendar #calendarGrid { grid-area: grid; }
+
+    #view-calendar .cal-day-card {
+        grid-area: day;
+        margin: 8px 0 0;
+        position: sticky;
+        top: calc(var(--topbar-h) + 12px);
+    }
+
+    .cal-header {
+        grid-template-columns: 44px minmax(0, 260px) 44px auto 1fr;
+    }
+
+    .cal-cell {
+        min-height: 92px;
+    }
+}
+
+/* ---------- planner ---------- */
+.planner-toolbar-card {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 10px;
+    margin: 0 0 12px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: rgba(16, 16, 26, .88);
+}
+
+.planner-toolbar {
+    display: grid;
+    grid-template-columns: 44px minmax(0, 1fr) 44px;
+    gap: 8px;
+    width: 100%;
+}
+
+.planner-toolbar > #plannerEventSelect {
+    width: 100%;
+    min-width: 0;
+    text-overflow: ellipsis;
+}
+
+.planner-toolbar-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.planner-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    min-width: 0;
+    cursor: pointer;
+}
+
+.planner-meta .badge {
+    margin: 0;
+    padding: 4px 9px;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.planner-toolbar-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+}
+
+.planner-toolbar-actions .pill {
+    font-size: 11px;
+    padding: 5px 9px;
+}
+
+.planner-lock-banner {
+    margin: 0 0 12px;
+}
+
+.planner-card-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 330px), 1fr));
+    align-items: start;
+    gap: 12px;
+    margin: 0;
+    max-width: none;
+}
+
+.planner-card {
+    position: relative;
+    container-type: inline-size;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, .04), rgba(255, 255, 255, .012)),
+        #121219;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, .22);
+    transition: border-color var(--dur-fast) var(--ease-soft), opacity var(--dur-fast) var(--ease-soft), transform var(--dur-fast) var(--ease-soft);
+}
+
+.planner-card.is-main-event {
+    border-color: rgba(157, 140, 255, .42);
+    background:
+        linear-gradient(180deg, rgba(157, 140, 255, .1), rgba(255, 255, 255, .012) 45%),
+        #121219;
+}
+
+.planner-card.is-locked {
+    opacity: .82;
+}
+
+.planner-card.is-new {
+    animation: plannerCardIn .4s cubic-bezier(.2, .9, .25, 1);
+}
+
+@keyframes plannerCardIn {
+    from { opacity: 0; transform: translateY(12px) scale(.98); }
+    to { opacity: 1; transform: none; }
+}
+
+.planner-card.planner-row-dragging {
+    opacity: .55;
+    transform: scale(.98);
+    border-color: var(--accent);
+}
+
+.planner-card.planner-row-drop-target {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-soft), 0 6px 18px rgba(0, 0, 0, .22);
+}
+
+body.is-reordering {
+    -webkit-user-select: none;
+    user-select: none;
+    cursor: grabbing;
+}
+
+.planner-card-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 36px;
+    min-width: 0;
+}
+
+.planner-card-drag {
+    flex: 0 0 auto;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    display: grid;
+    place-items: center;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, .04);
+    color: var(--muted);
+    cursor: grab;
+    touch-action: none;
+}
+
+.planner-card-drag svg {
+    width: 18px;
+    height: 18px;
+    fill: currentColor;
+}
+
+.planner-card-num {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    font-weight: 900;
+    white-space: nowrap;
+}
+
+.planner-main-tag {
+    padding: 3px 8px;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent-strong);
+    font-size: 9.5px;
+    font-weight: 900;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+}
+
+.planner-card-spacer {
+    flex: 1 1 auto;
+}
+
+.planner-card-belt {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    min-width: 0;
+    max-width: 48%;
+    padding: 4px 8px;
+    border-radius: 8px;
+    background: linear-gradient(135deg, #ffd76b, #ffb84d);
+    color: #1a1300;
+    font-size: 10.5px;
+    font-weight: 900;
+}
+
+.planner-card-belt svg {
+    flex: 0 0 auto;
+    width: 14px;
+    height: 14px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+}
+
+.planner-card-belt span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.planner-card-iconbtn {
+    flex: 0 0 auto;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    display: grid;
+    place-items: center;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, .05);
+    color: var(--text);
+    cursor: pointer;
+}
+
+.planner-card-iconbtn.small {
+    width: 32px;
+    height: 32px;
+}
+
+.planner-card-iconbtn.danger {
+    border-color: rgba(255, 77, 77, .32);
+    background: rgba(255, 77, 77, .08);
+    color: #ffa8a8;
+}
+
+.planner-card-iconbtn svg,
+.pm-icon-btn svg,
+.planner-participant-chevron svg,
+.planner-participant-avatar.is-plus svg,
+.planner-add-card svg {
+    width: 18px;
+    height: 18px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.planner-card-section {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.planner-card-section-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.planner-card-section-actions {
+    display: flex;
+    gap: 6px;
+}
+
+.planner-card-label {
+    font-size: 10.5px;
+    font-weight: 800;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--muted);
+}
+
+.planner-card-participants {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.pm-slot {
+    display: flex;
+    align-items: stretch;
+    gap: 6px;
+    min-width: 0;
+}
+
+.pm-slot .planner-participant-pick {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.planner-participant-pick {
+    min-height: 54px;
+    grid-template-columns: 40px minmax(0, 1fr) 16px;
+    gap: 10px;
+    padding: 6px 8px;
+    border-radius: 12px;
+    font: inherit;
+}
+
+.planner-participant-pick.is-empty {
+    border-style: dashed;
+    border-color: rgba(255, 255, 255, .16);
+    background: transparent;
+}
+
+.planner-participant-avatar {
+    position: relative;
+    width: 40px;
+    height: 40px;
+    display: grid;
+    place-items: center;
+    overflow: hidden;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, .09);
+    background: rgba(255, 255, 255, .06);
+    color: var(--muted);
+}
+
+.planner-participant-avatar img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center top;
+}
+
+.planner-participant-avatar.is-plus {
+    color: var(--text);
+}
+
+.avatar-initials {
+    font-size: 12px;
+    font-weight: 900;
+    color: var(--muted);
+}
+
+.picker-matchup-avatar {
+    display: grid;
+    place-items: center;
+}
+
+.picker-matchup-avatar .avatar-initials {
+    font-size: 9px;
+}
+
+.picker-matchup-avatar img {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: inherit;
+}
+
+.planner-participant-name {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
+
+.planner-participant-name .champ-inline {
+    flex: 0 0 auto;
+}
+
+.planner-participant-chevron {
+    display: grid;
+    place-items: center;
+    color: var(--muted);
+}
+
+.pm-escort {
+    color: var(--accent-strong);
+    font-weight: 700;
+}
+
+.pm-team {
+    flex: 0 0 auto;
+    width: 72px;
+    min-height: 54px;
+    padding: 0 6px 0 10px;
+    font-weight: 800;
+    color: var(--team-color, var(--text));
+}
+
+.pm-name-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.pm-icon-btn {
+    flex: 0 0 44px;
+    width: 44px;
+    min-height: 54px;
+    padding: 0;
+    display: grid;
+    place-items: center;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, .04);
+    color: var(--muted);
+    cursor: pointer;
+}
+
+.pm-icon-btn.is-active {
+    color: var(--accent-strong);
+    border-color: rgba(157, 140, 255, .45);
+    background: var(--accent-soft);
+}
+
+.pm-slot[class*="team-T"] .planner-participant-pick {
+    box-shadow: inset 3px 0 0 var(--team-color, #888);
+}
+
+.pm-slot.team-T1 { --team-color: #ef5a5f; }
+.pm-slot.team-T2 { --team-color: #5b8cff; }
+.pm-slot.team-T3 { --team-color: #f3cf62; }
+.pm-slot.team-T4 { --team-color: #4dd6a8; }
+.pm-slot.team-T5 { --team-color: #c78bff; }
+.pm-slot.team-T6 { --team-color: #ff9f5a; }
+
+.planner-card-fields {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+}
+
+@container (min-width: 440px) {
+    .planner-card-fields {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+.pm-field {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    min-width: 0;
+}
+
+.pm-field .cell-input {
+    min-height: 44px;
+    width: 100%;
+    min-width: 0;
+    text-overflow: ellipsis;
+}
+
+.planner-card-notes {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.planner-card-note {
+    min-height: 58px;
+    padding: 8px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    border: 1px dashed rgba(255, 255, 255, .14);
+    border-radius: 12px;
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.planner-card-note-label {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--muted);
+}
+
+.planner-card-note-preview {
+    display: -webkit-box;
+    overflow: hidden;
+    font-size: 12px;
+    line-height: 1.35;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+}
+
+.planner-card-note-preview.is-empty {
+    color: var(--muted);
+    font-style: italic;
+}
+
+.planner-add-card {
+    min-height: 120px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    border: 1.5px dashed rgba(255, 255, 255, .16);
+    border-radius: 18px;
+    background: transparent;
+    color: var(--muted);
+    font: inherit;
+    font-weight: 800;
+    cursor: pointer;
+}
+
+.planner-add-card svg {
+    width: 26px;
+    height: 26px;
+}
+
+.planner-empty {
+    grid-column: 1 / -1;
+    display: grid;
+    gap: 10px;
+    justify-items: center;
+    padding: 36px 16px;
+    border: 1px dashed rgba(255, 255, 255, .14);
+    border-radius: 18px;
+    text-align: center;
+}
+
+.planner-empty-title {
+    font-weight: 900;
+    font-size: 16px;
+}
+
+.planner-note-textarea {
+    min-height: min(46dvh, 320px);
+    font-size: 16px;
+    line-height: 1.5;
+}
+
+@media (hover: hover) and (pointer: fine) {
+    .planner-add-card:hover,
+    .planner-card-note:hover {
+        border-color: rgba(255, 255, 255, .3);
+        background: rgba(255, 255, 255, .03);
+    }
+}
+
+/* Picker sheet */
+.picker-superstar-card.is-booked {
+    opacity: .7;
+}
+
+/* ---------- roster ---------- */
+.roster-head {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.roster-head-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.roster-head .roster-filters {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    width: 100%;
+}
+
+.roster-head .roster-filters > #rosterSearch {
+    grid-column: 1 / -1;
+    min-width: 0;
+}
+
+.roster-head .roster-filters > select {
+    min-width: 0;
+    padding-inline: 10px;
+    text-overflow: ellipsis;
+}
+
+.roster-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
+    gap: 8px;
+}
+
+.roster-item {
+    position: relative;
+    padding-right: 34px;
+}
+
+.roster-item::after {
+    content: "›";
+    position: absolute;
+    right: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--muted);
+    font-size: 24px;
+    line-height: 1;
+}
+
+.roster-item .ss-card-photo,
+.roster-item .ss-card-fallback {
+    flex: 0 0 auto;
+}
+
+.roster-empty {
+    padding: 24px 0;
+    text-align: center;
+}
+
+@media (max-width: 599px) {
+    .roster-head .roster-filters {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .roster-head .roster-filters > #rosterStatusFilter {
+        grid-column: 1 / -1;
+    }
+}
+
+@media (min-width: 900px) {
+    .roster-head .roster-filters {
+        grid-template-columns: minmax(220px, 2fr) repeat(3, minmax(0, 1fr));
+    }
+
+    .roster-head .roster-filters > #rosterSearch {
+        grid-column: auto;
+    }
+}
+
+/* ---------- settings ---------- */
+.settings-panel-list {
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
+}
+
+/* ---------- breakpoints ---------- */
+@media (max-width: 380px) {
+    :root {
+        --gutter: 10px;
+    }
+
+    .bnav-icon {
+        padding-inline: 12px;
+    }
+
+    .cal-day-actions .btn {
+        font-size: 12px;
+    }
+
+    .pm-team {
+        width: 66px;
+    }
+}
+
+@media (min-width: 721px) {
+    :root {
+        --gutter: 22px;
+    }
+}
+
+@media (min-width: 960px) {
+    :root {
+        --gutter: 28px;
+    }
+
+    .main {
+        padding-bottom: 48px;
+    }
+
+    .footer {
+        display: block;
+        margin: 28px 0 0;
+    }
+
+    .toast-stack {
+        bottom: 24px;
+    }
+}
+
+/* Landscape phones: give content the height back */
+@media (max-height: 500px) and (orientation: landscape) and (max-width: 959px) {
+    :root {
+        --tabbar-h: 48px;
+    }
+
+    .bnav-btn {
+        flex-direction: row;
+        gap: 6px;
+        min-height: 40px;
+        font-size: 12px;
+    }
+
+    .bnav-icon {
+        width: 20px;
+        height: 20px;
+        padding: 2px 6px;
+    }
+
+    .topbar {
+        padding-top: calc(var(--safe-top) + 6px);
+        padding-bottom: 6px;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .modal-card,
+    .planner-card.is-new {
+        animation: none !important;
+    }
+}
+
+@media (min-width: 960px) {
+    .bottom-nav {
+        display: none;
+    }
+}
+
+/* Narrow cards (small phones, 3-up desktop grid): give names the room. */
+@container (max-width: 340px) {
+    .planner-participant-pick {
+        grid-template-columns: 34px minmax(0, 1fr);
+        gap: 8px;
+        padding: 6px;
+    }
+
+    .planner-participant-chevron {
+        display: none;
+    }
+
+    .planner-participant-avatar {
+        width: 34px;
+        height: 34px;
+        border-radius: 9px;
+    }
+
+    .pm-icon-btn {
+        flex-basis: 38px;
+        width: 38px;
+    }
+
+    .pm-team {
+        width: 62px;
+        padding-inline: 6px;
+    }
+}
+
+.cal-cell {
+    overflow: hidden;
+}
+
+@media (max-width: 400px) {
+    .cal-day-state {
+        padding: 0 3px;
+        font-size: 7px;
+        letter-spacing: 0;
+    }
+}
+
+@media (max-width: 360px) {
+    .cal-tools {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+/* View Transitions already cross-fade tab switches; skip the extra slide. */
+@supports (view-transition-name: none) {
+    .view {
+        animation: none;
     }
 }

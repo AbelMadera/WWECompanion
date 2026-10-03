@@ -13,6 +13,25 @@ const CALENDAR_DAYS_PER_MONTH = 28;
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
+// -------------------- DERIVED-DATA CACHE --------------------
+// Every mutation goes through saveSoon(), which bumps dataVersion. Expensive
+// derived data (records, rankings, streaks, lookups) is memoised against it so
+// re-rendering a view never re-walks the whole universe history twice.
+let dataVersion = 0;
+const memoCache = new Map();
+function memo(name, keyParts, compute) {
+    const entry = memoCache.get(name);
+    if (entry && entry.key.length === keyParts.length && entry.key.every((part, i) => part === keyParts[i])) {
+        return entry.value;
+    }
+    const value = compute();
+    memoCache.set(name, { key: keyParts, value });
+    return value;
+}
+function bumpDataVersion() {
+    dataVersion += 1;
+}
+
 function uid(prefix = "id") {
     return `${prefix}_${Math.random().toString(16).slice(2)}_${Date.now().toString(16)}`;
 }
@@ -345,7 +364,24 @@ function normalizeStateData(sourceState) {
         })
         : [];
 
+    // The universe calendar only has days 1–28. PLEs dated on the 29th–31st
+    // (e.g. a Jan 31 Royal Rumble) move to the 28th — the last Sunday of the
+    // universe month — so they show up. Empty weekly shows that an older
+    // version generated on those days are dropped; booked ones are kept.
+    normalized.events = normalized.events.filter(ev => {
+        if (!isISODate(ev?.date) || isUniverseCalendarDay(ev.date)) return true;
+        if (ev.type === "ppv") {
+            ev.date = clampToUniverseDay(ev.date);
+            return true;
+        }
+        return (Array.isArray(ev.matches) ? ev.matches : []).some(m => matchParticipantRefs(m).length || String(m?.result || "").trim());
+    });
+
     return normalized;
+}
+function clampToUniverseDay(iso) {
+    if (!isISODate(iso) || isUniverseCalendarDay(iso)) return iso;
+    return `${String(iso).slice(0, 8)}${String(CALENDAR_DAYS_PER_MONTH).padStart(2, "0")}`;
 }
 function escapeHTML(str) {
     return String(str ?? "")
@@ -517,6 +553,7 @@ function flushSaveNow() {
     }
 }
 function saveSoon() {
+    bumpDataVersion();
     pendingSave = true;
     const indicator = $("#saveState");
     if (indicator) {
@@ -541,19 +578,53 @@ function getUniverseStartISO() {
     if (!isISODate(state.universeStartDate)) state.universeStartDate = todayISO();
     return state.universeStartDate;
 }
+// Read-only: the returned Set is shared, never mutate it.
 function completedDateSet() {
     if (!Array.isArray(state.completedDates)) state.completedDates = [];
-    return new Set(state.completedDates.filter(isISODate));
+    const dates = state.completedDates;
+    return memo("completedDates", [dates, dates.length], () => new Set(dates.filter(isISODate)));
 }
 function isUniverseDateCompleted(iso) {
     return completedDateSet().has(iso);
 }
 function setUniverseDateCompleted(iso, done) {
     if (!isISODate(iso)) return;
-    const set = completedDateSet();
+    const set = new Set(completedDateSet());
     if (done) set.add(iso);
     else set.delete(iso);
     state.completedDates = Array.from(set).sort();
+}
+
+// The universe uses 2K-style 4-week months: only days 1–28 exist on the
+// calendar. Days 29–31 are skipped everywhere (progression, generation, "now").
+function isUniverseCalendarDay(iso) {
+    return isISODate(iso) && Number(String(iso).slice(8, 10)) <= CALENDAR_DAYS_PER_MONTH;
+}
+function nextUniverseDayISO(iso) {
+    const d = parseISO(iso);
+    if (d.getDate() >= CALENDAR_DAYS_PER_MONTH) d.setMonth(d.getMonth() + 1, 1);
+    else d.setDate(d.getDate() + 1);
+    return toISODateLocal(d);
+}
+function firstUniverseDayOnOrAfter(iso) {
+    return isUniverseCalendarDay(iso) ? iso : nextUniverseDayISO(iso);
+}
+
+// Mark a day done and lock in any title changes from its championship matches.
+// Returns the list of { championship, holders } changes for feedback.
+function completeUniverseDay(iso) {
+    if (!isISODate(iso)) return [];
+    const before = new Set((state.titleReigns || []).map(r => r.id));
+    setUniverseDateCompleted(iso, true);
+    applyReignChangesForDate(iso);
+    return (state.titleReigns || [])
+        .filter(r => !before.has(r.id))
+        .map(r => ({ championship: championshipName(r.championshipId), holders: (r.holderNames || []).join(" & ") }));
+}
+function announceTitleChanges(changes) {
+    (changes || []).forEach(change => {
+        showToast({ message: `🏆 New champion: ${change.holders} — ${change.championship}`, tone: "info", duration: 5200 });
+    });
 }
 
 // When a day is marked done, walk all championship matches on that date and
@@ -580,19 +651,20 @@ function applyReignChangesForDate(iso) {
 function getUniverseCurrentISO() {
     const startISO = getUniverseStartISO();
     const done = completedDateSet();
-    const cursor = parseISO(startISO);
-    for (let i = 0; i < 36600; i++) {
-        const iso = toISODateLocal(cursor);
-        if (!done.has(iso)) return iso;
-        cursor.setDate(cursor.getDate() + 1);
-    }
-    return startISO;
+    return memo("universeNow", [done, startISO], () => {
+        let iso = firstUniverseDayOnOrAfter(startISO);
+        for (let i = 0; i < 36600; i++) {
+            if (!done.has(iso)) return iso;
+            iso = nextUniverseDayISO(iso);
+        }
+        return startISO;
+    });
 }
 function nextUniverseEvent() {
     const startISO = getUniverseStartISO();
     const done = completedDateSet();
     return state.events
-        .filter(e => isISODate(e?.date))
+        .filter(e => isUniverseCalendarDay(e?.date))
         .filter(e => e.date >= startISO)
         .filter(e => !done.has(e.date))
         .sort((a, b) => a.date.localeCompare(b.date))[0] || null;
@@ -837,17 +909,40 @@ function superstarInitials(name) {
     if (!parts.length) return "?";
     return parts.slice(0, 2).map(p => p[0].toUpperCase()).join("");
 }
+// O(1) superstar lookups by id / name (rebuilt only when the roster changes).
+function superstarLookup() {
+    const roster = state.superstars;
+    return memo("superstarLookup", [roster, roster.length, dataVersion], () => {
+        const byId = new Map();
+        const byName = new Map();
+        roster.forEach(ss => {
+            byId.set(ss.id, ss);
+            const key = normalizeNameForCompare(ss.name);
+            if (key && !byName.has(key)) byName.set(key, ss);
+        });
+        return { byId, byName };
+    });
+}
+function getSuperstar(id) {
+    return superstarLookup().byId.get(String(id ?? "").trim()) || null;
+}
 function superstarNameById(id) {
-    return state.superstars.find(ss => ss.id === id)?.name || "";
+    return getSuperstar(id)?.name || "";
+}
+function resolveSuperstarFromRef(ref) {
+    const raw = String(ref ?? "").trim();
+    if (!raw) return null;
+    const lookup = superstarLookup();
+    return lookup.byId.get(raw) || lookup.byName.get(normalizeNameForCompare(raw)) || null;
 }
 function resolveSuperstarIdFromRef(ref) {
-    const raw = String(ref ?? "").trim();
-    if (!raw) return "";
-    const byId = state.superstars.find(ss => ss.id === raw);
-    if (byId) return byId.id;
-    const normalizedRaw = normalizeNameForCompare(raw);
-    const byName = state.superstars.find(ss => normalizeNameForCompare(ss.name) === normalizedRaw);
-    return byName?.id || "";
+    return resolveSuperstarFromRef(ref)?.id || "";
+}
+// Participants are stored positionally (one entry per slot, "" = open slot).
+function matchParticipantRefs(match) {
+    return (Array.isArray(match?.participants) ? match.participants : [])
+        .map(ref => String(ref ?? "").trim())
+        .filter(Boolean);
 }
 function isDQResult(resultValue) {
     const normalized = normalizeNameForCompare(resultValue);
@@ -871,6 +966,9 @@ function isSpecialMatchResult(resultValue) {
         || normalized === "promo";
 }
 function computeSuperstarRecords() {
+    return memo("records", [state.events, state.superstars, dataVersion], computeSuperstarRecordsUncached);
+}
+function computeSuperstarRecordsUncached() {
     const records = new Map();
     state.superstars.forEach(ss => {
         records.set(ss.id, { wins: 0, losses: 0, draws: 0 });
@@ -1214,7 +1312,7 @@ function resolveMatchParticipantIds(match, superstarNameToId) {
     for (const ref of participants) {
         const raw = String(ref ?? "").trim();
         if (!raw) continue;
-        const byId = state.superstars.find(ss => ss.id === raw);
+        const byId = getSuperstar(raw);
         if (byId) {
             ids.push(byId.id);
             continue;
@@ -1295,7 +1393,7 @@ function rankingRecencyWeight(dateISO) {
 let _weeklyRankingsCache = null;
 let _weeklyRankingsCacheKey = "";
 function weeklyRankingsCacheKey() {
-    return `${state.updatedAt || 0}:${state.events.length}:${state.superstars.length}:${(state.completedDates || []).length}`;
+    return `${dataVersion}:${state.events.length}:${state.superstars.length}:${getUniverseCurrentISO()}`;
 }
 
 function computeWeeklyRankingsFull() {
@@ -1576,7 +1674,7 @@ function rankingInfoForSuperstar(superstarId) {
 let _titleReignsCache = null;
 let _titleReignsCacheKey = "";
 function titleReignsCacheKey() {
-    return `${state.updatedAt || 0}:${(state.titleReigns || []).length}`;
+    return `${dataVersion}:${(state.titleReigns || []).length}:${state.championships.length}`;
 }
 function computeTitleReigns() {
     const key = titleReignsCacheKey();
@@ -2070,44 +2168,60 @@ function computeBookingSuggestions() {
 
 // -------------------- MOMENTUM SPARKLINE (derived) --------------------
 // Returns an array of recent score deltas per booked match for a superstar (last N matches).
-function superstarMomentumPoints(superstarId, n = 12) {
+// One pass over completed history → per-superstar ordered outcome list.
+// Momentum sparklines and win/loss streaks both read from this index, so the
+// roster no longer re-walks every event once per superstar.
+function superstarOutcomeIndex() {
     const universeCurrentISO = getUniverseCurrentISO();
-    const eventsAsc = state.events
-        .filter(e => isISODate(e?.date))
-        .filter(e => e.date < universeCurrentISO || isUniverseDateCompleted(e.date))
-        .slice()
-        .sort((a, b) => a.date.localeCompare(b.date));
+    return memo("outcomeIndex", [state.events, dataVersion, universeCurrentISO], () => {
+        const index = new Map();
+        const push = (id, kind) => {
+            if (!index.has(id)) index.set(id, []);
+            index.get(id).push(kind);
+        };
+        state.events
+            .filter(e => isISODate(e?.date))
+            .filter(e => e.date < universeCurrentISO || isUniverseDateCompleted(e.date))
+            .slice()
+            .sort((a, b) => a.date.localeCompare(b.date))
+            .forEach(ev => {
+                (ev.matches || []).forEach(m => {
+                    const pids = Array.from(new Set(matchParticipantRefs(m).map(resolveSuperstarIdFromRef).filter(Boolean)));
+                    if (!pids.length) return;
+                    const result = String(m.result || "").trim();
+                    if (!result || normalizeNameForCompare(result) === "no result") return; // not happened yet
+                    if (isPromoResult(result)) { pids.forEach(id => push(id, "promo")); return; }
+                    if (isDQResult(result) || isDrawRecordResult(result)) { pids.forEach(id => push(id, "neutral")); return; }
+                    let winners = [];
+                    if (isTeamResultValue(result)) {
+                        const teams = inferMatchTeams(m.matchType, pids, normalizedParticipantTeams(m));
+                        winners = teams.find(g => g.key === parseTeamResultValue(result))?.participants || [];
+                    } else {
+                        const winId = resolveSuperstarIdFromRef(result);
+                        if (winId && pids.includes(winId)) winners = [winId];
+                    }
+                    pids.forEach(id => {
+                        if (!winners.length) push(id, "neutral");
+                        else push(id, winners.includes(id) ? "win" : "loss");
+                    });
+                });
+            });
+        return index;
+    });
+}
+function superstarMomentumPoints(superstarId, n = 12) {
+    const outcomes = superstarOutcomeIndex().get(superstarId) || [];
     const points = [];
     let running = 0;
-    for (const ev of eventsAsc) {
-        for (const m of (ev.matches || [])) {
-            const pids = (m.participants || []).map(resolveSuperstarIdFromRef).filter(Boolean);
-            if (!pids.includes(superstarId)) continue;
-            const result = String(m.result || "").trim();
-            // A match with no result hasn't happened — don't plot it at all.
-            if (!result || normalizeNameForCompare(result) === "no result") continue;
-            if (isPromoResult(result)) { running += 0.3; points.push(running); continue; }
-            if (isDQResult(result) || isDrawRecordResult(result)) {
-                running += 0; points.push(running); continue;
-            }
-            let won = false, lost = false;
-            if (isTeamResultValue(result)) {
-                const teams = inferMatchTeams(m.matchType, pids, normalizedParticipantTeams(m));
-                const winning = teams.find(g => g.key === parseTeamResultValue(result));
-                if (winning?.participants.includes(superstarId)) won = true;
-                else if (winning?.participants.length) lost = true;
-            } else {
-                const winId = resolveSuperstarIdFromRef(result);
-                if (winId === superstarId) won = true;
-                else if (winId && pids.includes(winId)) lost = true;
-            }
-            if (won) running += 1;
-            else if (lost) running -= 1;
-            points.push(running);
-        }
-    }
+    outcomes.forEach(kind => {
+        if (kind === "promo") running += 0.3;
+        else if (kind === "win") running += 1;
+        else if (kind === "loss") running -= 1;
+        points.push(running);
+    });
     return points.slice(-n);
 }
+
 function sparklineSVG(points, { width = 80, height = 24, stroke = "#9b9bff" } = {}) {
     if (!points || points.length < 2) {
         return `<svg class="sparkline" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" aria-hidden="true"><line x1="2" y1="${height / 2}" x2="${width - 2}" y2="${height / 2}" stroke="rgba(255,255,255,.18)" stroke-width="1"/></svg>`;
@@ -2132,40 +2246,18 @@ function sparklineSVG(points, { width = 80, height = 24, stroke = "#9b9bff" } = 
 
 // -------------------- STREAK / DROUGHT BADGES --------------------
 function superstarCurrentStreak(superstarId) {
-    const universeCurrentISO = getUniverseCurrentISO();
-    const eventsDesc = state.events
-        .filter(e => isISODate(e?.date))
-        .filter(e => e.date < universeCurrentISO || isUniverseDateCompleted(e.date))
-        .slice()
-        .sort((a, b) => b.date.localeCompare(a.date));
-    let kind = null; // "win" | "loss" | null
+    const outcomes = superstarOutcomeIndex().get(superstarId) || [];
+    let kind = null;
     let count = 0;
-    outer: for (const ev of eventsDesc) {
-        const matchesDesc = (ev.matches || []).slice().reverse();
-        for (const m of matchesDesc) {
-            const pids = (m.participants || []).map(resolveSuperstarIdFromRef).filter(Boolean);
-            if (!pids.includes(superstarId)) continue;
-            const result = String(m.result || "").trim();
-            if (!result || isPromoResult(result) || isDQResult(result) || isDrawRecordResult(result) || normalizeNameForCompare(result) === "no result") {
-                if (kind) break outer; else continue;
-            }
-            let won = false, lost = false;
-            if (isTeamResultValue(result)) {
-                const teams = inferMatchTeams(m.matchType, pids, normalizedParticipantTeams(m));
-                const winning = teams.find(g => g.key === parseTeamResultValue(result));
-                if (winning?.participants.includes(superstarId)) won = true;
-                else if (winning?.participants.length) lost = true;
-            } else {
-                const winId = resolveSuperstarIdFromRef(result);
-                if (winId === superstarId) won = true;
-                else if (winId && pids.includes(winId)) lost = true;
-            }
-            const thisKind = won ? "win" : lost ? "loss" : null;
-            if (!thisKind) { if (kind) break outer; else continue; }
-            if (!kind) { kind = thisKind; count = 1; continue; }
-            if (kind === thisKind) count += 1;
-            else break outer;
+    for (let i = outcomes.length - 1; i >= 0; i--) {
+        const outcome = outcomes[i];
+        if (outcome !== "win" && outcome !== "loss") {
+            if (kind) break;
+            continue;
         }
+        if (!kind) { kind = outcome; count = 1; continue; }
+        if (outcome === kind) count += 1;
+        else break;
     }
     return { kind, count };
 }
@@ -2203,11 +2295,10 @@ async function openShowTopTenModal(showId) {
         title: `${show.name} Top 10`,
         bodyHTML,
         okText: "Close",
-        cancelText: "Close"
+        cancelText: "Close",
+        hideCancel: true,
     });
 
-    const modalCancelBtn = $("#modalCancel");
-    modalCancelBtn.classList.add("hidden");
     let selectedSuperstarId = "";
     $$("[data-open-ss]", $("#modalBody")).forEach(el => {
         const open = () => {
@@ -2224,7 +2315,6 @@ async function openShowTopTenModal(showId) {
     });
 
     await modalPromise;
-    modalCancelBtn.classList.remove("hidden");
     if (selectedSuperstarId) {
         await openSuperstarDetails(selectedSuperstarId, { readOnly: true, fromRankings: true });
     }
@@ -2761,12 +2851,9 @@ async function openShowChampionsModal(showId) {
         bodyHTML,
         okText: "Close",
         cancelText: "Close",
+        hideCancel: true,
+        variant: "show-champions-modal",
     });
-
-    const modalCard = $(".modal-card");
-    const modalCancelBtn = $("#modalCancel");
-    modalCard?.classList.add("show-champions-modal");
-    modalCancelBtn.classList.add("hidden");
 
     $$('[data-show-board-photo]', $("#modalBody")).forEach(img => {
         img.addEventListener("error", () => img.closest(".show-board-portrait")?.classList.add("is-broken"), { once: true });
@@ -2789,7 +2876,6 @@ async function openShowChampionsModal(showId) {
     });
 
     await modalPromise;
-    modalCancelBtn.classList.remove("hidden");
     if (selectedSuperstarId) {
         await openSuperstarDetails(selectedSuperstarId, { readOnly: true });
     }
@@ -2934,7 +3020,7 @@ function scheduleUiSessionSave() {
 function restoreUiSessionScroll(session) {
     const x = Number(session?.scrollX || 0);
     const y = Number(session?.scrollY || 0);
-    const restore = () => window.scrollTo({ left: x, top: y, behavior: "auto" });
+    const restore = () => window.scrollTo({ left: x, top: y, behavior: "instant" });
     requestAnimationFrame(() => {
         restore();
         requestAnimationFrame(restore);
@@ -2945,134 +3031,210 @@ function setActiveNav(view) {
     $$(".nav-btn").forEach(b => b.classList.toggle("active", b.dataset.view === view));
     $$(".bnav-btn").forEach(b => b.classList.toggle("active", b.dataset.view === view));
 }
+const viewScrollPositions = {};
+function prettyUniverseDate(iso) {
+    if (!isISODate(iso)) return "";
+    return parseISO(iso).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+}
+function viewSubtitle(view) {
+    if (view === "dashboard") return `Universe day · ${prettyUniverseDate(getUniverseCurrentISO())}`;
+    return "";
+}
+function showView(view) {
+    currentView = view;
+    setActiveNav(view);
+    views.forEach(v => $(`#view-${v}`).classList.toggle("hidden", v !== view));
+    const titles = { dashboard: "Dashboard", calendar: "Calendar", planner: "Planner", roster: "Roster", settings: "Settings" };
+    $("#viewTitle").textContent = titles[view];
+    document.title = `${titles[view]} · 2K Universe`;
+    renderAll();
+    scheduleUiSessionSave();
+}
 function setView(view) {
     if (!views.includes(view)) return;
     const previousView = currentView;
-    const applyView = () => {
-        currentView = view;
-        setActiveNav(view);
-
-        views.forEach(v => $(`#view-${v}`).classList.toggle("hidden", v !== view));
-
-        const titles = {
-            dashboard: ["Dashboard", ""],
-            calendar: ["Calendar", ""],
-            planner: ["Planner", ""],
-            shows: ["Shows", "Create/remove shows & colors"],
-            roster: ["Roster", ""],
-            settings: ["Settings", ""],
-        };
-        $("#viewTitle").textContent = titles[view][0];
-        $("#viewSubtitle").textContent = titles[view][1];
-
+    if (previousView === view) {
+        // Tapping the active tab again scrolls back to the top, like iOS/Android.
+        window.scrollTo({ top: 0, behavior: "smooth" });
         renderAll();
-        scheduleUiSessionSave();
+        return;
+    }
+    viewScrollPositions[previousView] = window.scrollY || 0;
+    const applyView = () => {
+        showView(view);
+        window.scrollTo({ top: viewScrollPositions[view] || 0, behavior: "instant" });
     };
 
     const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
-    if (previousView !== view && document.startViewTransition && !reduceMotion) {
+    if (document.startViewTransition && !reduceMotion && !document.hidden) {
         document.startViewTransition(applyView);
     } else {
         applyView();
     }
 }
 
+// Broken photo URLs fall back to initials instead of the browser's broken
+// image icon with the alt text spilling out of a tiny box.
+document.addEventListener("error", e => {
+    const img = e.target;
+    if (!(img instanceof HTMLImageElement) || img.dataset.fallbackDone) return;
+    img.dataset.fallbackDone = "1";
+    const layered = img.closest(".planner-participant-avatar, .picker-superstar-visual, .picker-matchup-avatar, .show-board-portrait");
+    if (layered) {
+        img.classList.add("is-broken");
+        img.closest(".picker-superstar-visual")?.classList.remove("has-photo");
+        img.closest(".show-board-portrait")?.classList.add("is-broken");
+        return;
+    }
+    const fallback = document.createElement("span");
+    fallback.className = `${img.className} img-fallback`;
+    fallback.setAttribute("aria-hidden", "true");
+    fallback.textContent = superstarInitials(img.getAttribute("alt") || "");
+    img.replaceWith(fallback);
+}, true);
+
 function optimizeImages(root = document) {
     const images = root?.matches?.("img") ? [root] : Array.from(root?.querySelectorAll?.("img") || []);
     images.forEach(img => {
         if (!img.hasAttribute("loading")) img.loading = "lazy";
-        img.decoding = "async";
+        if (!img.hasAttribute("decoding")) img.decoding = "async";
         img.draggable = false;
     });
 }
 
 // -------------------- MODAL --------------------
+// One shared dialog. On phones it is a bottom sheet (grabber, swipe down or tap
+// the backdrop to dismiss); on larger screens a centred card (Esc to close).
 const modal = $("#modal");
+const modalCard = $(".modal-card");
+const MODAL_VARIANTS = ["superstar-picker-modal", "photo-crop-modal", "show-champions-modal"];
 let modalResolve = null;
 let modalScrollLock = null;
 
+// Locking the page with overflow (instead of position:fixed) means the page
+// never moves underneath a sheet, so closing one can't jump or "refresh".
 function lockDocumentScroll() {
     if (modalScrollLock) return;
-    const body = document.body;
-    const scrollX = window.scrollX || 0;
-    const scrollY = window.scrollY || 0;
-    modalScrollLock = {
-        scrollX,
-        scrollY,
-        restoration: "scrollRestoration" in history ? history.scrollRestoration : null,
-        style: {
-            position: body.style.position,
-            top: body.style.top,
-            left: body.style.left,
-            right: body.style.right,
-            width: body.style.width,
-            overflow: body.style.overflow,
-        },
-    };
-    if ("scrollRestoration" in history) history.scrollRestoration = "manual";
-    body.style.position = "fixed";
-    body.style.top = `-${scrollY}px`;
-    body.style.left = `-${scrollX}px`;
-    body.style.right = "0";
-    body.style.width = "100%";
-    body.style.overflow = "hidden";
+    modalScrollLock = { x: window.scrollX || 0, y: window.scrollY || 0 };
+    document.documentElement.classList.add("is-scroll-locked");
 }
-
 function unlockDocumentScroll() {
     if (!modalScrollLock) return;
-    const lock = modalScrollLock;
+    const { x, y } = modalScrollLock;
     modalScrollLock = null;
-    const body = document.body;
-    Object.assign(body.style, lock.style);
-    if ("scrollRestoration" in history && lock.restoration) history.scrollRestoration = lock.restoration;
-    const restore = () => window.scrollTo({ left: lock.scrollX, top: lock.scrollY, behavior: "auto" });
-    restore();
-    requestAnimationFrame(() => {
-        restore();
-        requestAnimationFrame(restore);
-    });
+    document.documentElement.classList.remove("is-scroll-locked");
+    if (Math.abs((window.scrollY || 0) - y) > 1 || Math.abs((window.scrollX || 0) - x) > 1) {
+        window.scrollTo({ left: x, top: y, behavior: "instant" });
+    }
 }
 
 function resetModalScrollPosition() {
     const body = $("#modalBody");
-    const card = $(".modal-card");
     modal.scrollTop = 0;
     if (body) body.scrollTop = 0;
-    if (card) card.scrollTop = 0;
+    if (modalCard) modalCard.scrollTop = 0;
 }
 
-function openModal({ title, bodyHTML, okText = "OK", cancelText = "Cancel" }) {
+// Footer buttons that a caller injected for one dialog (Edit, Delete, Clear
+// slot…) must never leak into the next dialog.
+function clearModalExtras() {
+    $$(".modal-actions > :not(#modalCancel):not(#modalOk)").forEach(el => el.remove());
+}
+
+function openModal({ title, bodyHTML, okText = "OK", cancelText = "Cancel", hideCancel = false, hideOk = false, variant = "" }) {
+    // Opening a dialog from inside another one replaces it. Settle the previous
+    // caller's promise so its code can finish instead of hanging forever.
+    if (modalResolve) {
+        const previous = modalResolve;
+        modalResolve = null;
+        previous({ ok: false, superseded: true });
+    }
+    clearModalExtras();
     const body = $("#modalBody");
     $("#modalTitle").textContent = title;
     body.innerHTML = bodyHTML;
     $("#modalOk").textContent = okText;
     $("#modalCancel").textContent = cancelText;
-    $("#modalOk")?.classList.remove("hidden");
-    $("#modalCancel")?.classList.remove("hidden");
-    $(".modal-card")?.classList.remove("superstar-picker-modal", "photo-crop-modal", "show-champions-modal");
+    $("#modalOk").classList.toggle("hidden", !!hideOk);
+    $("#modalCancel").classList.toggle("hidden", !!hideCancel);
+    modalCard.classList.remove(...MODAL_VARIANTS, "is-dragging");
+    modalCard.style.transform = "";
+    if (variant) modalCard.classList.add(variant);
     resetModalScrollPosition();
     lockDocumentScroll();
     modal.classList.remove("hidden");
     modal.setAttribute("aria-hidden", "false");
     document.body.classList.add("modal-open");
-    requestAnimationFrame(() => {
-        resetModalScrollPosition();
-        optimizeImages(body);
-    });
-    return new Promise(res => modalResolve = res);
+    optimizeImages(body);
+    requestAnimationFrame(resetModalScrollPosition);
+    return new Promise(res => { modalResolve = res; });
 }
-function closeModal(result) {
+function closeModal(result = { ok: false }) {
     modal.classList.add("hidden");
     modal.setAttribute("aria-hidden", "true");
     document.body.classList.remove("modal-open");
-    $(".modal-card")?.classList.remove("superstar-picker-modal", "photo-crop-modal", "show-champions-modal");
-    resetModalScrollPosition();
+    clearModalExtras();
+    modalCard.classList.remove(...MODAL_VARIANTS, "is-dragging");
+    modalCard.style.transform = "";
+    $("#modalOk").classList.remove("hidden");
+    $("#modalCancel").classList.remove("hidden");
     unlockDocumentScroll();
-    if (modalResolve) modalResolve(result);
+    const resolve = modalResolve;
     modalResolve = null;
+    if (resolve) resolve(result);
+}
+function isModalOpen() {
+    return !modal.classList.contains("hidden");
 }
 $("#modalCancel").addEventListener("click", () => closeModal({ ok: false }));
 $("#modalOk").addEventListener("click", () => closeModal({ ok: true }));
+// Tap outside the sheet / press Esc to dismiss (same as Cancel).
+let modalBackdropPress = false;
+modal.addEventListener("pointerdown", e => { modalBackdropPress = e.target === modal; });
+modal.addEventListener("click", e => {
+    // Only a press that starts AND ends on the backdrop dismisses (a text
+    // selection dragged out of the sheet must not close it).
+    if (e.target === modal && modalBackdropPress) closeModal({ ok: false });
+    modalBackdropPress = false;
+});
+document.addEventListener("keydown", e => {
+    if (e.key === "Escape" && isModalOpen()) closeModal({ ok: false });
+});
+// Swipe the sheet down by its grabber/title to dismiss (phones).
+(function enableSheetSwipe() {
+    const sheetMQ = window.matchMedia("(max-width: 720px)");
+    let drag = null;
+    const handles = [$(".modal-grabber"), $("#modalTitle")].filter(Boolean);
+    const end = (e) => {
+        if (!drag || drag.pointerId !== e.pointerId) return;
+        const dy = Math.max(0, e.clientY - drag.startY);
+        const velocity = dy / Math.max(1, performance.now() - drag.t0);
+        const shouldClose = dy > 110 || (dy > 40 && velocity > 0.6);
+        modalCard.classList.remove("is-dragging");
+        drag = null;
+        if (shouldClose) {
+            modalCard.style.transform = "";
+            closeModal({ ok: false });
+        } else {
+            modalCard.style.transform = "";
+        }
+    };
+    handles.forEach(handle => {
+        handle.addEventListener("pointerdown", e => {
+            if (!sheetMQ.matches || e.pointerType === "mouse") return;
+            drag = { pointerId: e.pointerId, startY: e.clientY, t0: performance.now() };
+            modalCard.classList.add("is-dragging");
+            try { handle.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+        });
+        handle.addEventListener("pointermove", e => {
+            if (!drag || drag.pointerId !== e.pointerId) return;
+            const dy = Math.max(0, e.clientY - drag.startY);
+            modalCard.style.transform = `translateY(${dy}px)`;
+        });
+        handle.addEventListener("pointerup", end);
+        handle.addEventListener("pointercancel", end);
+    });
+})();
 
 // -------------------- TOAST + UNDO --------------------
 let toastContainer = null;
@@ -3218,16 +3380,12 @@ function renderUniverseDayHero() {
     `;
 
     $("#universeDayProgress")?.addEventListener("click", () => {
-        const before = universeISO;
-        setUniverseDateCompleted(before, true);
-        const next = parseISO(before);
-        next.setDate(next.getDate() + 1);
-        calSelectedISO = toISODateLocal(next);
-        calCursor = new Date(next);
-        calCursor.setDate(1);
-        calCursor.setHours(0, 0, 0, 0);
+        const changes = completeUniverseDay(universeISO);
+        calSelectedISO = nextUniverseDayISO(universeISO);
+        setCalendarMonthFor(calSelectedISO);
         saveSoon();
         renderAll();
+        announceTitleChanges(changes);
         // Smooth pulse on the hero card to acknowledge the action
         const card = $("#universeDayCard");
         if (card) {
@@ -3344,7 +3502,7 @@ function renderTitleReignsCard() {
                         </div>
                         <div class="reign-days">
                             <div class="reign-days-num">${days}</div>
-                            <div class="reign-days-label">days</div>
+                            <div class="reign-days-label">${days === 1 ? "day" : "days"}</div>
                         </div>
                     </button>
                 `;
@@ -3409,7 +3567,8 @@ async function openChampionshipHistoryModal(championshipId) {
         if (!body) return;
         $$("[data-edit-reign]", body).forEach(btn => {
             btn.addEventListener("click", async () => {
-                if (await openEditReignModal(btn.dataset.editReign)) reopen();
+                await openEditReignModal(btn.dataset.editReign);
+                reopen();
             });
         });
         $$("[data-delete-reign]", body).forEach(btn => {
@@ -3437,7 +3596,8 @@ async function openChampionshipHistoryModal(championshipId) {
             });
         });
         $("#addReignBtn", body)?.addEventListener("click", async () => {
-            if (await openAddReignModal(championshipId)) reopen();
+            await openAddReignModal(championshipId);
+            reopen();
         });
     };
 
@@ -3445,12 +3605,10 @@ async function openChampionshipHistoryModal(championshipId) {
         title: `${championship.name} — History`,
         bodyHTML: renderBody(),
         okText: "Close",
+        hideCancel: true,
     });
-    const cancelBtn = $("#modalCancel");
-    if (cancelBtn) cancelBtn.classList.add("hidden");
     wireButtons();
     await modalPromise;
-    if (cancelBtn) cancelBtn.classList.remove("hidden");
 }
 
 // Add a new reign record manually (for filling in historical reigns).
@@ -3617,10 +3775,8 @@ async function openChampionshipDetailsModal(championshipId) {
         title: championship.name,
         bodyHTML,
         okText: "Close",
+        hideCancel: true,
     });
-    // Single-button close: hide Cancel
-    const cancelBtn = $("#modalCancel");
-    if (cancelBtn) cancelBtn.classList.add("hidden");
 
     // Wire up reign edit/delete buttons
     const body = $("#modalBody");
@@ -3628,11 +3784,10 @@ async function openChampionshipDetailsModal(championshipId) {
         $$("[data-edit-reign]", body).forEach(btn => {
             btn.addEventListener("click", async () => {
                 const reignId = btn.dataset.editReign;
-                if (await openEditReignModal(reignId)) {
-                    // Re-open the championship details to show the updated list
-                    closeModal({ ok: false });
-                    setTimeout(() => openChampionshipDetailsModal(championshipId), 0);
-                }
+                await openEditReignModal(reignId);
+                // Re-open the championship details to show the updated list
+                closeModal({ ok: false });
+                setTimeout(() => openChampionshipDetailsModal(championshipId), 0);
             });
         });
         $$("[data-delete-reign]", body).forEach(btn => {
@@ -3664,7 +3819,6 @@ async function openChampionshipDetailsModal(championshipId) {
     }
 
     await modalPromise;
-    if (cancelBtn) cancelBtn.classList.remove("hidden");
 }
 
 // Edit a reign: change start date, end date, holder.
@@ -4267,7 +4421,7 @@ async function openSuperstarDetails(id, { readOnly = false, fromRankings = false
     for (const ev of eventsDesc) {
         const matchesDesc = (Array.isArray(ev.matches) ? ev.matches : []).slice().reverse();
         for (const match of matchesDesc) {
-            const participantRefs = Array.isArray(match?.participants) ? match.participants : [];
+            const participantRefs = matchParticipantRefs(match);
             const participants = participantRefs
                 .map(ref => participantInfo(ref).name)
                 .filter(Boolean);
@@ -4377,10 +4531,9 @@ async function openSuperstarDetails(id, { readOnly = false, fromRankings = false
       </div>
     `;
 
-    const modalPromise = openModal({ title: "Superstar Details", bodyHTML, okText: "Close", cancelText: "Close" });
+    const modalPromise = openModal({ title: "Superstar Details", bodyHTML, okText: "Close", cancelText: "Close", hideCancel: true });
 
     const modalActions = $(".modal-actions");
-    const modalCancelBtn = $("#modalCancel");
     const modalOkBtn = $("#modalOk");
 
     // Title history collapse/expand toggle (works in both readOnly and editable modes)
@@ -4398,10 +4551,9 @@ async function openSuperstarDetails(id, { readOnly = false, fromRankings = false
         // Reign edit/delete buttons inside the title history
         $$("[data-ss-edit-reign]").forEach(btn => {
             btn.addEventListener("click", async () => {
-                if (await openEditReignModal(btn.dataset.ssEditReign)) {
-                    closeModal({ ok: false });
-                    setTimeout(() => openSuperstarDetails(id, { readOnly, fromRankings }), 0);
-                }
+                await openEditReignModal(btn.dataset.ssEditReign);
+                closeModal({ ok: false });
+                setTimeout(() => openSuperstarDetails(id, { readOnly, fromRankings }), 0);
             });
         });
         $$("[data-ss-delete-reign]").forEach(btn => {
@@ -4433,9 +4585,7 @@ async function openSuperstarDetails(id, { readOnly = false, fromRankings = false
     wireTitleHistory();
 
     if (readOnly) {
-        modalCancelBtn.classList.add("hidden");
         await modalPromise;
-        modalCancelBtn.classList.remove("hidden");
         return;
     }
 
@@ -4450,16 +4600,14 @@ async function openSuperstarDetails(id, { readOnly = false, fromRankings = false
     footerDeleteBtn.type = "button";
     footerDeleteBtn.textContent = "Delete Superstar";
 
-    modalCancelBtn.classList.add("hidden");
     modalActions.insertBefore(footerEditBtn, modalOkBtn);
     modalActions.insertBefore(footerDeleteBtn, modalOkBtn);
 
     footerEditBtn.addEventListener("click", async () => {
         closeModal({ ok: false });
-        const didSave = await editSuperstarFlow(id);
-        if (didSave) {
-            await openSuperstarDetails(id);
-        }
+        await editSuperstarFlow(id);
+        // Saved or cancelled, land back on the profile (like a native "Back").
+        if (state.superstars.some(ss => ss.id === id)) await openSuperstarDetails(id);
     });
     footerDeleteBtn.addEventListener("click", async () => {
         closeModal({ ok: false });
@@ -4467,10 +4615,6 @@ async function openSuperstarDetails(id, { readOnly = false, fromRankings = false
     });
 
     await modalPromise;
-
-    footerEditBtn.remove();
-    footerDeleteBtn.remove();
-    modalCancelBtn.classList.remove("hidden");
 }
 
 function renderRoster() {
@@ -4498,8 +4642,10 @@ function renderRoster() {
         .sort((a, b) => a.name.localeCompare(b.name));
 
     const list = $("#rosterList");
+    const count = $("#rosterCount");
+    if (count) count.textContent = `${rows.length} of ${state.superstars.length}`;
     if (rows.length === 0) {
-        list.innerHTML = `<div class="muted">No superstars match your filters.</div>`;
+        list.innerHTML = `<div class="roster-empty muted">No superstars match your filters.</div>`;
         return;
     }
 
@@ -4537,20 +4683,21 @@ function renderRoster() {
     </div>
   `;
 
-    $$("[data-open-ss]", list).forEach(el => {
-        const open = () => {
-            el.blur();
-            openSuperstarDetails(el.dataset.openSs);
-        };
-        el.addEventListener("click", open);
-        el.addEventListener("keydown", (e) => {
-            if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                open();
-            }
-        });
-    });
 }
+// Roster rows are opened through one delegated listener (bound once).
+(function bindRosterList() {
+    const list = $("#rosterList");
+    if (!list) return;
+    const open = el => openSuperstarDetails(el.dataset.openSs);
+    list.addEventListener("click", e => {
+        const el = e.target.closest("[data-open-ss]");
+        if (el) open(el);
+    });
+    list.addEventListener("keydown", e => {
+        const el = e.target.closest("[data-open-ss]");
+        if (el && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); open(el); }
+    });
+})();
 
 function rivalryFormHTML(rivalry = {}) {
     const selectedShowIds = new Set(Array.isArray(rivalry?.showIds) ? rivalry.showIds : []);
@@ -4962,74 +5109,85 @@ async function openAddSuperstarFlow(draft = null) {
 
 // -------------------- CALENDAR --------------------
 let calSelectedISO = getUniverseCurrentISO();
-let calCursor = parseISO(calSelectedISO); calCursor.setDate(1); calCursor.setHours(0, 0, 0, 0);
+let calCursor = new Date(parseISO(calSelectedISO).getFullYear(), parseISO(calSelectedISO).getMonth(), 1);
+
+function calendarEventsByDate(showFilter) {
+    return memo(`calEvents:${showFilter}`, [state.events, dataVersion], () => {
+        const map = new Map();
+        state.events.forEach(e => {
+            if (showFilter !== "all" && !eventHasShow(e, showFilter)) return;
+            if (!map.has(e.date)) map.set(e.date, []);
+            map.get(e.date).push(e);
+        });
+        return map;
+    });
+}
 
 function renderCalendar() {
     populateShowSelects();
+    if (!isUniverseCalendarDay(calSelectedISO)) calSelectedISO = firstUniverseDayOnOrAfter(calSelectedISO);
     $("#calendarTitle").textContent = formatMonthTitle(calCursor);
     const startISO = getUniverseStartISO();
     const universeCurrentISO = getUniverseCurrentISO();
     const doneDates = completedDateSet();
     const startInput = $("#calUniverseStartDate");
     if (startInput && startInput.value !== startISO) startInput.value = startISO;
-    const toggleDoneBtn = $("#calToggleDone");
-    if (toggleDoneBtn) {
-        toggleDoneBtn.textContent = doneDates.has(calSelectedISO) ? "Unmark Day Done" : "Mark Day Done";
-    }
 
     const showFilter = $("#calShowFilter").value || "all";
+    const byDate = calendarEventsByDate(showFilter);
 
     const cells = [];
     for (let day = 1; day <= CALENDAR_DAYS_PER_MONTH; day++) {
         const d = new Date(calCursor.getFullYear(), calCursor.getMonth(), day);
         const iso = toISODateLocal(d);
         const done = doneDates.has(iso);
-
-        const events = state.events
-            .filter(e => e.date === iso)
-            .filter(e => showFilter === "all" ? true : eventHasShow(e, showFilter));
-
+        const events = byDate.get(iso) || [];
         const visibleEvents = events.slice(0, 2);
         const badges = visibleEvents.map(e => {
             const shortType = e.type === "ppv" ? "PLE" : "WK";
+            const color = showColor(eventShowIds(e)[0] || e.showId);
             const pillStyle = done
                 ? "background:rgba(159,159,170,.18);color:#c8c8d3;border-color:rgba(159,159,170,.32);"
                 : e.type === "ppv"
                     ? "background:#ffffff;color:#111111;border-color:#ffffff;"
-                    : `background:${showColor(e.showId)};color:#ffffff;border-color:${showColor(e.showId)};`;
-            return `<span class="cal-pill" style="${pillStyle}" title="${escapeAttr(e.name || "(Unnamed Event)")}">${shortType}</span>`;
+                    : `background:${color};color:#ffffff;border-color:${color};`;
+            return `<span class="cal-pill" style="${pillStyle}">${shortType}</span>`;
         }).join("");
         const overflow = events.length > visibleEvents.length
             ? `<span class="cal-more">+${events.length - visibleEvents.length}</span>`
             : "";
-
-        const isSelected = iso === calSelectedISO;
         const isStart = iso === startISO;
         const isNow = iso === universeCurrentISO;
         const cellClasses = [
             "cal-cell",
             done ? "is-done" : "",
-            isSelected ? "is-selected" : "",
+            iso === calSelectedISO ? "is-selected" : "",
             isNow ? "is-universe-now" : "",
+            events.length ? "has-events" : "",
         ].filter(Boolean).join(" ");
+        const label = `${parseISO(iso).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}${events.length ? `, ${events.length} event${events.length === 1 ? "" : "s"}` : ""}${done ? ", done" : ""}${isNow ? ", today in universe" : ""}`;
         cells.push(`
-      <div class="${cellClasses}" data-date="${iso}">
-        <div class="cal-date">${day}${isStart ? ` <span class="cal-day-state">START</span>` : ``}${isNow ? ` <span class="cal-day-state">NOW</span>` : ``}</div>
-        <div class="cal-badges">${badges}${overflow}</div>
-      </div>
+      <button type="button" class="${cellClasses}" data-date="${iso}" aria-label="${escapeAttr(label)}"${iso === calSelectedISO ? ' aria-pressed="true"' : ""}>
+        <span class="cal-date"><span class="cal-num">${day}</span>${isNow ? `<span class="cal-day-state">NOW</span>` : isStart ? `<span class="cal-day-state">START</span>` : ``}</span>
+        <span class="cal-badges">${badges}${overflow}</span>
+      </button>
     `);
     }
 
     $("#calendarGrid").innerHTML = cells.join("");
+    renderEventsOnSelectedDate();
+}
 
-    $$("[data-date]", $("#calendarGrid")).forEach(cell => {
-        cell.addEventListener("click", () => {
-            calSelectedISO = cell.dataset.date;
-            renderCalendar();
-            renderEventsOnSelectedDate();
-        });
+// Selecting a day only moves the highlight — no full calendar redraw.
+function selectCalendarDay(iso) {
+    if (!isISODate(iso)) return;
+    calSelectedISO = iso;
+    $$("#calendarGrid .cal-cell").forEach(cell => {
+        const selected = cell.dataset.date === iso;
+        cell.classList.toggle("is-selected", selected);
+        if (selected) cell.setAttribute("aria-pressed", "true");
+        else cell.removeAttribute("aria-pressed");
     });
-
     renderEventsOnSelectedDate();
 }
 
@@ -5037,55 +5195,48 @@ function renderEventsOnSelectedDate() {
     const showFilter = $("#calShowFilter").value || "all";
     const list = $("#eventsList");
     const dayDone = isUniverseDateCompleted(calSelectedISO);
+    const title = $("#calSelectedTitle");
+    if (title) title.textContent = prettyUniverseDate(calSelectedISO) || "Selected day";
+    const toggleDoneBtn = $("#calToggleDone");
+    if (toggleDoneBtn) toggleDoneBtn.textContent = dayDone ? "Unmark Done" : "Mark Done";
+    const status = $("#calSelectedStatus");
+    if (status) {
+        const isNow = calSelectedISO === getUniverseCurrentISO();
+        status.textContent = dayDone ? "Done" : isNow ? "Today" : (calSelectedISO < getUniverseCurrentISO() ? "Skipped" : "Upcoming");
+        status.dataset.state = dayDone ? "done" : isNow ? "now" : "upcoming";
+    }
 
-    const events = state.events
-        .filter(e => e.date === calSelectedISO)
-        .filter(e => showFilter === "all" ? true : eventHasShow(e, showFilter));
-
+    const events = calendarEventsByDate(showFilter).get(calSelectedISO) || [];
     if (events.length === 0) {
-        list.innerHTML = `<div class="muted">No events on <b>${calSelectedISO}</b>. ${dayDone ? "This day is marked done." : ""}</div>`;
+        list.innerHTML = `<div class="cal-empty muted">No events on this day.</div>`;
         return;
     }
 
     list.innerHTML = `
     <div class="list">
-      <div class="muted tiny">${dayDone ? "This day is marked done and counts as passed." : "This day is not marked done yet."}</div>
       ${events.map(e => {
         const ids = eventShowIds(e);
         const showBadges = ids.length
             ? ids.map(id => `<span class="badge"><span class="dot" style="background:${showColor(id)}"></span>${escapeHTML(showName(id))}</span>`).join("")
-            : `<span class="badge"><span class="dot" style="background:${showColor(e.showId)}"></span>${escapeHTML(showName(e.showId))}</span>`;
+            : `<span class="badge">No show</span>`;
+        const matches = Array.isArray(e.matches) ? e.matches : [];
+        const booked = matches.filter(m => matchParticipantRefs(m).length).length;
         return `
-          <div class="item cal-event-item" data-open-event="${e.id}" role="button" tabindex="0" aria-label="Open ${escapeAttr(e.name || "(Unnamed Event)")} details">
-            <div class="item-title">${escapeHTML(e.name || "(Unnamed Event)")}</div>
-            <div class="row gap wrap">
-              ${showBadges}
-              <span class="badge">${escapeHTML(e.type.toUpperCase())}</span>
-              <span class="badge">${e.date}</span>
-              <span class="badge">Rows: <b>${e.matches?.length || 0}</b></span>
-            </div>
-            <div class="row gap wrap" style="margin-top:10px;">
-              <span class="badge">Tap to view card</span>
-            </div>
-          </div>
+          <button type="button" class="item cal-event-item" data-open-event="${escapeAttr(e.id)}">
+            <span class="cal-event-copy">
+              <span class="item-title">${escapeHTML(e.name || "(Unnamed Event)")}</span>
+              <span class="row gap wrap">
+                ${showBadges}
+                <span class="badge">${e.type === "ppv" ? "PLE" : "Weekly"}</span>
+                <span class="badge">${booked}/${matches.length} booked</span>
+              </span>
+            </span>
+            <span class="cal-event-chevron" aria-hidden="true">›</span>
+          </button>
         `;
     }).join("")}
     </div>
   `;
-
-    $$("[data-open-event]").forEach(el => {
-        const open = () => {
-            el.blur();
-            openCalendarEventDetails(el.dataset.openEvent, { fromCalendar: true });
-        };
-        el.addEventListener("click", open);
-        el.addEventListener("keydown", (e) => {
-            if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                open();
-            }
-        });
-    });
 }
 
 function participantInfo(participantRef) {
@@ -5093,20 +5244,12 @@ function participantInfo(participantRef) {
     if (!ref) {
         return { name: "TBD", photo: "", isChampion: false };
     }
-    const byId = state.superstars.find(ss => ss.id === ref);
-    if (byId) {
+    const superstar = resolveSuperstarFromRef(ref);
+    if (superstar) {
         return {
-            name: byId.name || "TBD",
-            photo: superstarPhotoURL(byId),
-            isChampion: !!byId.isChampion,
-        };
-    }
-    const byName = state.superstars.find(ss => ss.name.toLowerCase() === ref.toLowerCase());
-    if (byName) {
-        return {
-            name: byName.name || "TBD",
-            photo: superstarPhotoURL(byName),
-            isChampion: !!byName.isChampion,
+            name: superstar.name || "TBD",
+            photo: superstarPhotoURL(superstar),
+            isChampion: !!superstar.isChampion,
         };
     }
     return { name: ref || "TBD", photo: "", isChampion: false };
@@ -5165,13 +5308,8 @@ async function editPleDetailsFlow(eventId) {
 
     const nextName = $("#editPleName").value.trim() || "PLE / PPV";
     const nextDate = $("#editPleDate").value;
-    if (!isISODate(nextDate)) {
-        await openModal({
-            title: "Invalid date",
-            bodyHTML: `<div class="muted">Please choose a valid date for this PLE.</div>`,
-            okText: "OK",
-            cancelText: "Close"
-        });
+    if (!isUniverseCalendarDay(nextDate)) {
+        showToast({ message: "Pick a valid day from 1 to 28 for this PLE.", tone: "danger" });
         return false;
     }
 
@@ -5207,7 +5345,7 @@ async function openCalendarEventDetails(eventId, { fromCalendar = false } = {}) 
     const matchesHTML = orderedMatches.length
         ? orderedMatches.map((m, renderIdx) => {
             const isMainEvent = renderIdx === 0;
-            const participants = Array.isArray(m.participants) ? m.participants : [];
+            const participants = matchParticipantRefs(m);
             const displayParticipants = participants.length >= 2
                 ? participants
                 : [participants[0] || "", ""];
@@ -5303,11 +5441,11 @@ async function openCalendarEventDetails(eventId, { fromCalendar = false } = {}) 
         title: ev.name || "(Unnamed Event)",
         bodyHTML,
         okText: "Close",
-        cancelText: "Close"
+        cancelText: "Close",
+        hideCancel: true,
     });
 
     const modalActions = $(".modal-actions");
-    const modalCancelBtn = $("#modalCancel");
     const modalOkBtn = $("#modalOk");
     const plannerBtn = document.createElement("button");
     plannerBtn.className = "btn";
@@ -5325,7 +5463,6 @@ async function openCalendarEventDetails(eventId, { fromCalendar = false } = {}) 
     deleteBtn.type = "button";
     deleteBtn.textContent = "Delete";
 
-    modalCancelBtn.classList.add("hidden");
     if (editPleBtn) modalActions.insertBefore(editPleBtn, modalOkBtn);
     modalActions.insertBefore(plannerBtn, modalOkBtn);
     modalActions.insertBefore(deleteBtn, modalOkBtn);
@@ -5352,10 +5489,6 @@ async function openCalendarEventDetails(eventId, { fromCalendar = false } = {}) 
     });
 
     await modalPromise;
-    editPleBtn?.remove();
-    plannerBtn.remove();
-    deleteBtn.remove();
-    modalCancelBtn.classList.remove("hidden");
 }
 
 async function addEventFlow(dateISO = calSelectedISO) {
@@ -5442,6 +5575,13 @@ async function addEventFlow(dateISO = calSelectedISO) {
     if (!ok.ok) return;
 
     const date = $("#evDate").value;
+    if (!isUniverseCalendarDay(date)) {
+        showToast({
+            message: isISODate(date) ? "Universe months have 4 weeks — pick a day from 1 to 28." : "Pick a date for the event.",
+            tone: "danger",
+        });
+        return;
+    }
     const type = $("#evType").value;
     const showId = $("#evShow").value || null;
     let showIds = type === "ppv"
@@ -5478,16 +5618,44 @@ async function addEventFlow(dateISO = calSelectedISO) {
     openPlanner(event.id);
 }
 
-// -------------------- PLANNER (optimized, no full rerender on typing) --------------------
+// -------------------- PLANNER --------------------
+// One card layout for every screen size (single column on phones, a grid on
+// tablets and desktop). Editing a match re-renders only that card, so changing
+// a participant never redraws, re-decodes images or scrolls the rest of the card.
 let plannerEventId = null;
 const MIN_PARTICIPANT_SLOTS = 2;
-let plannerDragSourceRow = null;
-let plannerTouchDragState = null;
+const MAX_PARTICIPANT_SLOTS = 30;
+let plannerDrag = null;
+
+const ICONS = {
+    grip: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg>`,
+    close: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>`,
+    plus: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>`,
+    minus: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/></svg>`,
+    chevron: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>`,
+    manager: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c.8-3.2 3-5 5.5-5s4.7 1.8 5.5 5"/><path d="M18 8v6M15 11h6"/></svg>`,
+    belt: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9h3l2-2h8l2 2h3v6h-3l-2 2H8l-2-2H3z"/><circle cx="12" cy="12" r="2.2"/></svg>`,
+    lock: `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>`,
+};
 
 function participantSlotCount(match) {
     const participants = Array.isArray(match?.participants) ? match.participants : [];
     const configured = Math.floor(Number(match?.participantSlots) || 0);
     return Math.max(MIN_PARTICIPANT_SLOTS, participants.length, configured);
+}
+// Positional slot list: index = slot on screen, "" = open slot.
+function matchSlotIds(match) {
+    const raw = Array.isArray(match?.participants) ? match.participants : [];
+    return Array.from({ length: participantSlotCount(match) }, (_, i) => {
+        const ref = String(raw[i] ?? "").trim();
+        return ref ? (resolveSuperstarIdFromRef(ref) || ref) : "";
+    });
+}
+function setMatchSlotIds(match, slots, slotCount = slots.length) {
+    const next = slots.map(v => String(v ?? "").trim());
+    while (next.length && !next[next.length - 1]) next.pop();
+    match.participants = next;
+    match.participantSlots = Math.max(MIN_PARTICIPANT_SLOTS, slotCount, next.length);
 }
 
 function ensurePlannerMatchIds(ev) {
@@ -5509,41 +5677,6 @@ function renumberPlannerMatches(matches) {
     });
 }
 
-function capturePlannerRowPositions() {
-    const positions = new Map();
-    $$("#matchesBody tr[data-match-id], #plannerCardList .planner-card[data-match-id]").forEach(el => {
-        const matchId = String(el.dataset.matchId || "");
-        if (!matchId) return;
-        positions.set(matchId, el.getBoundingClientRect().top);
-    });
-    return positions;
-}
-
-function animatePlannerRows(fromPositions) {
-    if (!(fromPositions instanceof Map) || fromPositions.size === 0) return;
-    const rows = $$("#matchesBody tr[data-match-id], #plannerCardList .planner-card[data-match-id]");
-    rows.forEach(el => {
-        const matchId = String(el.dataset.matchId || "");
-        const oldTop = fromPositions.get(matchId);
-        if (typeof oldTop !== "number") return;
-        const newTop = el.getBoundingClientRect().top;
-        const deltaY = oldTop - newTop;
-        if (Math.abs(deltaY) < 1) return;
-        el.style.transition = "none";
-        el.style.transform = `translateY(${deltaY}px)`;
-        requestAnimationFrame(() => {
-            el.style.transition = "transform 220ms cubic-bezier(0.22, 1, 0.36, 1)";
-            el.style.transform = "translateY(0)";
-            const clear = () => {
-                el.style.transition = "";
-                el.style.transform = "";
-                el.removeEventListener("transitionend", clear);
-            };
-            el.addEventListener("transitionend", clear);
-        });
-    });
-}
-
 function movePlannerMatch(matches, fromIndex, toIndex) {
     if (!Array.isArray(matches)) return false;
     if (!Number.isInteger(fromIndex) || !Number.isInteger(toIndex)) return false;
@@ -5555,127 +5688,87 @@ function movePlannerMatch(matches, fromIndex, toIndex) {
     return true;
 }
 
-// Capture & restore focus across re-renders so typing in inputs/selects doesn't lose focus.
-function capturePlannerFocus() {
-    const active = document.activeElement;
-    if (!active) return null;
-    const row = active.closest?.("[data-row]");
-    if (!row) return null;
-    const field = active.dataset?.field || "";
-    const slot = active.dataset?.slot || "";
-    const teamKey = active.dataset?.teamKey || "";
-    const isInput = active.tagName === "INPUT" || active.tagName === "TEXTAREA";
-    const selStart = isInput ? active.selectionStart : null;
-    const selEnd = isInput ? active.selectionEnd : null;
-    const layout = active.closest?.(".planner-card") ? "card" : "table";
-    return { rowIndex: row.dataset.row, field, slot, teamKey, selStart, selEnd, layout };
+function capturePlannerCardPositions() {
+    const positions = new Map();
+    $$("#plannerCardList .planner-card[data-match-id]").forEach(el => {
+        positions.set(el.dataset.matchId, el.getBoundingClientRect());
+    });
+    return positions;
 }
-function restorePlannerFocus(capture) {
-    if (!capture) return;
-    const layoutRoot = capture.layout === "card"
-        ? document.getElementById("plannerCardList")
-        : document.getElementById("matchesBody");
-    if (!layoutRoot) return;
-    const sel = `[data-row="${capture.rowIndex}"]`;
-    const row = layoutRoot.querySelector(sel);
-    if (!row) return;
-    let target = null;
-    if (capture.field) {
-        if (capture.slot !== "") {
-            target = row.querySelector(`[data-field="${capture.field}"][data-slot="${capture.slot}"]`);
-        } else if (capture.teamKey) {
-            target = row.querySelector(`[data-field="${capture.field}"][data-team-key="${capture.teamKey}"]`);
-        } else {
-            target = row.querySelector(`[data-field="${capture.field}"]`);
-        }
-    }
-    if (!target) return;
-    try {
-        target.focus({ preventScroll: true });
-        if (capture.selStart != null && typeof target.setSelectionRange === "function") {
-            target.setSelectionRange(capture.selStart, capture.selEnd ?? capture.selStart);
-        }
-    } catch (e) { /* ignore */ }
+function animatePlannerCards(fromPositions) {
+    if (!(fromPositions instanceof Map) || !fromPositions.size) return;
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) return;
+    $$("#plannerCardList .planner-card[data-match-id]").forEach(el => {
+        const old = fromPositions.get(el.dataset.matchId);
+        if (!old) return;
+        const now = el.getBoundingClientRect();
+        const dx = old.left - now.left;
+        const dy = old.top - now.top;
+        if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+        el.animate(
+            [{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "translate(0, 0)" }],
+            { duration: 240, easing: "cubic-bezier(.22, 1, .36, 1)" }
+        );
+    });
+}
+
+function plannerSortedEvents() {
+    return [...state.events].sort((a, b) => a.date.localeCompare(b.date));
+}
+function plannerEventLabel(e) {
+    const done = isUniverseDateCompleted(e.date) ? "✓ " : "";
+    const date = isISODate(e.date)
+        ? parseISO(e.date).toLocaleDateString(undefined, { month: "short", day: "numeric" })
+        : e.date;
+    const name = String(e.name || "(Unnamed)").replace(` • ${e.date}`, "").trim() || "(Unnamed)";
+    const shows = eventShowNames(e);
+    const showSuffix = shows.length && !shows.every(show => name.toLowerCase().includes(show.toLowerCase()))
+        ? ` (${shows.join(" + ")})`
+        : "";
+    return `${done}${date} · ${name}${showSuffix}`;
 }
 
 function renderPlannerEventSelect() {
     const sel = $("#plannerEventSelect");
     if (!sel) return;
-
-    const events = [...state.events].sort((a, b) => a.date.localeCompare(b.date));
-
-    sel.innerHTML = events.length
-        ? events.map(e => {
-            const names = eventShowNames(e);
-            const label = names.length ? names.join(" + ") : showName(e.showId);
-            return `<option value="${e.id}">${e.date} • ${escapeHTML(e.name || "(Unnamed)")} • ${escapeHTML(label)}</option>`;
-        }).join("")
-        : `<option value="">No events yet (create one)</option>`;
-
-    if (!plannerEventId && events.length) plannerEventId = events[0].id;
-    if (plannerEventId && events.some(e => e.id === plannerEventId)) sel.value = plannerEventId;
-
-    sel.onchange = () => {
-        plannerEventId = sel.value || null;
-        renderPlanner(); // re-render on event switch only
-    };
-}
-
-function plannerRosterOptions(ev) {
-    const eventShows = eventShowIds(ev);
-    const roster = eventShows.length
-        ? state.superstars.filter(ss => {
-            const ids = Array.isArray(ss?.showIds) ? ss.showIds : (ss?.showId ? [ss.showId] : []);
-            return ids.some(showId => eventShows.includes(showId));
-        })
-        : state.superstars;
-    return roster
-        .slice()
-        .sort((a, b) => a.name.localeCompare(b.name))
-        .map(ss => `<option value="${ss.id}">${escapeHTML(ss.name)} (${escapeHTML(ss.division)})</option>`)
-        .join("");
-}
-
-
-function plannerParticipantButtonHTML(participantId, slotIdx, optional = false, recordMap = null) {
-    const superstar = state.superstars.find(ss => ss.id === participantId) || null;
-    if (!superstar) {
-        return `
-          <button type="button" class="planner-participant-pick is-empty" data-pick-participant data-slot="${slotIdx}">
-            <span class="planner-participant-plus">+</span>
-            <span class="planner-participant-copy">
-              <span class="planner-participant-name">${optional ? "Optional superstar" : "Pick a superstar"}</span>
-              <span class="planner-participant-meta">Tap to open roster</span>
-            </span>
-            <span class="planner-participant-chevron">›</span>
-          </button>
-        `;
+    const events = plannerSortedEvents();
+    if (!plannerEventId && events.length) {
+        plannerEventId = (nextUniverseEvent() || events[0]).id;
     }
-    const photo = superstarPhotoURL(superstar);
-    const record = superstarRecordById(superstar.id, recordMap);
-    const avatar = photo
-        ? `<img class="planner-participant-avatar" src="${escapeAttr(photo)}" alt="" loading="lazy" decoding="async" />`
-        : `<span class="planner-participant-avatar planner-participant-avatar-fallback">${escapeHTML(superstarInitials(superstar.name))}</span>`;
-    return `
-      <button type="button" class="planner-participant-pick" data-pick-participant data-slot="${slotIdx}">
-        ${avatar}
-        <span class="planner-participant-copy">
-          <span class="planner-participant-name">${escapeHTML(superstar.name)}</span>
-          <span class="planner-participant-meta">${escapeHTML(superstar.division || "Roster")} • ${record.wins}-${record.losses}</span>
-        </span>
-        <span class="planner-participant-chevron">›</span>
-      </button>
-    `;
+    if (plannerEventId && !events.some(e => e.id === plannerEventId)) {
+        plannerEventId = events[0]?.id || null;
+    }
+    // Only rebuild the (long) option list when the events actually changed.
+    const signature = `${dataVersion}:${events.length}`;
+    if (sel.dataset.signature !== signature) {
+        sel.innerHTML = events.length
+            ? events.map(e => `<option value="${escapeAttr(e.id)}">${escapeHTML(plannerEventLabel(e))}</option>`).join("")
+            : `<option value="">No events yet</option>`;
+        sel.dataset.signature = signature;
+    }
+    if (plannerEventId) sel.value = plannerEventId;
+    const index = events.findIndex(e => e.id === plannerEventId);
+    const prev = $("#plannerPrevEvent");
+    const next = $("#plannerNextEvent");
+    if (prev) prev.disabled = index <= 0;
+    if (next) next.disabled = index < 0 || index >= events.length - 1;
+}
+function stepPlannerEvent(delta) {
+    const events = plannerSortedEvents();
+    const index = events.findIndex(e => e.id === plannerEventId);
+    const target = events[index + delta];
+    if (!target) return;
+    plannerEventId = target.id;
+    renderPlanner();
+    window.scrollTo({ top: 0, behavior: "instant" });
+    scheduleUiSessionSave();
 }
 
 function plannerBookedSuperstarIds(ev, exceptRow = -1) {
     const booked = new Set();
     (ev?.matches || []).forEach((match, rowIndex) => {
         if (rowIndex === exceptRow) return;
-        (Array.isArray(match?.participants) ? match.participants : [])
-            .map(resolveSuperstarIdFromRef)
-            .filter(Boolean)
-            .forEach(id => booked.add(id));
+        matchParticipantRefs(match).map(resolveSuperstarIdFromRef).filter(Boolean).forEach(id => booked.add(id));
     });
     return booked;
 }
@@ -5694,93 +5787,407 @@ function plannerRankMapForEvent(ev) {
     return map;
 }
 
-function capturePlannerViewportAnchor(row, slot) {
-    const anchor = document.querySelector(`[data-row="${row}"] [data-pick-participant][data-slot="${slot}"]`);
-    return {
-        row,
-        slot,
-        scrollX: window.scrollX || 0,
-        scrollY: window.scrollY || 0,
-        top: anchor?.getBoundingClientRect().top ?? null,
-    };
+function defaultTeamForSlot(match, slot) {
+    const type = String(match?.matchType || "").toLowerCase();
+    const slotCount = participantSlotCount(match);
+    if (type.includes("handicap")) return slot === 0 ? "T1" : "T2";
+    const teamCount = inferTagTeamCount(match?.matchType, slotCount) || 2;
+    const teamSize = slotCount % teamCount === 0 ? slotCount / teamCount : Math.ceil(slotCount / 2);
+    return `T${Math.min(teamCount, Math.floor(slot / Math.max(1, teamSize)) + 1)}`;
 }
-function restorePlannerViewportAnchor(snapshot) {
-    if (!snapshot) return;
-    const restore = () => {
-        const anchor = document.querySelector(`[data-row="${snapshot.row}"] [data-pick-participant][data-slot="${snapshot.slot}"]`);
-        if (anchor && Number.isFinite(snapshot.top)) {
-            const delta = anchor.getBoundingClientRect().top - snapshot.top;
-            if (Math.abs(delta) > 0.5) window.scrollBy({ top: delta, left: 0, behavior: "auto" });
-            try { anchor.focus({ preventScroll: true }); } catch { /* older browsers */ }
-        } else {
-            window.scrollTo({ left: snapshot.scrollX, top: snapshot.scrollY, behavior: "auto" });
-        }
-    };
-    requestAnimationFrame(() => {
-        restore();
-        requestAnimationFrame(restore);
-    });
+function matchTypeIsTeamBased(matchType) {
+    return /tag|handicap/i.test(String(matchType || ""));
 }
 
-function updatePlannerParticipantSlot({ row, slot, superstarId = "" }, { render = true } = {}) {
+// Keeps teams, escorts, winner and pin consistent with the current participants.
+function reconcilePlannerMatchTeams(match) {
+    const slots = matchSlotIds(match);
+    const participants = slots.filter(Boolean);
+    const present = new Set(participants);
+    const typeIsTeam = matchTypeIsTeamBased(match?.matchType);
+
+    const escorts = {};
+    Object.entries(normalizedParticipantEscorts(match)).forEach(([pid, ref]) => {
+        if (present.has(pid)) escorts[pid] = ref;
+    });
+    match.participantEscorts = escorts;
+
+    if (typeIsTeam) {
+        const teams = {};
+        const previous = normalizedParticipantTeams(match);
+        slots.forEach((pid, slot) => {
+            if (!pid) return;
+            teams[pid] = previous[pid] || defaultTeamForSlot(match, slot);
+        });
+        match.participantTeams = teams;
+    } else {
+        match.participantTeams = {};
+        match.teamNames = {};
+    }
+
+    const isTeamBased = isTeamOrHandicapMatch(match?.matchType, participants.length);
+    if (!isTeamBased) {
+        if (match.result && !participants.includes(match.result) && !isSpecialMatchResult(match.result)) {
+            const resolved = resolveSuperstarIdFromRef(match.result);
+            match.result = resolved && participants.includes(resolved) ? resolved : "";
+        }
+        if (match.pinBy && (!participants.includes(match.pinBy) || isSpecialMatchResult(match.result))) {
+            match.pinBy = "";
+        }
+        return;
+    }
+
+    const teamGroups = inferMatchTeams(match?.matchType, participants, normalizedParticipantTeams(match));
+    match.teamNames = pruneMatchTeamNames(match, teamGroups);
+    if (!isTeamResultValue(match.result) && !isSpecialMatchResult(match.result)) {
+        match.result = "";
+    }
+    const winningTeam = winningTeamFromMatch(match, teamGroups, String(match.result || ""));
+    if (isTeamResultValue(match.result) && !winningTeam?.participants?.length) {
+        match.result = "";
+    }
+    const winningPool = winningTeam?.participants || [];
+    if (match.pinBy && (!winningPool.length || !winningPool.includes(match.pinBy))) {
+        match.pinBy = "";
+    }
+}
+
+function pruneMatchTeamNames(match, teamGroups) {
+    const validKeys = new Set(teamGroups.map(group => group.key));
+    const nextNames = {};
+    Object.entries(normalizedTeamNames(match)).forEach(([teamKey, name]) => {
+        if (!validKeys.has(teamKey)) return;
+        nextNames[teamKey] = name;
+    });
+    return nextNames;
+}
+
+// ---------- card rendering ----------
+function selectOptionsHTML(options, currentValue) {
+    const current = String(currentValue ?? "");
+    const list = options.slice();
+    // Never silently drop a stored value just because it isn't in today's list.
+    if (current && !list.some(opt => opt.value === current)) {
+        list.push({ value: current, label: `${current}` });
+    }
+    return list.map(opt => `<option value="${escapeAttr(opt.value)}"${opt.value === current ? " selected" : ""}>${escapeHTML(opt.label)}</option>`).join("");
+}
+
+function plannerContext(ev) {
+    return {
+        ev,
+        eventShows: eventShowIds(ev),
+        locked: isUniverseDateCompleted(ev.date),
+        recordMap: computeSuperstarRecords(),
+    };
+}
+
+function plannerAvatarHTML(superstar, className) {
+    const photo = superstarPhotoURL(superstar);
+    const initials = escapeHTML(superstarInitials(superstar?.name));
+    return `<span class="${className}"><span class="avatar-initials">${initials}</span>${photo ? `<img src="${escapeAttr(photo)}" alt="" decoding="sync" loading="eager" draggable="false" />` : ""}</span>`;
+}
+
+function plannerSlotHTML(match, slot, participantId, view, ctx) {
+    const disabled = ctx.locked ? " disabled" : "";
+    const superstar = participantId ? (getSuperstar(participantId) || null) : null;
+    if (!participantId) {
+        return `
+          <div class="pm-slot is-empty">
+            <button type="button" class="planner-participant-pick is-empty" data-pick-participant data-slot="${slot}"${disabled}>
+              <span class="planner-participant-avatar is-plus">${ICONS.plus}</span>
+              <span class="planner-participant-copy">
+                <span class="planner-participant-name">${slot >= 2 ? "Add superstar" : "Pick a superstar"}</span>
+                <span class="planner-participant-meta">Slot ${slot + 1}</span>
+              </span>
+              <span class="planner-participant-chevron">${ICONS.chevron}</span>
+            </button>
+          </div>`;
+    }
+    const name = superstar?.name || participantId;
+    const record = superstarRecordById(superstar?.id || participantId, ctx.recordMap);
+    const escortName = participantEscortName(match, participantId);
+    const meta = [superstar?.division || "Roster", `${record.wins}-${record.losses}`];
+    const teamKey = view.participantTeams[participantId] || "";
+    const teamSelect = view.isTeamBased ? `
+        <select class="cell-input pm-team" data-field="participantTeam" data-slot="${slot}" aria-label="Team for ${escapeAttr(name)}"${disabled}>
+          ${selectOptionsHTML(view.teamOptions, teamKey)}
+        </select>` : "";
+    return `
+      <div class="pm-slot${view.isTeamBased ? ` team-${escapeAttr(teamKey || "T1")}` : ""}">
+        <button type="button" class="planner-participant-pick" data-pick-participant data-slot="${slot}"${disabled}>
+          ${plannerAvatarHTML(superstar || { name }, "planner-participant-avatar")}
+          <span class="planner-participant-copy">
+            <span class="planner-participant-name"><span class="pm-name-text">${escapeHTML(name)}</span>${superstar?.isChampion ? `<span class="champ-inline">C</span>` : ""}</span>
+            <span class="planner-participant-meta">${escapeHTML(meta.join(" • "))}${escortName ? ` • <span class="pm-escort">w/ ${escapeHTML(escortName)}</span>` : ""}</span>
+          </span>
+          <span class="planner-participant-chevron">${ICONS.chevron}</span>
+        </button>
+        ${teamSelect}
+        <button type="button" class="pm-icon-btn${escortName ? " is-active" : ""}" data-open-escort="${slot}" aria-label="Ringside accompaniment for ${escapeAttr(name)}" title="Manager / accompaniment"${disabled}>${ICONS.manager}</button>
+      </div>`;
+}
+
+function plannerMatchView(match, ctx) {
+    const slots = matchSlotIds(match);
+    const participants = slots.filter(Boolean);
+    const participantTeams = normalizedParticipantTeams(match);
+    const teamGroups = inferMatchTeams(match.matchType, participants, participantTeams);
+    const isTeamBased = isTeamOrHandicapMatch(match.matchType, participants.length);
+    const teamOptionCount = Math.max(2, Math.min(slots.length, 8),
+        ...Object.values(participantTeams).map(teamKeyIndex),
+        ...teamGroups.map(group => teamKeyIndex(group.key)));
+    const teamOptions = Array.from({ length: teamOptionCount }, (_, i) => ({ value: `T${i + 1}`, label: `T${i + 1}` }));
+    return { slots, participants, participantTeams, teamGroups, isTeamBased, teamOptions };
+}
+
+function plannerCardHTML(match, idx, ctx) {
+    const view = plannerMatchView(match, ctx);
+    const disabled = ctx.locked ? " disabled" : "";
+    const total = ctx.ev.matches.length;
+    const isMain = total > 1 && idx === total - 1;
+
+    // Championship: titles available to this show (+ whatever is already booked).
+    const champs = eligibleChampionshipsForShowIds(ctx.eventShows, { participantIds: view.participants });
+    const currentChampId = String(match.championshipId || "");
+    const champOptions = [{ value: "", label: "No title on the line" }, ...champs.map(c => ({ value: c.id, label: c.name }))];
+    if (currentChampId && !champOptions.some(opt => opt.value === currentChampId)) {
+        const champ = getChampionship(currentChampId);
+        if (champ) champOptions.push({ value: champ.id, label: `${champ.name} (other brand)` });
+    }
+
+    // Result options.
+    const winnerOptions = view.isTeamBased
+        ? view.teamGroups.map(group => ({ value: teamResultValue(group.key), label: teamDisplayName(match, group.key, group.participants) }))
+        : view.participants.map(pid => ({ value: pid, label: superstarNameById(pid) || pid }));
+    const resultOptions = [{ value: "", label: "No winner yet" }, ...winnerOptions, { value: "DQ", label: "DQ" }, { value: "Promo", label: "Promo" }];
+    const rawResult = String(match.result || "");
+    const teamKey = parseTeamResultValue(rawResult);
+    const resultValue = teamKey ? teamResultValue(teamKey) : (resolveSuperstarIdFromRef(rawResult) && view.participants.includes(resolveSuperstarIdFromRef(rawResult)) ? resolveSuperstarIdFromRef(rawResult) : rawResult);
+
+    let pinHTML = "";
+    if (view.isTeamBased) {
+        const winningTeam = view.teamGroups.find(group => group.key === teamKey) || null;
+        const pool = winningTeam?.participants?.length ? winningTeam.participants : view.participants;
+        pinHTML = `
+          <label class="pm-field">
+            <span class="planner-card-label">Pinfall / submission by</span>
+            <select class="cell-input" data-field="pinBy"${disabled}>
+              ${selectOptionsHTML([{ value: "", label: "—" }, ...pool.map(pid => ({ value: pid, label: superstarNameById(pid) || pid }))], String(match.pinBy || ""))}
+            </select>
+          </label>`;
+    }
+
+    let teamNamesHTML = "";
+    if (isTagTeamMatchType(match.matchType) && view.teamGroups.length && view.isTeamBased) {
+        const names = normalizedTeamNames(match);
+        teamNamesHTML = view.teamGroups.map(group => {
+            const factions = factionOptionsForParticipants(group.participants);
+            const current = String(names[group.key] || "");
+            return `
+              <label class="pm-field">
+                <span class="planner-card-label">${escapeHTML(teamLabel(group.key))} name</span>
+                <select class="cell-input" data-field="teamName" data-team-key="${escapeAttr(group.key)}"${disabled}>
+                  ${selectOptionsHTML([{ value: "", label: teamLabel(group.key) }, ...factions.map(f => ({ value: f, label: f }))], current)}
+                </select>
+              </label>`;
+        }).join("");
+    }
+
+    const storyline = String(match.storyline || "");
+    const rivalryNotes = String(match.rivalryNotes || "");
+    const preview = (text, empty) => text.trim()
+        ? escapeHTML(text.length > 90 ? `${text.slice(0, 90)}…` : text)
+        : empty;
+    const beltName = currentChampId ? championshipName(currentChampId) : "";
+    const slotCount = view.slots.length;
+
+    return `
+      <article class="planner-card${ctx.locked ? " is-locked" : ""}${isMain ? " is-main-event" : ""}" data-row="${idx}" data-match-id="${escapeAttr(match.id || "")}">
+        <header class="planner-card-head">
+          <button type="button" class="planner-card-drag" data-drag-handle aria-label="Drag to reorder match ${idx + 1}"${disabled}>${ICONS.grip}</button>
+          <div class="planner-card-num">Match ${idx + 1}${isMain ? `<span class="planner-main-tag">Main Event</span>` : ""}</div>
+          <div class="planner-card-spacer"></div>
+          ${beltName ? `<div class="planner-card-belt" title="${escapeAttr(beltName)}">${ICONS.belt}<span>${escapeHTML(beltName)}</span></div>` : ""}
+          <button type="button" class="planner-card-iconbtn danger" data-del-row="${idx}" aria-label="Delete match ${idx + 1}"${disabled}>${ICONS.close}</button>
+        </header>
+
+        <section class="planner-card-section">
+          <div class="planner-card-section-head">
+            <span class="planner-card-label">Participants · ${view.participants.length}/${slotCount}</span>
+            <div class="planner-card-section-actions">
+              <button type="button" class="planner-card-iconbtn small" data-remove-participant aria-label="Remove last slot"${ctx.locked || slotCount <= MIN_PARTICIPANT_SLOTS ? " disabled" : ""}>${ICONS.minus}</button>
+              <button type="button" class="planner-card-iconbtn small" data-add-participant aria-label="Add a slot"${ctx.locked || slotCount >= MAX_PARTICIPANT_SLOTS ? " disabled" : ""}>${ICONS.plus}</button>
+            </div>
+          </div>
+          <div class="planner-card-participants">
+            ${view.slots.map((pid, slot) => plannerSlotHTML(match, slot, pid, view, ctx)).join("")}
+          </div>
+        </section>
+
+        <div class="planner-card-fields">
+          <label class="pm-field">
+            <span class="planner-card-label">Match type</span>
+            <input class="cell-input" data-field="matchType" value="${escapeAttr(match.matchType || "")}" placeholder="1v1, Tag Team, Ladder…" list="matchTypePresets" autocomplete="off" enterkeyhint="done"${disabled} />
+          </label>
+          <label class="pm-field">
+            <span class="planner-card-label">Championship</span>
+            <select class="cell-input" data-field="championshipId"${disabled}>${selectOptionsHTML(champOptions, currentChampId)}</select>
+          </label>
+          ${teamNamesHTML}
+          <label class="pm-field">
+            <span class="planner-card-label">Result</span>
+            <select class="cell-input" data-field="result"${disabled}>${selectOptionsHTML(resultOptions, resultValue)}</select>
+          </label>
+          ${pinHTML}
+        </div>
+
+        <div class="planner-card-notes">
+          <button type="button" class="planner-card-note" data-open-note="storyline">
+            <span class="planner-card-note-label">Storyline</span>
+            <span class="planner-card-note-preview${storyline.trim() ? "" : " is-empty"}">${preview(storyline, ctx.locked ? "No storyline" : "Add storyline")}</span>
+          </button>
+          <button type="button" class="planner-card-note" data-open-note="rivalryNotes">
+            <span class="planner-card-note-label">Rivalry notes</span>
+            <span class="planner-card-note-preview${rivalryNotes.trim() ? "" : " is-empty"}">${preview(rivalryNotes, ctx.locked ? "No notes" : "Add rivalry notes")}</span>
+          </button>
+        </div>
+      </article>`;
+}
+
+function updatePlannerMeta(ev) {
+    const meta = $("#plannerMeta");
+    const lockBanner = $("#plannerLockBanner");
+    if (!ev) {
+        if (lockBanner) lockBanner.classList.add("hidden");
+        return;
+    }
+    const locked = isUniverseDateCompleted(ev.date);
+    const shows = eventShowNames(ev);
+    const showBadges = shows.length
+        ? eventShowIds(ev).map(id => `<span class="badge"><span class="dot" style="background:${escapeAttr(showColor(id))}"></span>${escapeHTML(showName(id))}</span>`).join("")
+        : "";
+    const date = isISODate(ev.date)
+        ? parseISO(ev.date).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric" })
+        : ev.date;
+    if (meta) {
+        meta.innerHTML = `
+          ${showBadges}
+          <span class="badge">${ev.type === "ppv" ? "PLE" : "Weekly"}</span>
+          <span class="badge">${escapeHTML(date)}</span>
+          <span class="badge">${ev.matches.length} ${ev.matches.length === 1 ? "match" : "matches"}</span>`;
+    }
+    if (lockBanner) lockBanner.classList.toggle("hidden", !locked);
+    const addBtn = $("#addMatchRow");
+    if (addBtn) addBtn.disabled = locked;
+}
+
+function renderPlanner(fromPositions = null) {
+    renderPlannerEventSelect();
+    const list = $("#plannerCardList");
+    if (!list) return;
+
+    const ev = plannerEventId ? getEvent(plannerEventId) : null;
+    if (!ev) {
+        updatePlannerMeta(null);
+        $("#plannerMeta").innerHTML = "";
+        list.innerHTML = `
+          <div class="planner-empty">
+            <div class="planner-empty-title">${state.events.length ? "Pick an event to plan" : "No events yet"}</div>
+            <div class="muted tiny">Create a weekly show or PLE, then book the card here.</div>
+            <button type="button" class="btn" data-planner-new-event>Create Event</button>
+          </div>`;
+        return;
+    }
+    if (ensurePlannerMatchIds(ev)) upsertEvent(ev);
+    if (!Array.isArray(ev.matches)) ev.matches = [];
+
+    updatePlannerMeta(ev);
+    const ctx = plannerContext(ev);
+    list.innerHTML = ev.matches.map((m, idx) => plannerCardHTML(m, idx, ctx)).join("")
+        + (ctx.locked ? "" : `<button type="button" class="planner-add-card" data-planner-add-match>${ICONS.plus}<span>Add match</span></button>`);
+    optimizeImages(list);
+    animatePlannerCards(fromPositions);
+}
+
+// Re-render a single match card in place (keeps scroll position & focus).
+function refreshPlannerMatch(row) {
+    const ev = getEvent(plannerEventId);
+    const list = $("#plannerCardList");
+    if (!ev || !list) return;
+    const old = list.querySelector(`.planner-card[data-row="${row}"]`);
+    if (!old || !ev.matches[row]) { renderPlanner(); return; }
+
+    const active = document.activeElement;
+    const focusKey = active && old.contains(active)
+        ? (active.dataset.field ? `[data-field="${active.dataset.field}"]${active.dataset.slot ? `[data-slot="${active.dataset.slot}"]` : ""}${active.dataset.teamKey ? `[data-team-key="${active.dataset.teamKey}"]` : ""}` : "")
+        : "";
+
+    const holder = document.createElement("div");
+    holder.innerHTML = plannerCardHTML(ev.matches[row], row, plannerContext(ev));
+    const next = holder.firstElementChild;
+    old.replaceWith(next);
+    optimizeImages(next);
+    updatePlannerMeta(ev);
+    if (focusKey) {
+        try { next.querySelector(focusKey)?.focus({ preventScroll: true }); } catch { /* ignore */ }
+    }
+}
+
+function plannerTarget(el) {
+    const card = el?.closest?.(".planner-card[data-row]");
+    if (!card) return null;
+    const ev = getEvent(plannerEventId);
+    const row = Number(card.dataset.row);
+    const match = ev?.matches?.[row];
+    return match ? { ev, row, match, card } : null;
+}
+function plannerLockedToast(ev) {
+    if (!isUniverseDateCompleted(ev.date)) return false;
+    showToast({ message: "This day is marked done — unmark it on the calendar to edit.", tone: "danger" });
+    return true;
+}
+function commitPlannerMatch(ev, row, { reconcile = true, refresh = true } = {}) {
+    if (reconcile) reconcilePlannerMatchTeams(ev.matches[row]);
+    upsertEvent(ev);
+    if (refresh) refreshPlannerMatch(row);
+}
+
+function updatePlannerParticipantSlot({ row, slot, superstarId = "" }) {
     const ev = getEvent(plannerEventId);
     if (!ev || !ev.matches[row]) return false;
-    if (isUniverseDateCompleted(ev.date)) {
-        showToast({ message: "This day is marked done — unmark it on the calendar to edit.", tone: "danger" });
-        return false;
-    }
+    if (plannerLockedToast(ev)) return false;
 
     const match = ev.matches[row];
-    const previousParticipants = Array.isArray(match.participants) ? match.participants.filter(Boolean) : [];
-    const oldParticipantId = previousParticipants[slot] || "";
-    const oldTeams = normalizedParticipantTeams(match);
-    const oldTeam = oldParticipantId ? oldTeams[oldParticipantId] || "" : "";
-    const nextParticipants = previousParticipants.slice();
-
+    const slots = matchSlotIds(match);
+    const oldId = slots[slot] || "";
+    const teams = normalizedParticipantTeams(match);
     if (superstarId) {
-        const duplicateIndex = nextParticipants.indexOf(superstarId);
-        if (duplicateIndex >= 0 && duplicateIndex !== slot) nextParticipants.splice(duplicateIndex, 1);
-        nextParticipants[slot] = superstarId;
-    } else if (slot < nextParticipants.length) {
-        nextParticipants.splice(slot, 1);
+        // A superstar can only be in one slot per match.
+        slots.forEach((pid, i) => { if (pid === superstarId && i !== slot) slots[i] = ""; });
+        slots[slot] = superstarId;
+        if (oldId && oldId !== superstarId && teams[oldId] && !teams[superstarId]) {
+            teams[superstarId] = teams[oldId];
+        }
+        if (oldId && oldId !== superstarId && match.result === oldId) match.result = "";
+    } else {
+        slots[slot] = ""; // leave the slot open — nobody else moves
     }
-
-    match.participants = nextParticipants.filter(Boolean);
-    match.participantSlots = Math.max(participantSlotCount(match), MIN_PARTICIPANT_SLOTS, match.participants.length);
-
-    const remaining = new Set(match.participants);
-    const nextEscorts = {};
-    Object.entries(normalizedParticipantEscorts(match)).forEach(([participantId, escortRef]) => {
-        if (remaining.has(participantId)) nextEscorts[participantId] = escortRef;
-    });
-    match.participantEscorts = nextEscorts;
-
-    const nextTeams = {};
-    Object.entries(oldTeams).forEach(([participantId, teamKey]) => {
-        if (remaining.has(participantId)) nextTeams[participantId] = teamKey;
-    });
-    if (superstarId && oldTeam && !nextTeams[superstarId]) nextTeams[superstarId] = oldTeam;
-    match.participantTeams = nextTeams;
-
-    reconcilePlannerMatchTeams(match);
-    upsertEvent(ev);
-    if (render) renderPlanner();
+    match.participantTeams = teams;
+    setMatchSlotIds(match, slots, slots.length);
+    commitPlannerMatch(ev, row);
     return true;
 }
 
 async function openPlannerSuperstarPicker({ row, slot }) {
     const ev = getEvent(plannerEventId);
     if (!ev || !ev.matches[row]) return;
-    if (isUniverseDateCompleted(ev.date)) {
-        showToast({ message: "This day is marked done — unmark it on the calendar to edit.", tone: "danger" });
-        return;
-    }
+    if (plannerLockedToast(ev)) return;
 
-    const viewportAnchor = capturePlannerViewportAnchor(row, slot);
     const match = ev.matches[row];
-    const participants = Array.isArray(match.participants) ? match.participants.filter(Boolean) : [];
-    const currentId = participants[slot] || "";
-    const selectedElsewhereInMatch = new Set(participants.filter((_, index) => index !== slot));
+    const slots = matchSlotIds(match);
+    const currentId = slots[slot] || "";
+    const selectedElsewhereInMatch = new Set(slots.filter((pid, index) => pid && index !== slot));
     const bookedElsewhere = plannerBookedSuperstarIds(ev, row);
     const eventShows = eventShowIds(ev);
     const rankMap = plannerRankMapForEvent(ev);
@@ -5793,28 +6200,24 @@ async function openPlannerSuperstarPicker({ row, slot }) {
         division: "all",
     };
 
-    const matchupHTML = Array.from({ length: participantSlotCount(match) }).map((_, index) => {
-        const participantId = participants[index] || "";
-        const superstar = state.superstars.find(ss => ss.id === participantId) || null;
+    const matchupHTML = slots.map((participantId, index) => {
+        const superstar = participantId ? getSuperstar(participantId) : null;
         const isTarget = index === slot;
         if (!superstar || isTarget) {
             return `<div class="picker-matchup-chip ${isTarget ? "is-target" : ""}"><span class="picker-matchup-number">${index + 1}</span><span>${isTarget ? "Choosing…" : "Open slot"}</span></div>`;
         }
-        const photo = superstarPhotoURL(superstar);
-        const initials = superstarInitials(superstar.name);
-        return `<div class="picker-matchup-chip"><span class="picker-matchup-avatar"><span class="picker-matchup-fallback">${escapeHTML(initials)}</span>${photo ? `<img data-picker-photo src="${escapeAttr(photo)}" alt="" />` : ""}</span><span class="picker-matchup-label">${escapeHTML(superstar.name)}</span></div>`;
+        return `<div class="picker-matchup-chip">${plannerAvatarHTML(superstar, "picker-matchup-avatar")}<span class="picker-matchup-label">${escapeHTML(superstar.name)}</span></div>`;
     }).join(`<span class="picker-matchup-vs">vs</span>`);
 
     const bodyHTML = `
       <div class="superstar-picker-shell">
-        <button type="button" class="picker-close" id="pickerClose" aria-label="Close">×</button>
         <div class="picker-context">Match ${row + 1} • Slot ${slot + 1}</div>
         <div class="picker-matchup">${matchupHTML}</div>
         <div class="picker-search-row">
-          <input id="pickerSearch" class="input picker-search" type="search" autocomplete="off" placeholder="Search the roster…" />
+          <input id="pickerSearch" class="input picker-search" type="search" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="search" placeholder="Search the roster…" />
         </div>
         <div class="picker-filter-strip" aria-label="Roster filters">
-          <button type="button" class="picker-filter is-active" data-picker-filter="brand">This brand only</button>
+          <button type="button" class="picker-filter${pickerState.brandOnly ? " is-active" : ""}" data-picker-filter="brand"${eventShows.length ? "" : " hidden"}>This brand only</button>
           <button type="button" class="picker-filter" data-picker-filter="champions">Champions</button>
           <button type="button" class="picker-filter" data-picker-filter="free">Free tonight</button>
           <select id="pickerDivision" class="picker-filter picker-filter-select" aria-label="Division filter">
@@ -5831,53 +6234,46 @@ async function openPlannerSuperstarPicker({ row, slot }) {
       </div>
     `;
 
-    const modalPromise = openModal({ title: "Pick a Superstar", bodyHTML, okText: "Done", cancelText: "Close" });
-    const modalCard = $(".modal-card");
-    modalCard?.classList.add("superstar-picker-modal");
-    const actions = $(".modal-actions");
-    const okButton = $("#modalOk");
-    okButton?.classList.add("hidden");
-    const clearButton = document.createElement("button");
-    clearButton.type = "button";
-    clearButton.className = "btn secondary picker-clear-slot";
-    clearButton.textContent = "Clear slot";
-    actions?.insertBefore(clearButton, $("#modalCancel"));
+    const modalPromise = openModal({
+        title: "Pick a Superstar",
+        bodyHTML,
+        okText: "Done",
+        cancelText: "Close",
+        hideOk: true,
+        variant: "superstar-picker-modal",
+    });
+    let clearButton = null;
+    if (currentId) {
+        clearButton = document.createElement("button");
+        clearButton.type = "button";
+        clearButton.className = "btn danger picker-clear-slot";
+        clearButton.textContent = "Remove from slot";
+        $(".modal-actions")?.insertBefore(clearButton, $("#modalCancel"));
+    }
 
     const rosterGrid = $("#pickerRosterGrid");
     const rosterCount = $("#pickerRosterCount");
     const normalizeQuery = value => normalizeNameForCompare(String(value || ""));
-    const bindPickerPhotoFallbacks = root => {
-        $$('img[data-picker-photo]', root || document).forEach(img => {
-            if (img.dataset.fallbackBound === "true") return;
-            img.dataset.fallbackBound = "true";
-            img.addEventListener("error", () => {
-                img.classList.add("is-broken");
-                img.setAttribute("aria-hidden", "true");
-                img.closest(".picker-superstar-visual")?.classList.remove("has-photo");
-            }, { once: true });
-        });
-    };
-    bindPickerPhotoFallbacks($("#modalBody"));
+    const searchText = new Map(state.superstars.map(ss => [ss.id, normalizeQuery([ss.name, ss.division, ss.faction, ss.manager, ...superstarShowNames(ss)].join(" "))]));
 
-    const rosterForPicker = () => state.superstars
-        .filter(superstar => {
-            if (selectedElsewhereInMatch.has(superstar.id)) return false;
-            if (pickerState.brandOnly && eventShows.length && !eventShows.some(showId => superstarOnShow(superstar, showId))) return false;
-            if (pickerState.championsOnly && !superstar.isChampion) return false;
-            if (pickerState.freeTonight && bookedElsewhere.has(superstar.id) && superstar.id !== currentId) return false;
-            if (pickerState.division !== "all" && normalizeSuperstarDivision(superstar.division) !== pickerState.division) return false;
-            const query = normalizeQuery(pickerState.query);
-            if (query) {
-                const haystack = normalizeQuery([superstar.name, superstar.division, superstar.faction, superstar.manager, ...superstarShowNames(superstar)].join(" "));
-                if (!haystack.includes(query)) return false;
-            }
-            return true;
-        })
-        .sort((a, b) => {
-            const rankA = rankMap.get(a.id) || Number.MAX_SAFE_INTEGER;
-            const rankB = rankMap.get(b.id) || Number.MAX_SAFE_INTEGER;
-            return (rankA - rankB) || a.name.localeCompare(b.name);
-        });
+    const rosterForPicker = () => {
+        const query = normalizeQuery(pickerState.query);
+        return state.superstars
+            .filter(superstar => {
+                if (selectedElsewhereInMatch.has(superstar.id)) return false;
+                if (pickerState.brandOnly && eventShows.length && !eventShows.some(showId => superstarOnShow(superstar, showId))) return false;
+                if (pickerState.championsOnly && !superstar.isChampion) return false;
+                if (pickerState.freeTonight && bookedElsewhere.has(superstar.id) && superstar.id !== currentId) return false;
+                if (pickerState.division !== "all" && normalizeSuperstarDivision(superstar.division) !== pickerState.division) return false;
+                if (query && !searchText.get(superstar.id)?.includes(query)) return false;
+                return true;
+            })
+            .sort((a, b) => {
+                const rankA = rankMap.get(a.id) || Number.MAX_SAFE_INTEGER;
+                const rankB = rankMap.get(b.id) || Number.MAX_SAFE_INTEGER;
+                return (rankA - rankB) || a.name.localeCompare(b.name);
+            });
+    };
 
     const renderPickerRoster = () => {
         const roster = rosterForPicker();
@@ -5890,10 +6286,10 @@ async function openPlannerSuperstarPicker({ row, slot }) {
             const booked = bookedElsewhere.has(superstar.id) && superstar.id !== currentId;
             const active = superstar.id === currentId;
             return `
-              <button type="button" class="picker-superstar-card ${active ? "is-selected" : ""}" data-picker-superstar="${escapeAttr(superstar.id)}" aria-label="Select ${escapeAttr(superstar.name)}">
+              <button type="button" class="picker-superstar-card ${active ? "is-selected" : ""}${booked ? " is-booked" : ""}" data-picker-superstar="${escapeAttr(superstar.id)}" aria-label="Select ${escapeAttr(superstar.name)}">
                 <span class="picker-superstar-visual${photo ? " has-photo" : ""}">
                   <span class="picker-superstar-fallback">${escapeHTML(superstarInitials(superstar.name))}</span>
-                  ${photo ? `<img class="picker-superstar-photo" data-picker-photo src="${escapeAttr(photo)}" alt="" loading="lazy" decoding="async" draggable="false" />` : ""}
+                  ${photo ? `<img class="picker-superstar-photo" src="${escapeAttr(photo)}" alt="" loading="lazy" decoding="async" draggable="false" />` : ""}
                   ${superstar.isChampion ? `<span class="picker-title-badge">TITLE</span>` : ""}
                   ${rank ? `<span class="picker-rank-badge">#${rank}</span>` : ""}
                 </span>
@@ -5902,13 +6298,14 @@ async function openPlannerSuperstarPicker({ row, slot }) {
               </button>
             `;
         }).join("") : `<div class="picker-empty"><b>No superstars found.</b><span>Try clearing a filter or searching another name.</span></div>`;
-        bindPickerPhotoFallbacks(rosterGrid);
-        optimizeImages(rosterGrid);
+        rosterGrid.scrollTop = 0;
     };
 
+    let searchFrame = 0;
     $("#pickerSearch")?.addEventListener("input", e => {
         pickerState.query = e.target.value;
-        requestAnimationFrame(renderPickerRoster);
+        cancelAnimationFrame(searchFrame);
+        searchFrame = requestAnimationFrame(renderPickerRoster);
     });
     $("#pickerDivision")?.addEventListener("change", e => {
         pickerState.division = e.target.value;
@@ -5927,35 +6324,21 @@ async function openPlannerSuperstarPicker({ row, slot }) {
     });
     rosterGrid?.addEventListener("click", e => {
         const card = e.target.closest("[data-picker-superstar]");
-        if (!card) return;
+        if (!card || card.dataset.selecting === "true") return;
         e.preventDefault();
-        e.stopPropagation();
-        if (card.dataset.selecting === "true") return;
         card.dataset.selecting = "true";
-        const selectedId = card.dataset.pickerSuperstar;
-        updatePlannerParticipantSlot({ row, slot, superstarId: selectedId }, { render: false });
-        closeModal({ ok: true, selected: selectedId });
+        closeModal({ ok: true, selected: card.dataset.pickerSuperstar });
     });
-    clearButton.addEventListener("click", e => {
+    clearButton?.addEventListener("click", e => {
         e.preventDefault();
-        updatePlannerParticipantSlot({ row, slot, superstarId: "" }, { render: false });
         closeModal({ ok: true, cleared: true });
     });
-    $("#pickerClose")?.addEventListener("click", () => closeModal({ ok: false }));
 
     renderPickerRoster();
-    requestAnimationFrame(() => {
-        resetModalScrollPosition();
-        if (rosterGrid) rosterGrid.scrollTop = 0;
-    });
     const modalResult = await modalPromise;
-    clearButton.remove();
-    okButton?.classList.remove("hidden");
-    modalCard?.classList.remove("superstar-picker-modal");
-    if (modalResult?.selected || modalResult?.cleared) {
-        renderPlanner();
-        restorePlannerViewportAnchor(viewportAnchor);
-    }
+    // Apply after the sheet is gone so only this one card updates underneath.
+    if (modalResult?.selected) updatePlannerParticipantSlot({ row, slot, superstarId: modalResult.selected });
+    else if (modalResult?.cleared) updatePlannerParticipantSlot({ row, slot, superstarId: "" });
 }
 
 function plannerNoteDisplayHTML(noteValue, emptyText) {
@@ -5968,106 +6351,63 @@ async function openPlannerNoteModal({ row, field }) {
     const ev = getEvent(plannerEventId);
     if (!ev || !ev.matches[row]) return;
     const isStoryline = field === "storyline";
-    const isRivalryNotes = field === "rivalryNotes";
-    if (!isStoryline && !isRivalryNotes) return;
+    if (!isStoryline && field !== "rivalryNotes") return;
+    const locked = isUniverseDateCompleted(ev.date);
 
-    const title = isStoryline ? "Storyline Notes" : "Rivalry Notes";
-    const emptyText = isStoryline ? "No storyline notes yet." : "No rivalry notes yet.";
-    const placeholder = isStoryline ? "Write storyline notes..." : "Write rivalry notes...";
+    const title = isStoryline ? "Storyline" : "Rivalry Notes";
+    const placeholder = isStoryline ? "What's the story going into this match?" : "History, stakes, what happens next…";
     const currentValue = String(ev.matches[row]?.[field] ?? "");
-    const bodyHTML = `
-      <div class="stack" style="gap:10px;">
-        <div id="plannerNoteRead">${plannerNoteDisplayHTML(currentValue, emptyText)}</div>
-        <textarea id="plannerNoteEdit" class="cell-input hidden" style="min-height:180px;" placeholder="${escapeAttr(placeholder)}">${escapeHTML(currentValue)}</textarea>
-      </div>
-    `;
+    const bodyHTML = locked
+        ? `<div class="stack">${plannerNoteDisplayHTML(currentValue, isStoryline ? "No storyline notes." : "No rivalry notes.")}<div class="muted tiny">🔒 This day is marked done, so notes are read-only.</div></div>`
+        : `<textarea id="plannerNoteEdit" class="input textarea planner-note-textarea" placeholder="${escapeAttr(placeholder)}">${escapeHTML(currentValue)}</textarea>`;
+
     const modalPromise = openModal({
         title: `Match ${row + 1} • ${title}`,
         bodyHTML,
-        okText: "Done",
-        cancelText: "Close",
+        okText: locked ? "Close" : "Save",
+        cancelText: "Cancel",
+        hideCancel: locked,
     });
-
-    const modalActions = $(".modal-actions");
-    const modalCancelBtn = $("#modalCancel");
-    const modalOkBtn = $("#modalOk");
-    const editBtn = document.createElement("button");
-    editBtn.className = "btn secondary";
-    editBtn.type = "button";
-    editBtn.textContent = "Edit";
-
-    modalCancelBtn.classList.add("hidden");
-    modalActions.insertBefore(editBtn, modalOkBtn);
-
-    const readEl = $("#plannerNoteRead");
     const editEl = $("#plannerNoteEdit");
-    editBtn.addEventListener("click", () => {
-        if (!readEl || !editEl) return;
-        readEl.classList.add("hidden");
-        editEl.classList.remove("hidden");
-        editEl.focus();
-        editEl.setSelectionRange(editEl.value.length, editEl.value.length);
-    });
-
     const modalResult = await modalPromise;
-
-    editBtn.remove();
-    modalCancelBtn.classList.remove("hidden");
-
-    if (!modalResult?.ok) return;
+    if (locked || !modalResult?.ok || !editEl) return;
 
     const ev2 = getEvent(plannerEventId);
     if (!ev2 || !ev2.matches[row]) return;
-    ev2.matches[row][field] = String(editEl?.value ?? "");
-    upsertEvent(ev2);
-    renderPlanner();
+    ev2.matches[row][field] = String(editEl.value ?? "");
+    commitPlannerMatch(ev2, row, { reconcile: false });
 }
 
 async function openPlannerEscortModal({ row, slot }) {
     const ev = getEvent(plannerEventId);
     if (!ev || !ev.matches[row]) return;
+    if (plannerLockedToast(ev)) return;
     const match = ev.matches[row];
-    const participants = Array.isArray(match?.participants) ? match.participants : [];
-    const participantId = String(participants[slot] || "").trim();
+    const participantId = matchSlotIds(match)[slot] || "";
     if (!participantId) return;
 
     const participant = participantInfo(participantId);
     const managers = Array.from(new Set(
-        state.superstars
-            .map(ss => String(ss?.manager || "").trim())
-            .filter(Boolean)
+        state.superstars.map(ss => String(ss?.manager || "").trim()).filter(Boolean)
     )).sort((a, b) => a.localeCompare(b));
-    const superstarOptions = state.superstars
-        .slice()
-        .sort((a, b) => a.name.localeCompare(b.name))
-        .map(ss => `<option value="${escapeAttr(escortRefForSuperstar(ss.id))}">Superstar: ${escapeHTML(ss.name)}</option>`)
-        .join("");
-    const managerOptions = managers
-        .map(name => `<option value="${escapeAttr(escortRefForManager(name))}">Manager: ${escapeHTML(name)}</option>`)
-        .join("");
-    const currentEscorts = normalizedParticipantEscorts(match);
-    const currentValue = String(currentEscorts[participantId] || "");
+    const currentValue = String(normalizedParticipantEscorts(match)[participantId] || "");
+    const options = [
+        { value: "", label: "Nobody" },
+        ...managers.map(name => ({ value: escortRefForManager(name), label: `Manager: ${name}` })),
+        ...state.superstars
+            .filter(ss => ss.id !== participantId)
+            .slice()
+            .sort((a, b) => a.name.localeCompare(b.name))
+            .map(ss => ({ value: escortRefForSuperstar(ss.id), label: ss.name })),
+    ];
 
     const bodyHTML = `
       <div class="stack" style="gap:10px;">
-        <div class="muted">Set ringside accompaniment for <b>${escapeHTML(participant.name)}</b>.</div>
-        <select id="plannerEscortSelect" class="input">
-          <option value="">None</option>
-          ${superstarOptions}
-          ${managerOptions}
-        </select>
+        <div class="muted">Who walks out with <b>${escapeHTML(participant.name)}</b>?</div>
+        <select id="plannerEscortSelect" class="input">${selectOptionsHTML(options, currentValue)}</select>
       </div>
     `;
-    const modalPromise = openModal({
-        title: `Match ${row + 1} • Accompaniment`,
-        bodyHTML,
-        okText: "Save",
-    });
-    const escortSelect = $("#plannerEscortSelect");
-    if (escortSelect) {
-        const options = Array.from(escortSelect.options).map(opt => opt.value);
-        escortSelect.value = options.includes(currentValue) ? currentValue : "";
-    }
+    const modalPromise = openModal({ title: `Match ${row + 1} • Accompaniment`, bodyHTML, okText: "Save" });
     const ok = await modalPromise;
     if (!ok?.ok) return;
 
@@ -6078,827 +6418,178 @@ async function openPlannerEscortModal({ row, slot }) {
     if (!selected) delete escorts[participantId];
     else escorts[participantId] = selected;
     ev2.matches[row].participantEscorts = escorts;
-    upsertEvent(ev2);
-    renderPlanner();
+    commitPlannerMatch(ev2, row, { reconcile: false });
 }
 
-function pruneMatchTeamNames(match, teamGroups) {
-    const validKeys = new Set(teamGroups.map(group => group.key));
-    const nextNames = {};
-    Object.entries(normalizedTeamNames(match)).forEach(([teamKey, name]) => {
-        if (!validKeys.has(teamKey)) return;
-        nextNames[teamKey] = name;
-    });
-    return nextNames;
-}
+// ---------- delegated planner events (bound once) ----------
+function onPlannerClick(e) {
+    if (e.target.closest("[data-planner-add-match]")) { addMatchRow(); return; }
+    if (e.target.closest("[data-planner-new-event]")) { newEventFromPlanner(); return; }
+    const btn = e.target.closest("button");
+    if (!btn || btn.disabled || btn.matches("[data-drag-handle]")) return;
+    const target = plannerTarget(btn);
+    if (!target) return;
+    const { ev, row, match } = target;
 
-function reconcilePlannerMatchTeams(match) {
-    const participants = Array.isArray(match?.participants) ? match.participants.filter(Boolean) : [];
-    const isTeamBased = isTeamOrHandicapMatch(match?.matchType, participants.length);
-    if (!isTeamBased) {
-        match.participantTeams = {};
-        match.teamNames = {};
-        if (match.result && !participants.includes(match.result) && !isSpecialMatchResult(match.result)) {
-            match.result = "";
-        }
-        if (match.pinBy && (!participants.includes(match.pinBy) || isSpecialMatchResult(match.result))) {
-            match.pinBy = "";
-        }
-        return;
-    }
-
-    const teamGroups = inferMatchTeams(match?.matchType, participants, normalizedParticipantTeams(match));
-    match.teamNames = pruneMatchTeamNames(match, teamGroups);
-
-    if (!isTeamResultValue(match.result) && !isSpecialMatchResult(match.result)) {
-        match.result = "";
-    }
-
-    const winningTeam = winningTeamFromMatch(match, teamGroups, String(match.result || ""));
-    if (isTeamResultValue(match.result) && !winningTeam?.participants?.length) {
-        match.result = "";
-    }
-
-    const winningPool = winningTeam?.participants || [];
-    if (match.pinBy && (!winningPool.length || !winningPool.includes(match.pinBy))) {
-        match.pinBy = "";
-    }
-}
-
-function renderPlanner(fromPositions = null) {
-    renderPlannerEventSelect();
-    const meta = $("#plannerMeta");
-    const body = $("#matchesBody");
-    const cardList = $("#plannerCardList");
-
-    if (!plannerEventId) {
-        meta.textContent = "Create an event to start planning.";
-        body.innerHTML = "";
-        if (cardList) cardList.innerHTML = "";
-        return;
-    }
-
-    const ev = getEvent(plannerEventId);
-    if (!ev) {
-        meta.textContent = "Event not found.";
-        body.innerHTML = "";
-        if (cardList) cardList.innerHTML = "";
-        return;
-    }
-    if (ensurePlannerMatchIds(ev)) upsertEvent(ev);
-
-    const metaShows = eventShowNames(ev);
-    const isEventLocked = isUniverseDateCompleted(ev.date);
-    meta.textContent = `${ev.date} • ${ev.type.toUpperCase()} • ${metaShows.length ? metaShows.join(" + ") : showName(ev.showId)} • ${ev.matches.length} rows${isEventLocked ? " • 🔒 Locked (day done)" : ""}`;
-    const lockBanner = $("#plannerLockBanner");
-    if (lockBanner) lockBanner.classList.toggle("hidden", !isEventLocked);
-
-    const optionsHTML = plannerRosterOptions(ev);
-    const plannerRecordMap = computeSuperstarRecords();
-    const eventShows = eventShowIds(ev);
-    let clearedUnavailableChampionship = false;
-    ev.matches = ev.matches.map(match => {
-        const championshipId = String(match?.championshipId || "").trim();
-        const championship = getChampionship(championshipId);
-        if (championshipId && !championshipEligibleForMatch(championship, match, eventShows)) {
-            clearedUnavailableChampionship = true;
-            return { ...match, championshipId: "" };
-        }
-        return match;
-    });
-    if (clearedUnavailableChampionship) {
+    if (btn.matches("[data-pick-participant]")) {
+        openPlannerSuperstarPicker({ row, slot: Number(btn.dataset.slot) });
+    } else if (btn.matches("[data-open-escort]")) {
+        openPlannerEscortModal({ row, slot: Number(btn.dataset.openEscort) });
+    } else if (btn.matches("[data-open-note]")) {
+        openPlannerNoteModal({ row, field: btn.dataset.openNote });
+    } else if (btn.matches("[data-add-participant]")) {
+        if (plannerLockedToast(ev)) return;
+        const slots = matchSlotIds(match);
+        setMatchSlotIds(match, slots, Math.min(MAX_PARTICIPANT_SLOTS, slots.length + 1));
+        commitPlannerMatch(ev, row);
+    } else if (btn.matches("[data-remove-participant]")) {
+        if (plannerLockedToast(ev)) return;
+        const slots = matchSlotIds(match);
+        if (slots.length <= MIN_PARTICIPANT_SLOTS) return;
+        const removed = slots[slots.length - 1];
+        const nextSlots = slots.slice(0, -1);
+        setMatchSlotIds(match, nextSlots, nextSlots.length);
+        commitPlannerMatch(ev, row);
+        if (removed) showToast({ message: `${superstarNameById(removed) || "Superstar"} removed with the slot.`, tone: "info", duration: 2600 });
+    } else if (btn.matches("[data-del-row]")) {
+        if (plannerLockedToast(ev)) return;
+        const snapshot = snapshotState();
+        ev.matches.splice(row, 1);
+        renumberPlannerMatches(ev.matches);
         upsertEvent(ev);
+        renderPlanner(capturePlannerCardPositions());
+        offerUndo(`Match ${row + 1} deleted.`, snapshot);
     }
-
-    body.innerHTML = ev.matches.map((m, idx) => {
-        const slotCount = participantSlotCount(m);
-        const participants = Array.isArray(m.participants) ? m.participants.filter(Boolean) : [];
-        const championshipOptionsHTML = [
-            `<option value="">None</option>`,
-            ...eligibleChampionshipsForShowIds(eventShows, { participantIds: participants })
-                .map(c => `<option value="${escapeAttr(c.id)}">${escapeHTML(c.name)}</option>`)
-        ].join("");
-        const participantTeams = normalizedParticipantTeams(m);
-        const teamGroups = inferMatchTeams(m.matchType, participants, participantTeams);
-        const isTeamBased = isTeamOrHandicapMatch(m.matchType, participants.length);
-        const isTagTeam = isTagTeamMatchType(m.matchType);
-        const teamNameMap = normalizedTeamNames(m);
-        const winningTeamKey = parseTeamResultValue(m.result);
-        const winningTeam = teamGroups.find(group => group.key === winningTeamKey) || null;
-        const teamOptionCount = Math.max(
-            2,
-            slotCount,
-            ...Object.values(participantTeams).map(teamKeyIndex),
-            ...teamGroups.map(group => teamKeyIndex(group.key)),
-        );
-        const participantTeamOptions = Array.from({ length: teamOptionCount }, (_, teamIdx) => {
-            const teamKey = `T${teamIdx + 1}`;
-            return `<option value="${teamKey}">${escapeHTML(teamLabel(teamKey))}</option>`;
-        }).join("");
-        const specialResultOptions = `
-            <option value="DQ">DQ</option>
-            <option value="Promo">Promo</option>
-        `;
-        const winnerOptions = isTeamBased
-            ? [
-                ...teamGroups.map(group => `<option value="${escapeAttr(teamResultValue(group.key))}">${escapeHTML(teamDisplayName(m, group.key, group.participants))}</option>`),
-                specialResultOptions,
-            ].join("")
-            : [
-                ...participants.map(pid => {
-                    const name = superstarNameById(pid) || pid;
-                    return `<option value="${escapeAttr(pid)}">${escapeHTML(name)}</option>`;
-                }),
-                specialResultOptions,
-            ].join("");
-        const showPinBy = isTeamBased;
-        const pinPool = showPinBy
-            ? (winningTeam?.participants?.length ? winningTeam.participants : participants)
-            : participants;
-        const pinByOptions = pinPool.map(pid => {
-            const name = superstarNameById(pid) || pid;
-            return `<option value="${escapeAttr(pid)}">${escapeHTML(name)}</option>`;
-        }).join("");
-        const participantFields = Array.from({ length: slotCount }).map((_, slotIdx) => {
-            const participantId = participants[slotIdx] || "";
-            return `
-              <div class="planner-table-participant-slot">
-                ${plannerParticipantButtonHTML(participantId, slotIdx, slotIdx >= 2, plannerRecordMap)}
-                <select class="visually-hidden" data-field="participant" data-slot="${slotIdx}" tabindex="-1" aria-hidden="true">
-                  <option value="">${slotIdx < 2 ? "(select)" : "(optional)"}</option>
-                  ${optionsHTML}
-                </select>
-                <div class="row gap wrap planner-participant-tools">
-                  <button
-                    type="button"
-                    class="btn secondary participant-add-btn"
-                    data-open-escort="${slotIdx}"
-                    title="Add ringside accompaniment"
-                    aria-label="Add ringside accompaniment"
-                  >Manager</button>
-                  ${isTeamBased ? `
-                    <select class="cell-input small" data-field="participantTeam" data-slot="${slotIdx}" style="max-width:120px;">
-                      <option value="">(team)</option>
-                      ${participantTeamOptions}
-                    </select>
-                  ` : ``}
-                </div>
-              </div>
-            `;
-        }).join("");
-        const teamNameFields = isTagTeam && teamGroups.length
-            ? `
-              <div class="stack" style="gap:6px;">
-                ${teamGroups.map(group => {
-                    const teamLabelValue = teamLabel(group.key);
-                    const optionValues = factionOptionsForParticipants(group.participants);
-                    const currentName = String(teamNameMap[group.key] || "");
-                    if (currentName && !optionValues.includes(currentName)) optionValues.push(currentName);
-                    optionValues.sort((a, b) => a.localeCompare(b));
-                    return `
-                      <select class="cell-input small" data-field="teamName" data-team-key="${escapeAttr(group.key)}">
-                        <option value="">${escapeHTML(teamLabelValue)}</option>
-                        ${optionValues.map(name => `<option value="${escapeAttr(name)}">${escapeHTML(name)}</option>`).join("")}
-                      </select>
-                    `;
-                }).join("")}
-              </div>
-            `
-            : "";
-        const removeParticipantBtn = slotCount > MIN_PARTICIPANT_SLOTS
-            ? `<button type="button" class="btn secondary participant-add-btn" data-remove-participant="${idx}">-</button>`
-            : "";
-
-        return `
-      <tr data-row="${idx}" data-match-id="${escapeAttr(m.id || "")}" draggable="${isEventLocked ? "false" : "true"}" class="${isEventLocked ? "planner-row-locked" : ""}">
-        <td>
-          <div class="stack" style="gap:6px;">
-            <button
-              type="button"
-              class="planner-drag-handle"
-              data-drag-handle
-              title="Drag to reorder match"
-              aria-label="Drag to reorder match"
-            >&#8942;&#8942;</button>
-            <div class="row gap">
-              <button type="button" class="btn secondary participant-add-btn" data-add-participant="${idx}">+</button>
-              ${removeParticipantBtn}
-            </div>
-          </div>
-        </td>
-        <td>
-          <div class="stack">
-            ${participantFields}
-          </div>
-        </td>
-        <td>
-          <input class="cell-input small" data-field="matchType" value="${escapeAttr(m.matchType || "")}" placeholder="1v1 / tag / promo…" list="matchTypePresets" />
-        </td>
-        <td>
-          <div class="planner-note-cell">
-            <button type="button" class="btn secondary planner-note-btn" data-open-note="storyline">View</button>
-          </div>
-        </td>
-        <td>
-          <select class="cell-input small" data-field="championshipId">
-            ${championshipOptionsHTML}
-          </select>
-        </td>
-        <td>
-          <div class="stack" style="gap:6px;">
-            ${teamNameFields}
-            <select class="cell-input small" data-field="result">
-              <option value="">(winner)</option>
-              ${winnerOptions}
-            </select>
-            ${showPinBy ? `
-              <select class="cell-input small" data-field="pinBy">
-                <option value="">(who got the pin)</option>
-                ${pinByOptions}
-              </select>
-            ` : ``}
-          </div>
-        </td>
-        <td>
-          <div class="planner-note-cell">
-            <button type="button" class="btn secondary planner-note-btn" data-open-note="rivalryNotes">View</button>
-          </div>
-        </td>
-        <td>
-          <button class="btn danger" data-del-row="${idx}">X</button>
-        </td>
-      </tr>
-    `;
-    }).join("");
-
-    // Mobile card layout — same data attributes as the table rows so handlers Just Work
-    if (cardList) {
-        const PLANNER_MATCH_TYPE_PRESETS = ["1v1", "Tag Team", "Triple Threat", "Fatal 4-Way", "6-Man Tag", "Triple Threat Tag", "Fatal 4-Way Tag", "Steel Cage", "Hell in a Cell", "Ladder Match", "TLC", "Royal Rumble", "Promo"];
-        const datalistHTML = `<datalist id="matchTypePresets">${PLANNER_MATCH_TYPE_PRESETS.map(p => `<option value="${escapeHTML(p)}"></option>`).join("")}</datalist>`;
-        cardList.innerHTML = datalistHTML + ev.matches.map((m, idx) => {
-            const slotCount = participantSlotCount(m);
-            const participants = Array.isArray(m.participants) ? m.participants.filter(Boolean) : [];
-            const championshipOptionsHTML = [
-                `<option value="">None</option>`,
-                ...eligibleChampionshipsForShowIds(eventShows, { participantIds: participants })
-                    .map(c => `<option value="${escapeAttr(c.id)}">${escapeHTML(c.name)}</option>`)
-            ].join("");
-            const participantTeams = normalizedParticipantTeams(m);
-            const teamGroups = inferMatchTeams(m.matchType, participants, participantTeams);
-            const isTeamBased = isTeamOrHandicapMatch(m.matchType, participants.length);
-            const isTagTeam = isTagTeamMatchType(m.matchType);
-            const teamNameMap = normalizedTeamNames(m);
-            const winningTeamKey = parseTeamResultValue(m.result);
-            const winningTeam = teamGroups.find(group => group.key === winningTeamKey) || null;
-            const teamOptionCount = Math.max(
-                2,
-                slotCount,
-                ...Object.values(participantTeams).map(teamKeyIndex),
-                ...teamGroups.map(group => teamKeyIndex(group.key)),
-            );
-            const participantTeamOptions = Array.from({ length: teamOptionCount }, (_, teamIdx) => {
-                const teamKey = `T${teamIdx + 1}`;
-                return `<option value="${teamKey}">${escapeHTML(teamLabel(teamKey))}</option>`;
-            }).join("");
-            const specialResultOptions = `<option value="DQ">DQ</option><option value="Promo">Promo</option>`;
-            const winnerOptions = isTeamBased
-                ? [
-                    ...teamGroups.map(group => `<option value="${escapeAttr(teamResultValue(group.key))}">${escapeHTML(teamDisplayName(m, group.key, group.participants))}</option>`),
-                    specialResultOptions,
-                ].join("")
-                : [
-                    ...participants.map(pid => {
-                        const name = superstarNameById(pid) || pid;
-                        return `<option value="${escapeAttr(pid)}">${escapeHTML(name)}</option>`;
-                    }),
-                    specialResultOptions,
-                ].join("");
-            const showPinBy = isTeamBased;
-            const pinPool = showPinBy
-                ? (winningTeam?.participants?.length ? winningTeam.participants : participants)
-                : participants;
-            const pinByOptions = pinPool.map(pid => {
-                const name = superstarNameById(pid) || pid;
-                return `<option value="${escapeAttr(pid)}">${escapeHTML(name)}</option>`;
-            }).join("");
-
-            const participantCards = Array.from({ length: slotCount }).map((_, slotIdx) => {
-                const participantId = participants[slotIdx] || "";
-                const teamValue = participantId ? (participantTeams[participantId] || "") : "";
-                const escortName = participantId ? participantEscortName(m, participantId) : "";
-                return `
-                    <div class="planner-card-participant">
-                        ${plannerParticipantButtonHTML(participantId, slotIdx, slotIdx >= 2, plannerRecordMap)}
-                        <select class="visually-hidden" data-field="participant" data-slot="${slotIdx}" tabindex="-1" aria-hidden="true">
-                            <option value="">${slotIdx < 2 ? "(select superstar)" : "(optional)"}</option>
-                            ${optionsHTML}
-                        </select>
-                        <div class="planner-card-participant-row planner-participant-tools">
-                            <button type="button"
-                                class="btn secondary planner-escort-btn"
-                                data-open-escort="${slotIdx}"
-                                ${participantId ? "" : "disabled"}
-                                title="Set ringside accompaniment"
-                                aria-label="Set ringside accompaniment">${escortName ? `Manager: ${escapeHTML(escortName)}` : "Add manager"}</button>
-                            ${isTeamBased ? `
-                                <select class="cell-input planner-card-team-pick" data-field="participantTeam" data-slot="${slotIdx}">
-                                    <option value="">(no team)</option>
-                                    ${participantTeamOptions}
-                                </select>
-                            ` : ""}
-                        </div>
-                    </div>
-                `;
-            }).join("");
-
-            const teamNameFields = isTagTeam && teamGroups.length
-                ? teamGroups.map(group => {
-                    const teamLabelValue = teamLabel(group.key);
-                    const optionValues = factionOptionsForParticipants(group.participants);
-                    const currentName = String(teamNameMap[group.key] || "");
-                    if (currentName && !optionValues.includes(currentName)) optionValues.push(currentName);
-                    optionValues.sort((a, b) => a.localeCompare(b));
-                    return `
-                        <select class="cell-input" data-field="teamName" data-team-key="${escapeAttr(group.key)}">
-                            <option value="">${escapeHTML(teamLabelValue)} name</option>
-                            ${optionValues.map(name => `<option value="${escapeAttr(name)}">${escapeHTML(name)}</option>`).join("")}
-                        </select>
-                    `;
-                }).join("")
-                : "";
-
-            const storyline = String(m.storyline || "");
-            const rivalryNotes = String(m.rivalryNotes || "");
-            const storylinePreview = storyline ? storyline.slice(0, 80) + (storyline.length > 80 ? "…" : "") : "Add storyline";
-            const rivalryPreview = rivalryNotes ? rivalryNotes.slice(0, 80) + (rivalryNotes.length > 80 ? "…" : "") : "Add rivalry notes";
-            const championshipBadge = m.championshipId ? championshipName(m.championshipId) : "";
-
-            return `
-                <div class="planner-card ${isEventLocked ? "planner-row-locked" : ""}" data-row="${idx}" data-match-id="${escapeAttr(m.id || "")}">
-                    <div class="planner-card-head">
-                        <button type="button" class="planner-card-drag" data-drag-handle aria-label="Drag to reorder">⠿</button>
-                        <div class="planner-card-num">Match ${idx + 1}</div>
-                        ${championshipBadge ? `<div class="planner-card-belt">${escapeHTML(championshipBadge)}</div>` : ""}
-                        <div class="planner-card-spacer"></div>
-                        <button type="button" class="planner-card-iconbtn danger" data-del-row="${idx}" aria-label="Delete match">×</button>
-                    </div>
-
-                    <div class="planner-card-section">
-                        <label class="planner-card-label">Match Type</label>
-                        <input class="cell-input" data-field="matchType" value="${escapeAttr(m.matchType || "")}" placeholder="1v1, tag, ladder…" list="matchTypePresets" />
-                    </div>
-
-                    <div class="planner-card-section">
-                        <div class="planner-card-section-head">
-                            <label class="planner-card-label">Participants</label>
-                            <div class="planner-card-section-actions">
-                                <button type="button" class="planner-card-iconbtn small" data-add-participant="${idx}" aria-label="Add slot">+</button>
-                                ${slotCount > MIN_PARTICIPANT_SLOTS ? `<button type="button" class="planner-card-iconbtn small" data-remove-participant="${idx}" aria-label="Remove slot">−</button>` : ""}
-                            </div>
-                        </div>
-                        <div class="planner-card-participants">${participantCards}</div>
-                    </div>
-
-                    ${teamNameFields ? `
-                        <div class="planner-card-section">
-                            <label class="planner-card-label">Team Names</label>
-                            <div class="planner-card-team-names">${teamNameFields}</div>
-                        </div>
-                    ` : ""}
-
-                    <div class="planner-card-section">
-                        <label class="planner-card-label">Championship</label>
-                        <select class="cell-input" data-field="championshipId">${championshipOptionsHTML}</select>
-                    </div>
-
-                    <div class="planner-card-section">
-                        <label class="planner-card-label">Result</label>
-                        <select class="cell-input" data-field="result">
-                            <option value="">(no winner yet)</option>
-                            ${winnerOptions}
-                        </select>
-                        ${showPinBy ? `
-                            <select class="cell-input" data-field="pinBy" style="margin-top:6px;">
-                                <option value="">(who got the pin)</option>
-                                ${pinByOptions}
-                            </select>
-                        ` : ""}
-                    </div>
-
-                    <div class="planner-card-section planner-card-notes">
-                        <button type="button" class="planner-card-note" data-open-note="storyline">
-                            <div class="planner-card-note-label">Storyline</div>
-                            <div class="planner-card-note-preview ${storyline ? "" : "is-empty"}">${escapeHTML(storylinePreview)}</div>
-                        </button>
-                        <button type="button" class="planner-card-note" data-open-note="rivalryNotes">
-                            <div class="planner-card-note-label">Rivalry Notes</div>
-                            <div class="planner-card-note-preview ${rivalryNotes ? "" : "is-empty"}">${escapeHTML(rivalryPreview)}</div>
-                        </button>
-                    </div>
-                </div>
-            `;
-        }).join("");
-    }
-
-    animatePlannerRows(fromPositions);
-
-    // Set selected values after render (avoids brittle string replacement).
-    // This works for both the table rows and the mobile cards because both
-    // share the same data attributes.
-    const applyRowValues = (rowEl) => {
-        const row = Number(rowEl.dataset.row);
-        const match = ev.matches[row];
-        if (!match) return;
-        const p = match.participants || [];
-        const participantTeams = normalizedParticipantTeams(match);
-        $$('[data-field="participant"]', rowEl).forEach((el, slotIdx) => {
-            el.value = p[slotIdx] || "";
-        });
-        $$('[data-field="participantTeam"]', rowEl).forEach((el, slotIdx) => {
-            const participantId = p[slotIdx] || "";
-            el.value = participantId ? (participantTeams[participantId] || "") : "";
-        });
-        const resultSelect = rowEl.querySelector('[data-field="result"]');
-        if (resultSelect) {
-            const resultValue = String(match.result || "");
-            const normalizedTeamResult = parseTeamResultValue(resultValue);
-            const normalizedResultValue = normalizedTeamResult ? teamResultValue(normalizedTeamResult) : resultValue;
-            if (!resultValue) {
-                resultSelect.value = "";
-            } else if (Array.from(resultSelect.options).some(opt => opt.value === normalizedResultValue)) {
-                resultSelect.value = normalizedResultValue;
-            } else {
-                const normalizedResult = normalizeNameForCompare(resultValue);
-                const matchedOption = Array.from(resultSelect.options).find(opt => {
-                    if (!opt.value) return false;
-                    return normalizeNameForCompare(superstarNameById(opt.value)) === normalizedResult;
-                });
-                resultSelect.value = matchedOption ? matchedOption.value : "";
-            }
-        }
-        $$('[data-field="teamName"]', rowEl).forEach(select => {
-            const teamKey = normalizeTeamKey(select.dataset.teamKey);
-            const teamNameValue = String(normalizedTeamNames(match)[teamKey] || "");
-            const options = Array.from(select.options).map(opt => opt.value);
-            select.value = options.includes(teamNameValue) ? teamNameValue : "";
-        });
-        $$('[data-open-escort]', rowEl).forEach((btn, slotIdx) => {
-            const participantId = p[slotIdx] || "";
-            btn.disabled = !participantId;
-            btn.title = participantId ? "Set ringside accompaniment" : "Select a superstar first";
-        });
-        const pinBySelect = rowEl.querySelector('[data-field="pinBy"]');
-        if (pinBySelect) {
-            const pinByValue = String(match.pinBy || "");
-            pinBySelect.value = (pinByValue && Array.from(pinBySelect.options).some(opt => opt.value === pinByValue)) ? pinByValue : "";
-        }
-        const championshipSelect = rowEl.querySelector('[data-field="championshipId"]');
-        if (championshipSelect) {
-            const championshipId = String(match.championshipId || "");
-            championshipSelect.value = Array.from(championshipSelect.options).some(opt => opt.value === championshipId) ? championshipId : "";
-        }
-    };
-    $$("#matchesBody tr").forEach(applyRowValues);
-    if (cardList) $$(".planner-card", cardList).forEach(applyRowValues);
-
-    $$("#matchesBody tr").forEach(tr => {
-        tr.addEventListener("dragstart", (e) => {
-            if (!e.target.closest("[data-drag-handle]")) {
-                e.preventDefault();
-                return;
-            }
-            plannerDragSourceRow = Number(tr.dataset.row);
-            tr.classList.add("planner-row-dragging");
-            if (e.dataTransfer) {
-                e.dataTransfer.effectAllowed = "move";
-                e.dataTransfer.setData("text/plain", String(plannerDragSourceRow));
-            }
-        });
-
-        tr.addEventListener("dragover", (e) => {
-            if (plannerDragSourceRow === null) return;
-            e.preventDefault();
-            tr.classList.add("planner-row-drop-target");
-            if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
-        });
-
-        tr.addEventListener("dragleave", () => {
-            tr.classList.remove("planner-row-drop-target");
-        });
-
-        tr.addEventListener("drop", (e) => {
-            e.preventDefault();
-            tr.classList.remove("planner-row-drop-target");
-
-            const toIndex = Number(tr.dataset.row);
-            const fromIndex = plannerDragSourceRow;
-            plannerDragSourceRow = null;
-            if (!Number.isInteger(fromIndex)) return;
-
-            const ev2 = getEvent(plannerEventId);
-            if (!ev2) return;
-
-            const oldPositions = capturePlannerRowPositions();
-            const moved = movePlannerMatch(ev2.matches, fromIndex, toIndex);
-            if (!moved) return;
-            renumberPlannerMatches(ev2.matches);
-            upsertEvent(ev2);
-            renderPlanner(oldPositions);
-        });
-
-        tr.addEventListener("dragend", () => {
-            plannerDragSourceRow = null;
-            $$("#matchesBody tr, #plannerCardList .planner-card").forEach(rowEl => {
-                rowEl.classList.remove("planner-row-dragging");
-                rowEl.classList.remove("planner-row-drop-target");
-            });
-        });
-    });
-
-    const clearTouchDragClasses = () => {
-        $$("#matchesBody tr, #plannerCardList .planner-card").forEach(rowEl => {
-            rowEl.classList.remove("planner-row-dragging");
-            rowEl.classList.remove("planner-row-drop-target");
-        });
-    };
-
-    const getTouchDropRow = (x, y) => {
-        const target = document.elementFromPoint(x, y);
-        if (!target) return null;
-        return target.closest("#matchesBody tr, #plannerCardList .planner-card");
-    };
-
-    $$("[data-drag-handle]").forEach(handle => {
-        handle.addEventListener("pointerdown", (e) => {
-            if (e.pointerType !== "touch") return;
-            const rowEl = handle.closest("[data-row]");
-            if (!rowEl) return;
-            e.preventDefault();
-            plannerTouchDragState = {
-                pointerId: e.pointerId,
-                fromIndex: Number(rowEl.dataset.row),
-                overIndex: Number(rowEl.dataset.row),
-            };
-            clearTouchDragClasses();
-            rowEl.classList.add("planner-row-dragging");
-            handle.setPointerCapture(e.pointerId);
-        });
-
-        handle.addEventListener("pointermove", (e) => {
-            if (!plannerTouchDragState) return;
-            if (plannerTouchDragState.pointerId !== e.pointerId) return;
-            const overRow = getTouchDropRow(e.clientX, e.clientY);
-            if (!overRow) return;
-            const overIndex = Number(overRow.dataset.row);
-            if (!Number.isInteger(overIndex)) return;
-            plannerTouchDragState.overIndex = overIndex;
-            clearTouchDragClasses();
-            overRow.classList.add("planner-row-drop-target");
-            const sourceRow = document.querySelector(`[data-row="${plannerTouchDragState.fromIndex}"]`);
-            sourceRow?.classList.add("planner-row-dragging");
-        });
-
-        const finishTouchDrag = (e) => {
-            if (!plannerTouchDragState) return;
-            if (plannerTouchDragState.pointerId !== e.pointerId) return;
-            const { fromIndex, overIndex } = plannerTouchDragState;
-            plannerTouchDragState = null;
-            clearTouchDragClasses();
-            if (!Number.isInteger(fromIndex) || !Number.isInteger(overIndex) || fromIndex === overIndex) return;
-            const ev2 = getEvent(plannerEventId);
-            if (!ev2) return;
-            const oldPositions = capturePlannerRowPositions();
-            const moved = movePlannerMatch(ev2.matches, fromIndex, overIndex);
-            if (!moved) return;
-            renumberPlannerMatches(ev2.matches);
-            upsertEvent(ev2);
-            renderPlanner(oldPositions);
-        };
-
-        handle.addEventListener("pointerup", finishTouchDrag);
-        handle.addEventListener("pointercancel", finishTouchDrag);
-    });
-
-    // One event listener for all row edits (event delegation)
-    const handlePlannerRowEdit = (e) => {
-        const target = e.target;
-        if (!target || !target.matches("[data-field]")) return;
-
-        const tr = target.closest("[data-row]");
-        if (!tr) return;
-
-        const ev2 = getEvent(plannerEventId);
-        if (!ev2) return;
-
-        // Block edits to matches on completed days. The "Mark Day Done" toggle
-        // in the calendar is the only way to unlock.
-        if (isUniverseDateCompleted(ev2.date)) {
-            showToast({ message: "This day is marked done — unmark it on the calendar to edit.", tone: "danger" });
-            // Revert the visible change by re-rendering from state
-            renderPlanner();
-            return;
-        }
-
-        const row = Number(tr.dataset.row);
-        const field = target.dataset.field;
-
-        if (!ev2.matches[row]) return;
-
-        const reRender = () => {
-            const capture = capturePlannerFocus();
-            renderPlanner();
-            requestAnimationFrame(() => restorePlannerFocus(capture));
-        };
-
-        if (field === "participant") {
-            const participantInputs = $$('[data-field="participant"]', tr);
-            const teamInputs = $$('[data-field="participantTeam"]', tr);
-            const selected = participantInputs.map(input => input.value);
-            const seen = new Set();
-            const deduped = selected.map(v => {
-                if (!v || seen.has(v)) return "";
-                seen.add(v);
-                return v;
-            });
-            participantInputs.forEach((input, slotIdx) => {
-                input.value = deduped[slotIdx] || "";
-            });
-            ev2.matches[row].participants = deduped.filter(Boolean);
-            const prevEscorts = normalizedParticipantEscorts(ev2.matches[row]);
-            const nextEscorts = {};
-            ev2.matches[row].participants.forEach(participantId => {
-                if (prevEscorts[participantId]) nextEscorts[participantId] = prevEscorts[participantId];
-            });
-            ev2.matches[row].participantEscorts = nextEscorts;
-            const prevTeams = normalizedParticipantTeams(ev2.matches[row]);
-            const nextTeams = {};
-            deduped.forEach((participantId, slotIdx) => {
-                if (!participantId) return;
-                const teamFromUi = teamInputs[slotIdx]?.value || "";
-                const team = normalizeTeamKey(teamFromUi || prevTeams[participantId] || "");
-                if (team) nextTeams[participantId] = team;
-            });
-            ev2.matches[row].participantTeams = nextTeams;
-            ev2.matches[row].participantSlots = participantSlotCount(ev2.matches[row]);
-            reconcilePlannerMatchTeams(ev2.matches[row]);
-            upsertEvent(ev2); // debounced via saveSoon
-            reRender();
-            return;
-        } else if (field === "participantTeam") {
-            const slot = Number(target.dataset.slot);
-            const participantInputs = $$('[data-field="participant"]', tr);
-            const participantId = participantInputs[slot]?.value || "";
-            const teams = normalizedParticipantTeams(ev2.matches[row]);
-            const nextTeam = normalizeTeamKey(target.value);
-            if (participantId && nextTeam) {
-                teams[participantId] = nextTeam;
-            } else if (participantId) {
-                delete teams[participantId];
-            }
-            ev2.matches[row].participantTeams = teams;
-            reconcilePlannerMatchTeams(ev2.matches[row]);
-            upsertEvent(ev2); // debounced via saveSoon
-            reRender();
-            return;
-        } else if (field === "result") {
-            ev2.matches[row].result = target.value;
-            reconcilePlannerMatchTeams(ev2.matches[row]);
-            upsertEvent(ev2); // debounced via saveSoon
-            reRender();
-            return;
-        } else if (field === "teamName") {
-            const names = normalizedTeamNames(ev2.matches[row]);
-            const key = normalizeTeamKey(target.dataset.teamKey);
-            if (!key) return;
-            const nextName = String(target.value || "").trim();
-            if (!nextName) delete names[key];
-            else names[key] = nextName;
-            ev2.matches[row].teamNames = names;
-            upsertEvent(ev2);
-            reRender();
-            return;
-        } else if (field === "pinBy") {
-            ev2.matches[row].pinBy = target.value;
-        } else {
-            ev2.matches[row][field] = target.value;
-            if (field === "matchType") {
-                reconcilePlannerMatchTeams(ev2.matches[row]);
-                upsertEvent(ev2); // debounced via saveSoon
-                // Avoid re-rendering on every keystroke; refresh once field is committed.
-                if (e.type === "change") reRender();
-                return;
-            }
-        }
-
-        upsertEvent(ev2); // debounced via saveSoon
-    };
-    body.oninput = handlePlannerRowEdit;
-    body.onchange = handlePlannerRowEdit;
-    if (cardList) {
-        cardList.oninput = handlePlannerRowEdit;
-        cardList.onchange = handlePlannerRowEdit;
-    }
-
-    // Note editor buttons
-    $$("[data-open-note]").forEach(btn => {
-        btn.addEventListener("click", async () => {
-            const rowEl = btn.closest("[data-row]");
-            if (!rowEl) return;
-            const row = Number(rowEl.dataset.row);
-            const field = String(btn.dataset.openNote || "");
-            await openPlannerNoteModal({ row, field });
-        });
-    });
-    $$("[data-pick-participant]").forEach(btn => {
-        btn.addEventListener("click", async () => {
-            const rowEl = btn.closest("[data-row]");
-            if (!rowEl) return;
-            const row = Number(rowEl.dataset.row);
-            const slot = Number(btn.dataset.slot);
-            await openPlannerSuperstarPicker({ row, slot });
-        });
-    });
-
-    $$("[data-open-escort]").forEach(btn => {
-        btn.addEventListener("click", async () => {
-            const rowEl = btn.closest("[data-row]");
-            if (!rowEl) return;
-            const row = Number(rowEl.dataset.row);
-            const slot = Number(btn.dataset.openEscort);
-            await openPlannerEscortModal({ row, slot });
-        });
-    });
-
-    // Add participant slot button
-    $$("[data-add-participant]").forEach(btn => {
-        btn.addEventListener("click", () => {
-            const idx = Number(btn.dataset.addParticipant);
-            const ev2 = getEvent(plannerEventId);
-            if (!ev2 || !ev2.matches[idx]) return;
-            ev2.matches[idx].participantSlots = participantSlotCount(ev2.matches[idx]) + 1;
-            upsertEvent(ev2);
-            renderPlanner();
-        });
-    });
-
-    $$("[data-remove-participant]").forEach(btn => {
-        btn.addEventListener("click", () => {
-            const idx = Number(btn.dataset.removeParticipant);
-            const ev2 = getEvent(plannerEventId);
-            if (!ev2 || !ev2.matches[idx]) return;
-
-            const currentCount = participantSlotCount(ev2.matches[idx]);
-            if (currentCount <= MIN_PARTICIPANT_SLOTS) return;
-
-            const nextCount = currentCount - 1;
-            ev2.matches[idx].participantSlots = nextCount;
-            ev2.matches[idx].participants = (ev2.matches[idx].participants || []).slice(0, nextCount);
-            const remaining = new Set(ev2.matches[idx].participants || []);
-            const nextEscorts = {};
-            Object.entries(normalizedParticipantEscorts(ev2.matches[idx])).forEach(([participantId, escortRef]) => {
-                if (!remaining.has(participantId)) return;
-                nextEscorts[participantId] = escortRef;
-            });
-            ev2.matches[idx].participantEscorts = nextEscorts;
-            const nextTeams = {};
-            Object.entries(normalizedParticipantTeams(ev2.matches[idx])).forEach(([participantId, teamKey]) => {
-                if (!remaining.has(participantId)) return;
-                nextTeams[participantId] = teamKey;
-            });
-            ev2.matches[idx].participantTeams = nextTeams;
-            reconcilePlannerMatchTeams(ev2.matches[idx]);
-            upsertEvent(ev2);
-            renderPlanner();
-        });
-    });
-
-    // Delete row buttons
-    $$("[data-del-row]").forEach(btn => {
-        btn.addEventListener("click", () => {
-            const idx = Number(btn.dataset.delRow);
-            const ev2 = getEvent(plannerEventId);
-            if (!ev2) return;
-            if (isUniverseDateCompleted(ev2.date)) {
-                showToast({ message: "This day is marked done — unmark it on the calendar to delete matches.", tone: "danger" });
-                return;
-            }
-            ev2.matches.splice(idx, 1);
-            renumberPlannerMatches(ev2.matches);
-            upsertEvent(ev2);
-            renderPlanner(); // re-render because rows changed
-        });
-    });
 }
+
+function onPlannerFieldChange(e) {
+    const field = e.target?.dataset?.field;
+    if (!field) return;
+    const target = plannerTarget(e.target);
+    if (!target) return;
+    const { ev, row, match } = target;
+    if (plannerLockedToast(ev)) { refreshPlannerMatch(row); return; }
+    const value = String(e.target.value ?? "");
+
+    switch (field) {
+        case "matchType":
+            match.matchType = value;
+            if (e.type === "input") { upsertEvent(ev); return; } // typing: save quietly
+            commitPlannerMatch(ev, row);
+            return;
+        case "participantTeam": {
+            const pid = matchSlotIds(match)[Number(e.target.dataset.slot)] || "";
+            if (!pid) return;
+            const teams = normalizedParticipantTeams(match);
+            const team = normalizeTeamKey(value);
+            if (team) teams[pid] = team; else delete teams[pid];
+            match.participantTeams = teams;
+            commitPlannerMatch(ev, row);
+            return;
+        }
+        case "result":
+            match.result = value;
+            commitPlannerMatch(ev, row);
+            return;
+        case "pinBy":
+            match.pinBy = value;
+            commitPlannerMatch(ev, row, { reconcile: false, refresh: false });
+            return;
+        case "championshipId":
+            match.championshipId = value;
+            commitPlannerMatch(ev, row, { reconcile: false });
+            return;
+        case "teamName": {
+            const names = normalizedTeamNames(match);
+            const key = normalizeTeamKey(e.target.dataset.teamKey);
+            if (!key) return;
+            if (value.trim()) names[key] = value.trim(); else delete names[key];
+            match.teamNames = names;
+            commitPlannerMatch(ev, row, { reconcile: false });
+            return;
+        }
+        default:
+            return;
+    }
+}
+
+// Drag to reorder: works with mouse, pen and touch via the grip handle.
+function onPlannerPointerDown(e) {
+    const handle = e.target.closest("[data-drag-handle]");
+    if (!handle || handle.disabled) return;
+    const target = plannerTarget(handle);
+    if (!target || isUniverseDateCompleted(target.ev.date)) return;
+    e.preventDefault();
+    plannerDrag = { pointerId: e.pointerId, fromIndex: target.row, overIndex: target.row, handle, lastY: e.clientY };
+    target.card.classList.add("planner-row-dragging");
+    document.body.classList.add("is-reordering");
+    try { handle.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+    handle.addEventListener("pointermove", onPlannerPointerMove);
+    handle.addEventListener("pointerup", onPlannerPointerUp);
+    handle.addEventListener("pointercancel", onPlannerPointerUp);
+}
+function onPlannerPointerMove(e) {
+    if (!plannerDrag || plannerDrag.pointerId !== e.pointerId) return;
+    plannerDrag.lastY = e.clientY;
+    // Auto-scroll near the edges so long cards can still be reordered.
+    const edge = 90;
+    if (e.clientY < edge) window.scrollBy(0, -14);
+    else if (e.clientY > window.innerHeight - edge - 70) window.scrollBy(0, 14);
+    const over = document.elementFromPoint(e.clientX, e.clientY)?.closest?.("#plannerCardList .planner-card[data-row]");
+    $$("#plannerCardList .planner-row-drop-target").forEach(el => el.classList.remove("planner-row-drop-target"));
+    if (!over) return;
+    plannerDrag.overIndex = Number(over.dataset.row);
+    if (plannerDrag.overIndex !== plannerDrag.fromIndex) over.classList.add("planner-row-drop-target");
+}
+function onPlannerPointerUp(e) {
+    if (!plannerDrag || plannerDrag.pointerId !== e.pointerId) return;
+    const { fromIndex, overIndex, handle } = plannerDrag;
+    plannerDrag = null;
+    document.body.classList.remove("is-reordering");
+    handle.removeEventListener("pointermove", onPlannerPointerMove);
+    handle.removeEventListener("pointerup", onPlannerPointerUp);
+    handle.removeEventListener("pointercancel", onPlannerPointerUp);
+    $$("#plannerCardList .planner-row-dragging, #plannerCardList .planner-row-drop-target").forEach(el => {
+        el.classList.remove("planner-row-dragging", "planner-row-drop-target");
+    });
+    if (fromIndex === overIndex) return;
+    const ev = getEvent(plannerEventId);
+    if (!ev) return;
+    const positions = capturePlannerCardPositions();
+    if (!movePlannerMatch(ev.matches, fromIndex, overIndex)) return;
+    renumberPlannerMatches(ev.matches);
+    upsertEvent(ev);
+    renderPlanner(positions);
+}
+
+(function bindPlannerEvents() {
+    const list = $("#plannerCardList");
+    if (list) {
+        list.addEventListener("click", onPlannerClick);
+        list.addEventListener("change", onPlannerFieldChange);
+        list.addEventListener("input", e => { if (e.target?.dataset?.field === "matchType") onPlannerFieldChange(e); });
+        list.addEventListener("pointerdown", onPlannerPointerDown);
+        list.addEventListener("keydown", e => {
+            if (e.key === "Enter" && e.target?.dataset?.field === "matchType") e.target.blur();
+        });
+    }
+    $("#plannerEventSelect")?.addEventListener("change", e => {
+        plannerEventId = e.target.value || null;
+        renderPlanner();
+        scheduleUiSessionSave();
+    });
+    $("#plannerPrevEvent")?.addEventListener("click", () => stepPlannerEvent(-1));
+    $("#plannerNextEvent")?.addEventListener("click", () => stepPlannerEvent(1));
+    $("#plannerMeta")?.addEventListener("click", () => {
+        if (plannerEventId) openCalendarEventDetails(plannerEventId);
+    });
+})();
 
 function addMatchRow() {
     if (!plannerEventId) return;
     const ev = getEvent(plannerEventId);
     if (!ev) return;
-
-    if (isUniverseDateCompleted(ev.date)) {
-        showToast({ message: "This day is marked done — unmark it on the calendar to add matches.", tone: "danger" });
-        return;
-    }
+    if (plannerLockedToast(ev)) return;
 
     ev.matches.push({
         id: uid("match"),
@@ -6917,16 +6608,19 @@ function addMatchRow() {
     });
 
     upsertEvent(ev);
-    renderPlanner(); // re-render because rows changed
+    renderPlanner();
+    const card = $(`#plannerCardList .planner-card[data-row="${ev.matches.length - 1}"]`);
+    card?.scrollIntoView({ behavior: "smooth", block: "center" });
+    card?.classList.add("is-new");
 }
 
 async function newEventFromPlanner() {
     if (state.shows.length === 0) {
         await openModal({
             title: "Add a show first",
-            bodyHTML: `<div class="muted">Create at least one show (RAW/SD/etc.) so events can be assigned.</div>`,
+            bodyHTML: `<div class="muted">Create at least one show (RAW/SD/etc.) in Settings so events can be assigned.</div>`,
             okText: "OK",
-            cancelText: "Close"
+            hideCancel: true,
         });
         return;
     }
@@ -6935,8 +6629,9 @@ async function newEventFromPlanner() {
 
 function openPlanner(eventId) {
     plannerEventId = eventId;
-    setView("planner");
-    renderPlanner();
+    if (currentView === "planner") renderPlanner();
+    else setView("planner");
+    window.scrollTo({ top: 0, behavior: "instant" });
 }
 
 // -------------------- SETTINGS: POPULATE / GENERATE --------------------
@@ -7096,11 +6791,11 @@ async function openSettingsPanel(panelKey) {
         bodyHTML: "",
         okText: "Close",
         cancelText: "Close",
+        hideCancel: true,
     });
-    $("#modalCancel").classList.add("hidden");
     panel.render();
     await modalPromise;
-    $("#modalCancel").classList.remove("hidden");
+    renderSettingsTools();
 }
 
 function renderSettingsTools() {
@@ -8466,6 +8161,7 @@ function renderDataSettingsPanel() {
         store.wipe();
         clearPhotoVault().catch(() => {});
         state = normalizeStateData(store.load());
+        bumpDataVersion();
         plannerEventId = null;
         renderAll();
         wipeConfirm.checked = false;
@@ -8749,7 +8445,7 @@ function importPopulateJSON(payload, { replace = true } = {}) {
 
     for (const row of plesInput) {
         const name = String(row?.name ?? "").trim();
-        const date = String(row?.date ?? "").trim();
+        const date = clampToUniverseDay(String(row?.date ?? "").trim());
         if (!name || !/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
 
         const showFromName = String(row?.show ?? row?.showName ?? "").trim().toLowerCase();
@@ -8799,6 +8495,11 @@ function generateWeeklyEvents({ startISO, months, rules, defaultRows = 6 }) {
     // Walk day by day
     let cur = new Date(start);
     while (cur <= end) {
+        // Days 29–31 don't exist in the 4-week universe calendar.
+        if (cur.getDate() > CALENDAR_DAYS_PER_MONTH) {
+            cur.setDate(cur.getDate() + 1);
+            continue;
+        }
         const iso = toISODateLocal(cur);
         const dow = calendarWeekdaySundayZero(cur);
 
@@ -8810,6 +8511,7 @@ function generateWeeklyEvents({ startISO, months, rules, defaultRows = 6 }) {
                 const show = getShow(rule.showId);
                 const name = `${show?.name || "Weekly"} • ${iso}`;
                 const matches = Array.from({ length: Number(defaultRows) || 0 }).map((_, i) => ({
+                    id: uid("match"),
                     num: i + 1,
                     participants: [],
                     participantTeams: {},
@@ -8956,6 +8658,8 @@ function populateShowSelects() {
 // -------------------- RENDER ALL --------------------
 function renderAll() {
     populateShowSelects();
+    const subtitle = $("#viewSubtitle");
+    if (subtitle) subtitle.textContent = viewSubtitle(currentView);
 
     if (currentView === "dashboard") renderDashboard();
     if (currentView === "calendar") renderCalendar();
@@ -8977,59 +8681,86 @@ $("#openAddSSModal").addEventListener("click", () => {
     openAddSuperstarFlow();
 });
 
-$("#rosterSearch").addEventListener("input", () => renderRoster());
+let rosterSearchFrame = 0;
+$("#rosterSearch").addEventListener("input", () => {
+    cancelAnimationFrame(rosterSearchFrame);
+    rosterSearchFrame = requestAnimationFrame(renderRoster);
+});
 $("#rosterDivisionFilter")?.addEventListener("change", () => renderRoster());
 $("#rosterStatusFilter")?.addEventListener("change", () => renderRoster());
+function setCalendarMonthFor(iso) {
+    const d = parseISO(iso);
+    calCursor = new Date(d.getFullYear(), d.getMonth(), 1);
+}
 $("#calPrev").addEventListener("click", () => { calCursor.setMonth(calCursor.getMonth() - 1); renderCalendar(); });
 $("#calNext").addEventListener("click", () => { calCursor.setMonth(calCursor.getMonth() + 1); renderCalendar(); });
+$("#calendarGrid").addEventListener("click", e => {
+    const cell = e.target.closest(".cal-cell[data-date]");
+    if (cell) selectCalendarDay(cell.dataset.date);
+});
+$("#eventsList").addEventListener("click", e => {
+    const item = e.target.closest("[data-open-event]");
+    if (item) openCalendarEventDetails(item.dataset.openEvent, { fromCalendar: true });
+});
+// Swipe left/right on the month grid to change month.
+(function enableCalendarSwipe() {
+    const grid = $("#calendarGrid");
+    let start = null;
+    grid.addEventListener("touchstart", e => {
+        const t = e.touches[0];
+        start = { x: t.clientX, y: t.clientY, t: performance.now() };
+    }, { passive: true });
+    grid.addEventListener("touchend", e => {
+        if (!start) return;
+        const t = e.changedTouches[0];
+        const dx = t.clientX - start.x;
+        const dy = t.clientY - start.y;
+        const quick = performance.now() - start.t < 600;
+        start = null;
+        if (!quick || Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+        calCursor.setMonth(calCursor.getMonth() + (dx < 0 ? 1 : -1));
+        renderCalendar();
+    }, { passive: true });
+})();
 $("#calToday").addEventListener("click", () => {
-    const now = parseISO(getUniverseCurrentISO());
-    calCursor = new Date(now);
-    calCursor.setDate(1);
-    calCursor.setHours(0, 0, 0, 0);
-    calSelectedISO = toISODateLocal(now);
+    const now = getUniverseCurrentISO();
+    setCalendarMonthFor(now);
+    calSelectedISO = now;
     renderCalendar();
 });
 $("#calUniverseStartDate")?.addEventListener("change", (e) => {
     const iso = String(e.target.value || "");
     if (!isISODate(iso)) return;
     state.universeStartDate = iso;
-    const startDate = parseISO(iso);
-    calCursor = new Date(startDate);
-    calCursor.setDate(1);
-    calCursor.setHours(0, 0, 0, 0);
-    calSelectedISO = iso;
+    setCalendarMonthFor(iso);
+    calSelectedISO = firstUniverseDayOnOrAfter(iso);
     saveSoon();
-    renderCalendar();
-    renderDashboard();
+    renderAll();
 });
 $("#calSetStartFromSelected")?.addEventListener("click", () => {
     if (!isISODate(calSelectedISO)) return;
     state.universeStartDate = calSelectedISO;
     saveSoon();
-    renderCalendar();
-    renderDashboard();
+    renderAll();
+    showToast({ message: `Universe now starts on ${prettyUniverseDate(calSelectedISO)}.`, tone: "info", duration: 2600 });
 });
 $("#calToggleDone")?.addEventListener("click", () => {
     if (!isISODate(calSelectedISO)) return;
-    const done = isUniverseDateCompleted(calSelectedISO);
-    setUniverseDateCompleted(calSelectedISO, !done);
+    let changes = [];
+    if (isUniverseDateCompleted(calSelectedISO)) setUniverseDateCompleted(calSelectedISO, false);
+    else changes = completeUniverseDay(calSelectedISO);
     saveSoon();
-    renderCalendar();
-    renderDashboard();
+    renderAll();
+    announceTitleChanges(changes);
 });
 $("#calProgressDay")?.addEventListener("click", () => {
     if (!isISODate(calSelectedISO)) return;
-    setUniverseDateCompleted(calSelectedISO, true);
-    const next = parseISO(calSelectedISO);
-    next.setDate(next.getDate() + 1);
-    calSelectedISO = toISODateLocal(next);
-    calCursor = new Date(next);
-    calCursor.setDate(1);
-    calCursor.setHours(0, 0, 0, 0);
+    const changes = completeUniverseDay(calSelectedISO);
+    calSelectedISO = nextUniverseDayISO(calSelectedISO);
+    setCalendarMonthFor(calSelectedISO);
     saveSoon();
-    renderCalendar();
-    renderDashboard();
+    renderAll();
+    announceTitleChanges(changes);
 });
 
 $("#addEventBtn").addEventListener("click", () => addEventFlow(calSelectedISO));
@@ -9066,7 +8797,22 @@ async function exportUniverseJSON() {
 }
 
 // -------------------- INIT --------------------
-window.addEventListener("scroll", scheduleUiSessionSave, { passive: true });
+// Native-style header: hairline divider once content scrolls under it, and
+// expose the header height so sticky panels can sit right below it.
+function updateScrolledState() {
+    document.body.classList.toggle("is-scrolled", (window.scrollY || 0) > 4);
+}
+window.addEventListener("scroll", () => {
+    scheduleUiSessionSave();
+    updateScrolledState();
+}, { passive: true });
+(function trackTopbarHeight() {
+    const topbar = $(".topbar");
+    if (!topbar || !("ResizeObserver" in window)) return;
+    new ResizeObserver(() => {
+        document.documentElement.style.setProperty("--topbar-h", `${topbar.offsetHeight}px`);
+    }).observe(topbar);
+})();
 window.addEventListener("pagehide", () => {
     if (pendingSave) flushSaveNow();
     saveUiSessionState();
@@ -9081,7 +8827,7 @@ window.addEventListener("pageshow", event => {
         plannerEventId = session.plannerEventId;
     }
     const initialView = views.includes(session.view) ? session.view : "dashboard";
-    setView(initialView);
+    showView(initialView);
     restoreUiSessionScroll(session);
     initializePhotoVault().catch(error => console.warn("Photo vault unavailable:", error));
 })();
